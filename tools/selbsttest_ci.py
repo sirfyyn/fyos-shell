@@ -94,7 +94,7 @@ def main(argv):
         env = dict(os.environ, FYOS_SHELL_DATEN=str(daten))
         if buendel:
             env["FYOS_SHELL_RESSOURCEN"] = str(Path(__file__).resolve().parent.parent / "app" / "resources")
-        r = subprocess.run(befehl(programm, bool(os.environ.get("DISPLAY")), "--ohne-xvfb" in argv), capture_output=True, text=True, env=env, timeout=300)
+        r = subprocess.run(befehl(programm, bool(os.environ.get("DISPLAY")), "--ohne-xvfb" in argv), capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=300)
         gut, text = auswerten(r.returncode, r.stdout, buendel)
         print(("[ok] " if gut else "[FEHLER] ") + text + (f" (Ausgang {r.returncode})" if r.returncode else ""))
         if not gut:
