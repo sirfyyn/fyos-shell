@@ -60,7 +60,9 @@ fn ist_lokal(host: &str) -> bool {
 pub fn pruefe(url: &Url, erlaubt: &[String]) -> Entscheidung {
     match url.scheme() {
         "tauri" | "asset" | "ipc" => return Entscheidung::Erlauben,
-        "about" => return if url.as_str() == "about:blank" { Entscheidung::Erlauben } else { Entscheidung::Ablehnen },
+        // `about:srcdoc`: Hub-Apps des OS leben in Sandbox-Rahmen, deren Inhalt die Seite selbst per `srcdoc` setzt (Quelle: erlaubte Seite).
+        // Ohne diese Ausnahme zeigt das OS-Fenster „Die App konnte nicht geladen werden“ (Fehler 28.10.2026).
+        "about" => return if matches!(url.as_str(), "about:blank" | "about:srcdoc") { Entscheidung::Erlauben } else { Entscheidung::Ablehnen },
         "mailto" => return Entscheidung::Browser,
         "http" | "https" => {}
         _ => return Entscheidung::Ablehnen,
@@ -128,7 +130,7 @@ mod tests {
 
     #[test]
     fn gefaehrliche_schemata_werden_abgelehnt() {
-        for s in ["javascript:alert(1)", "file:///etc/passwd", "data:text/html,<b>x</b>", "ftp://fyos.sirfyyn.de/", "blob:https://fyos.sirfyyn.de/abc", "about:srcdoc"] {
+        for s in ["javascript:alert(1)", "file:///etc/passwd", "data:text/html,<b>x</b>", "ftp://fyos.sirfyyn.de/", "blob:https://fyos.sirfyyn.de/abc", "about:config"] {
             assert_eq!(pruefe(&u(s), &os()), Entscheidung::Ablehnen, "{s}");
         }
         assert_eq!(pruefe(&u("mailto:x@example.com"), &os()), Entscheidung::Browser);
@@ -136,7 +138,7 @@ mod tests {
 
     #[test]
     fn eigene_seiten_der_huelle_gehen_immer() {
-        for s in ["tauri://localhost/fehler.html", "http://tauri.localhost/fehler.html", "https://tauri.localhost/x", "about:blank"] {
+        for s in ["tauri://localhost/fehler.html", "http://tauri.localhost/fehler.html", "https://tauri.localhost/x", "about:blank", "about:srcdoc"] {
             assert_eq!(pruefe(&u(s), &os()), Entscheidung::Erlauben, "{s}");
         }
     }
