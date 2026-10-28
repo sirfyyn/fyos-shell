@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-inhalt-oeffnen"
+description = "Enables the inhalt_oeffnen command without any pre-configured scope."
+commands.allow = ["inhalt_oeffnen"]
+
+[[permission]]
+identifier = "deny-inhalt-oeffnen"
+description = "Denies the inhalt_oeffnen command without any pre-configured scope."
+commands.deny = ["inhalt_oeffnen"]

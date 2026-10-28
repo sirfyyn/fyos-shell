@@ -1,0 +1,24 @@
+[package]
+name = "shell-core"
+description = "Gemeinsamer Kern der FYOS-Hülle: Einstellungen, Protokoll (Deeplinks), Pfade, Tresor-Schnittstelle, Update-Logik, Begleiterprozess, Fehlertexte. Ohne Tauri, damit alles ohne Fenster testbar ist."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+url.workspace = true
+getrandom = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

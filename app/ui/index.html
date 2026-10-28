@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FYOS</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1 id="name">FYOS</h1>
+      <p id="kopf" class="leise">lädt …</p>
+    </header>
+
+    <section id="meldung" class="meldung" hidden role="alert" aria-live="polite">
+      <strong id="meldung-kopf"></strong>
+      <p id="meldung-ursache"></p>
+      <p id="meldung-abhilfe"></p>
+      <small id="meldung-code" class="leise"></small>
+    </section>
+
+    <section id="erfolg" class="erfolg" hidden aria-live="polite"></section>
+
+    <section>
+      <h2>Seite</h2>
+      <p class="leise">Adresse: <span id="start-url"></span></p>
+      <div class="zeile">
+        <input id="url-eingabe" type="text" aria-label="Adresse der Seite" placeholder="Adresse (leer = Standard)">
+        <button id="url-speichern" type="button">Speichern</button>
+      </div>
+      <button id="oeffnen" type="button" class="haupt">Öffnen</button>
+    </section>
+
+    <section id="studio" hidden>
+      <h2>Studio</h2>
+      <p id="studio-text" class="leise"></p>
+      <div class="zeile">
+        <button id="studio-pruefen" type="button">Studio prüfen</button>
+        <button id="studio-neustart" type="button">Studio neu starten</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Aktualisierung</h2>
+      <p id="update-text" class="leise">Noch nicht geprüft.</p>
+      <div class="zeile">
+        <button id="update-pruefen" type="button">Nach Updates suchen</button>
+        <button id="update-einspielen" type="button" class="haupt" hidden>Installieren und neu starten</button>
+        <button id="zurueck" type="button" hidden>Zurück zur Vorversion</button>
+      </div>
+    </section>
+
+    <footer class="leise">
+      <span id="fuss"></span>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

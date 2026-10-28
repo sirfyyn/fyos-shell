@@ -1,0 +1,12 @@
+{
+  "productName": "FLE Studio",
+  "identifier": "de.sirfyyn.fle-studio",
+  "bundle": {
+    "shortDescription": "FLE Studio",
+    "longDescription": "FLE Studio als Desktop-Anwendung: lokale Modelle ausführen, mit mitgeliefertem Studio-Server."
+  },
+  "plugins": {
+    "updater": { "endpoints": ["https://fyos.sirfyyn.de/update/studio/latest.json"], "requireSignedVersion": true },
+    "deep-link": { "desktop": { "schemes": ["fle"] } }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "fyos-shell",
+  "version": "0.0.1",
+  "private": true,
+  "description": "FYOS-Hülle (Tauri 2). Die package.json hält nur die Tauri-CLI als lokale Entwicklungsabhängigkeit; es gibt keine Web-Abhängigkeiten.",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

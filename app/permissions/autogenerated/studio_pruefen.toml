@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-studio-pruefen"
+description = "Enables the studio_pruefen command without any pre-configured scope."
+commands.allow = ["studio_pruefen"]
+
+[[permission]]
+identifier = "deny-studio-pruefen"
+description = "Denies the studio_pruefen command without any pre-configured scope."
+commands.deny = ["studio_pruefen"]

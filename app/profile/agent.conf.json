@@ -1,0 +1,12 @@
+{
+  "productName": "FYOS Agent",
+  "identifier": "de.sirfyyn.fyos-agent",
+  "bundle": {
+    "shortDescription": "FYOS Agent",
+    "longDescription": "FYOS Agent als Desktop-Anwendung."
+  },
+  "plugins": {
+    "updater": { "endpoints": ["https://fyos.sirfyyn.de/update/agent/latest.json"], "requireSignedVersion": true },
+    "deep-link": { "desktop": { "schemes": ["fyos"] } }
+  }
+}

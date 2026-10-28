@@ -1,0 +1,7 @@
+# Übersetzungsprobe für Windows (x86_64-pc-windows-gnu) ohne Windows-Rechner: das Linux-Bauabbild plus MinGW-Cross-Compiler.
+# Es entsteht nichts Ausführbares für den Alltag; `cargo check --target x86_64-pc-windows-gnu` prüft, dass der Quelltext (Job-Objekt,
+# windows-sys, WebView2-Anbindung) für Windows übersetzt. Das Rust-Std für das Ziel wird zur Laufzeit in ein beschreibbares RUSTUP_HOME geladen.
+FROM fyos-shell-bau
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
+    && rm -rf /var/lib/apt/lists/*

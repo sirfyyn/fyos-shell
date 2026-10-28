@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-studio-neustart"
+description = "Enables the studio_neustart command without any pre-configured scope."
+commands.allow = ["studio_neustart"]
+
+[[permission]]
+identifier = "deny-studio-neustart"
+description = "Denies the studio_neustart command without any pre-configured scope."
+commands.deny = ["studio_neustart"]

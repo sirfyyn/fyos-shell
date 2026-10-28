@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-einspielen"
+description = "Enables the update_einspielen command without any pre-configured scope."
+commands.allow = ["update_einspielen"]
+
+[[permission]]
+identifier = "deny-update-einspielen"
+description = "Denies the update_einspielen command without any pre-configured scope."
+commands.deny = ["update_einspielen"]
