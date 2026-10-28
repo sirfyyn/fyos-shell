@@ -286,8 +286,13 @@ mod tests {
 
     #[test]
     fn freier_port_ist_wirklich_frei() {
-        let p = freien_port().unwrap();
-        assert!(std::net::TcpListener::bind(("127.0.0.1", p)).is_ok());
+        // Ein freier Port kann zwischen Wahl und Belegung von einem parallel laufenden Test vergeben werden;
+        // darum mehrere Versuche. Der Test prüft, dass `freien_port` nicht dauerhaft belegte Ports liefert.
+        let ok = (0..10).any(|_| {
+            let p = freien_port().unwrap();
+            std::net::TcpListener::bind(("127.0.0.1", p)).is_ok()
+        });
+        assert!(ok, "kein einziger der 10 gelieferten Ports war frei");
     }
 
     fn mit_marke(marke: &Path, skript: &str, frist_s: u64) -> Kindprozess {
