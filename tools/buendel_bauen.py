@@ -34,7 +34,7 @@ STANDARD_ZIEL = WURZEL / "app" / "resources"
 ENTFERNEN = [
     "python/lib/python3.*/idlelib", "python/lib/python3.*/tkinter", "python/lib/python3.*/turtledemo", "python/lib/python3.*/ensurepip",
     "python/lib/python3.*/lib2to3", "python/lib/python3.*/test", "python/lib/python3.*/site-packages",
-    "python/lib/tcl*", "python/lib/tk*", "python/lib/itcl*", "python/lib/thread*", "python/lib/libtcl*", "python/lib/libtk*",
+    "python/lib/tcl[0-9]*", "python/lib/tk[0-9]*", "python/lib/itcl[0-9]*", "python/lib/thread[0-9]*", "python/lib/libtcl*", "python/lib/libtk*",
     "python/lib/python3.*/lib-dynload/_tkinter*", "python/share", "python/include", "python/lib/pkgconfig",
     "python/bin/pip*", "python/bin/idle*", "python/bin/2to3*", "python/bin/pydoc*", "python/bin/python3-config", "python/bin/python3.*-config",
     "python/tcl", "python/Lib/idlelib", "python/Lib/tkinter", "python/Lib/turtledemo", "python/Lib/ensurepip", "python/Lib/lib2to3", "python/Lib/test",

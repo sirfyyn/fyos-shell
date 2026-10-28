@@ -131,6 +131,23 @@ class Baum(unittest.TestCase):
             for weg in ("python/bin/python3", "python/bin/pip3", "python/lib/python3.11/idlelib", "python/lib/python3.11/tkinter", "python/lib/tcl8.6", "python/share", "python/include"):
                 self.assertFalse((w / weg).exists() or (w / weg).is_symlink(), weg)
 
+    def test_stutzen_laesst_die_windows_standardbibliothek_in_ruhe(self):
+        """Regression 28.10.: `python/lib/thread*` traf unter Windows (Groß-/Kleinschreibung egal) `Lib/threading.py`."""
+        with tempfile.TemporaryDirectory() as t:
+            w = Path(t)
+            (w / "python/Lib").mkdir(parents=True)
+            for n in ("threading.py", "_threading_local.py", "tkinter_dummy.py", "tokenize.py", "tempfile.py", "textwrap.py"):
+                (w / "python/Lib" / n).write_text("x")
+            (w / "python/Lib/tkinter").mkdir()
+            (w / "python/Lib/tkinter/__init__.py").write_text("x")
+            (w / "python/python.exe").write_text("x")
+            (w / "python/tcl").mkdir()
+            b.stutzen(w)
+            for n in ("threading.py", "_threading_local.py", "tokenize.py", "tempfile.py", "textwrap.py", "tkinter_dummy.py"):
+                self.assertTrue((w / "python/Lib" / n).is_file(), n)
+            self.assertFalse((w / "python/Lib/tkinter").exists())
+            self.assertFalse((w / "python/tcl").exists())
+
     def test_dist_info_genuegt_fuer_entry_points(self):
         with tempfile.TemporaryDirectory() as t:
             d = b.dist_info_schreiben(t, "fle-studio", "0.4.1", {"fle_studio.plugins": {"forge": "fle_studio_forge:register"}}, "MIT-Text", "kurz")
