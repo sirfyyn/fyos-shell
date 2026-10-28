@@ -96,7 +96,7 @@ def main(argv):
             env["FYOS_SHELL_RESSOURCEN"] = str(Path(__file__).resolve().parent.parent / "app" / "resources")
         r = subprocess.run(befehl(programm, bool(os.environ.get("DISPLAY")), "--ohne-xvfb" in argv), capture_output=True, text=True, env=env, timeout=300)
         gut, text = auswerten(r.returncode, r.stdout, buendel)
-        print(("[ok] " if gut else "[FEHLER] ") + text)
+        print(("[ok] " if gut else "[FEHLER] ") + text + (f" (Ausgang {r.returncode})" if r.returncode else ""))
         if not gut:
             print(r.stderr[-800:], file=sys.stderr)
             # Diagnose: Ausgabe des Begleiters (Shim und Studio), solange der Wegwerf-Ordner noch da ist
