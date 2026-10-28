@@ -6,6 +6,7 @@ use crate::fenster;
 use crate::studio_http;
 use crate::zustand::{sperre, BegleiterStand, Huelle};
 use serde::Serialize;
+use shell_core::autostart::{standard_ordner, Ablage, Art as AutostartArt, Autostart, DateiAblage};
 use shell_core::einstellungen;
 use shell_core::studio::StudioZustand;
 use shell_core::verlauf::{Ausgang, Art};
@@ -34,6 +35,8 @@ pub struct Info {
     daten: String,
     start_url: String,
     update_basis: Option<String>,
+    /// Start bei der Anmeldung eingeschaltet (Eintrag vorhanden und zeigt auf dieses Programm)
+    autostart: bool,
     /// Ergebnis des letzten Updates oder Rückwegs (nach dem Neustart gemeldet)
     ausgang: Option<AusgangInfo>,
     warnungen: Vec<Meldung>,
@@ -75,6 +78,7 @@ pub fn info(app: AppHandle, h: H<'_>) -> Info {
         daten: h.pfade.daten.display().to_string(),
         start_url: h.start_url(),
         update_basis: sperre(&h.einstellungen).update_basis.clone(),
+        autostart: autostart_von(&app).ist_an().unwrap_or(false),
         ausgang,
         warnungen: sperre(&h.warnungen).clone(),
         updater: sperre(&h.updater_fehler).as_ref().map(Fehler::meldung),
@@ -157,6 +161,102 @@ pub fn einstellung_setzen(h: H<'_>, schluessel: String, wert: Option<String>) ->
 #[tauri::command]
 pub fn seite_bereit(h: H<'_>, zeichnet: bool, version: String) {
     *sperre(&h.seite_bereit) = Some((zeichnet, version));
+}
+
+/// Der Anmeldestart dieses Profils auf diesem System. `FYOS_SHELL_AUTOSTART_ORDNER` legt den Eintrag in einen anderen Ordner
+/// (Tests, Support); sonst: LaunchAgents, XDG-autostart oder Registry-Run-Schlüssel des Benutzers.
+pub fn autostart_von(app: &AppHandle) -> Autostart {
+    use tauri::Manager;
+    let art = AutostartArt::dieses_system();
+    let ablage: Box<dyn Ablage> = match std::env::var_os("FYOS_SHELL_AUTOSTART_ORDNER").filter(|p| !p.is_empty()) {
+        Some(p) => Box::new(DateiAblage { ordner: p.into() }),
+        None => {
+            #[cfg(windows)]
+            {
+                Box::new(shell_core::autostart::registry::RunSchluessel)
+            }
+            #[cfg(not(windows))]
+            {
+                let heim = app.path().home_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let xdg = std::env::var_os("XDG_CONFIG_HOME").filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
+                Box::new(DateiAblage { ordner: standard_ordner(art, &heim, xdg.as_deref()) })
+            }
+        }
+    };
+    // Als AppImage startet man das AppImage selbst, nicht das entpackte Programm im temporären Ordner.
+    let programm = std::env::var("APPIMAGE")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .or_else(|| std::env::current_exe().ok().map(|p| p.display().to_string()))
+        .unwrap_or_default();
+    Autostart {
+        art,
+        bundle_id: app.config().identifier.clone(),
+        anzeigename: app.config().product_name.clone().unwrap_or_else(|| "FYOS".into()),
+        programm,
+        ablage,
+    }
+}
+
+/// Schaltet den Start bei der Anmeldung ein oder aus und merkt es in den Einstellungen (Opt-in; Vorgabe aus).
+pub fn autostart_schalten(app: &AppHandle, h: &Huelle, an: bool) -> Result<(), Fehler> {
+    autostart_von(app).setzen(an)?;
+    let mut e = sperre(&h.einstellungen);
+    e.autostart = an;
+    einstellungen::speichern(&h.pfade, &e)
+}
+
+#[tauri::command]
+pub fn autostart_setzen(app: AppHandle, h: H<'_>, an: bool) -> Result<(), Meldung> {
+    autostart_schalten(&app, &h, an).map_err(m)
+}
+
+/// Ordner für Berichte: der Schreibtisch des Nutzers, sonst `berichte/` im Datenordner.
+fn bericht_ordner(app: &AppHandle, h: &Huelle) -> std::path::PathBuf {
+    use tauri::Manager;
+    if let Some(p) = std::env::var_os("FYOS_SHELL_BERICHTE").filter(|p| !p.is_empty()) {
+        return std::path::PathBuf::from(p); // Tests und Support: anderer Ordner
+    }
+    app.path().desktop_dir().ok().filter(|p| p.is_dir()).unwrap_or_else(|| h.pfade.daten.join("berichte"))
+}
+
+/// Schreibt den Fehlerbericht (Version, System, Meldungen mit Ursache und Abhilfe, geschwärzte Einstellungen und Protokoll) als Datei.
+/// Nichts wird hochgeladen. `zusatz` ist die Meldung, die der Nutzer gerade sieht. Auch für `--bericht` auf der Kommandozeile.
+pub fn bericht_schreiben(app: &AppHandle, h: &Huelle, zusatz: Option<Meldung>) -> Result<std::path::PathBuf, Fehler> {
+    let produkt = app.config().product_name.clone().unwrap_or_else(|| "FYOS".into());
+    shell_core::bericht::speichern(&bericht_ordner(app, h), &h.bericht(&produkt, zusatz))
+}
+
+#[tauri::command]
+pub fn bericht_speichern(app: AppHandle, h: H<'_>, meldung: Option<Meldung>) -> Result<String, Meldung> {
+    bericht_schreiben(&app, &h, meldung).map(|p| p.display().to_string()).map_err(m)
+}
+
+/// Ist der Tresor erreichbar? Liest einen Eintrag, den es nicht gibt; so entsteht kein Eintrag und keine Rückfrage des Systems.
+/// Wird nur auf Wunsch aufgerufen (Knopf „Tresor prüfen“), nie beim Start.
+#[tauri::command]
+pub fn tresor_pruefen(h: H<'_>) -> Result<(), Meldung> {
+    h.tresor.lesen("tresor-probe").map(|_| ()).map_err(|f| m(f.into()))
+}
+
+/// Legt ein Geheimnis im Tresor ab (nie in einer Datei). Der Wert kommt nicht wieder zur Oberfläche zurück.
+#[tauri::command]
+pub fn geheimnis_setzen(h: H<'_>, name: String, wert: String) -> Result<(), Meldung> {
+    shell_core::tresor::name_pruefen(&name).map_err(m)?;
+    h.tresor.schreiben(&name, &wert).map_err(|f| m(f.into()))
+}
+
+#[tauri::command]
+pub fn geheimnis_loeschen(h: H<'_>, name: String) -> Result<(), Meldung> {
+    shell_core::tresor::name_pruefen(&name).map_err(m)?;
+    h.tresor.loeschen(&name).map_err(|f| m(f.into()))
+}
+
+/// Gibt es den Eintrag? (Antwort ja/nein, nie der Wert.)
+#[tauri::command]
+pub fn geheimnis_vorhanden(h: H<'_>, name: String) -> Result<bool, Meldung> {
+    shell_core::tresor::name_pruefen(&name).map_err(m)?;
+    h.tresor.lesen(&name).map(|w| w.is_some()).map_err(|f| m(f.into()))
 }
 
 /// Sauber beenden: erst den Begleiter, dann die Anwendung.

@@ -16,6 +16,9 @@ We aim to answer within a few days.
 - **https only** for the update address in release builds (the updater refuses plain http there). The local test server used by the tests needs a debug build.
 - **Helper process:** the app starts its helper on a free local port with a random 128-bit identifier and only treats it as healthy if it echoes that identifier
   (header `X-FYOS-Kennung`). A stranger's server on the same port is reported as `PORT_BELEGT` and not used.
+- **Secrets stay out of files.** Tokens and passwords live in the operating system's keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). The settings file only holds
+  references such as `{tresor:hf-token}`, which are resolved when the helper process starts; the settings code refuses to save a plain-text value under names like `token` or `password`.
+  Without a keychain service the app says so (with a remedy per system) and does **not** fall back to a file. The "save report" function redacts tokens, bearer headers, passwords in URLs, long hex keys and user folders, and never uploads anything.
 - **Windows helper process:** the helper runs in a job object that ends it when the app ends, even when the app crashes (not yet exercised on a Windows machine).
 
 ## Key management (no private details)

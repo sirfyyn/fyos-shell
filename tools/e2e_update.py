@@ -83,7 +83,7 @@ def bauen(version, key, ausgabe):
     ziel.mkdir(parents=True)
     r = subprocess.run([sys.executable, str(TOOLS / "bauen.py"), "studio", "--version", version, "--debug", "--bundles", "app",
                         "--update-schluessel", str(key), "--update-pubkey", str(key) + ".pub",
-                        "--update-basis", f"http://127.0.0.1:{PORT_UPDATE}/", "--name", APPNAME])
+                        "--update-basis", f"http://127.0.0.1:{PORT_UPDATE}/", "--name", APPNAME, "--kennung-zusatz", "e2etest"])
     if r.returncode != 0:
         sys.exit(f"Bau {version} fehlgeschlagen")
     bundle = WURZEL / "target" / "debug" / "bundle" / "macos"
@@ -219,9 +219,16 @@ class Umgebung:
         (d / "plugins" / "beispiel" / "plugin.txt").write_text("Plugin-Ordner\n", encoding="utf-8")
         return d
 
-    def lauf(self, app, daten, *args, timeout=120):
+    def eigener_tmp(self):
+        """Eigenes TMPDIR: Einzelinstanz-Socket und Updater-Zwischenordner liegen so getrennt von einer installierten App derselben Bundle-Id
+        (sonst würde ein Test-Start an die echte, laufende App weitergeleitet)."""
+        t = self.arbeit / "tmp"
+        t.mkdir(exist_ok=True)
+        return str(t)
+
+    def lauf(self, app, daten, *args, timeout=120, env_extra=None):
         exe = app / "Contents" / "MacOS" / "fyos-shell"
-        env = dict(os.environ, FYOS_SHELL_DATEN=str(daten))
+        env = dict(os.environ, FYOS_SHELL_DATEN=str(daten), TMPDIR=self.eigener_tmp(), **(env_extra or {}))
         r = subprocess.run([str(exe), *args], capture_output=True, text=True, env=env, timeout=timeout)
         zeilen = [z for z in r.stdout.splitlines() if z.startswith("{")]
         try:
@@ -245,7 +252,7 @@ def pruefe_t2(umg):
     melde("T2", "Begleiter nach dem Selbsttest beendet", not port_offen(PORT_STUDIO))
 
     exe = app / "Contents" / "MacOS" / "fyos-shell"
-    env = dict(os.environ, FYOS_SHELL_DATEN=str(d))
+    env = dict(os.environ, FYOS_SHELL_DATEN=str(d), TMPDIR=umg.eigener_tmp())
     erste = subprocess.Popen([str(exe), "--versteckt"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         melde("T2", "Fenstermodus: Begleiter wird gesund", warten_bis(studio_gesund, 25))
@@ -316,6 +323,56 @@ def pruefe_rollback_schutz(umg, bauten, log):
         _, info, _ = umg.lauf(app, d, "--info")
         melde("T5", f"{name}: Programm unverändert, Version 0.0.2, keine Vorversion gemerkt",
               info and info["version"] == "0.0.2" and info["vorherige"] is None and sha(programm) == vorher, json.dumps(info))
+
+
+def pruefe_d1b(umg):
+    """D1: Fehlerbericht ohne Geheimnisse und Anmeldestart (Opt-in). Beides gegen Wegwerf-Ordner; der echte Schlüsselbund und
+    ~/Library/LaunchAgents werden nicht berührt (FYOS_SHELL_BERICHTE, FYOS_SHELL_AUTOSTART_ORDNER)."""
+    print("D1 Bericht und Autostart")
+    app = umg.installieren("d1b")
+    d = umg.daten("d1b")
+    berichte = umg.arbeit / "berichte"
+    autostart = umg.arbeit / "autostart"
+    for ordner in (berichte, autostart):
+        if ordner.exists():
+            shutil.rmtree(ordner)
+    # ein Klartext-Geheimnis von Hand in die Einstellungen geschrieben: der Bericht darf es nicht enthalten
+    einst = json.loads((d / "einstellungen.json").read_text())
+    einst["begleiter"]["env"] = {"HF_TOKEN": "hf_klartext_geheimnis_9876"}
+    (d / "einstellungen.json").write_text(json.dumps(einst), encoding="utf-8")
+    (d / "begleiter.log").write_text("start\nAuthorization: Bearer abcdefghijklmnop1234567\n", encoding="utf-8")
+    env = {"FYOS_SHELL_BERICHTE": str(berichte), "FYOS_SHELL_AUTOSTART_ORDNER": str(autostart)}
+    code, aus, err = umg.lauf(app, d, "--bericht", env_extra=env)
+    datei = Path((aus or {}).get("datei", "/nicht/da"))
+    text = datei.read_text(encoding="utf-8") if datei.is_file() else ""
+    melde("D1", "--bericht schreibt eine Datei", code == 0 and datei.is_file() and datei.parent == berichte, json.dumps(aus) + err[-200:])
+    melde("D1", "Bericht nennt Version, System, Warnung mit Ursache und Abhilfe",
+          "0.0.1" in text and "macos" in text and "GEHEIMNIS_IN_EINSTELLUNGEN" in text and "Ursache:" in text and "Abhilfe:" in text, text[:400])
+    melde("D1", "Bericht enthält keine Geheimnisse (Einstellungen, Protokoll)",
+          "hf_klartext_geheimnis_9876" not in text and "abcdefghijklmnop1234567" not in text and "<geschwärzt>" in text, text)
+
+    # Anmeldestart mit sauberen Einstellungen (mit einem Klartext-Geheimnis in der Datei wird jedes Speichern verweigert, siehe README)
+    d2 = umg.daten("d1b-autostart")
+    echt = Path.home() / "Library" / "LaunchAgents"
+    fremder_dienst = echt / "de.sirfyyn.fle-studio.plist"  # kann bei Nutzern des Python-Studios existieren; darf nie angefasst werden
+    vorher = sha(fremder_dienst) if fremder_dienst.is_file() else None
+    plist = autostart / "de.sirfyyn.fle-studio.e2etest.autostart.plist"
+    code, aus, err = umg.lauf(app, d2, "--autostart-an", env_extra=env)
+    inhalt = plist.read_text() if plist.is_file() else ""
+    exe = str(app / "Contents" / "MacOS" / "fyos-shell")
+    melde("D1", "--autostart-an legt den LaunchAgent an (RunAtLoad, --versteckt, Pfad dieser App)",
+          code == 0 and "RunAtLoad" in inhalt and "--versteckt" in inhalt and exe in inhalt and "<string>de.sirfyyn.fle-studio.e2etest.autostart</string>" in inhalt,
+          json.dumps(aus) + err[-200:] + inhalt[:200])
+    melde("D1", "Schalter steht in den Einstellungen", json.loads((d2 / "einstellungen.json").read_text()).get("autostart") is True)
+    code, info, _ = umg.lauf(app, d2, "--info", env_extra=env)
+    melde("D1", "Klartext-Geheimnis in den Einstellungen: Speichern wird verweigert (GEHEIMNIS_IN_EINSTELLUNGEN)",
+          umg.lauf(app, d, "--autostart-an", env_extra=env)[1].get("fehler", {}).get("code") == "GEHEIMNIS_IN_EINSTELLUNGEN")
+    code, aus, _ = umg.lauf(app, d2, "--autostart-aus", env_extra=env)
+    melde("D1", "--autostart-aus nimmt ihn zurück, nichts bleibt liegen",
+          code == 0 and not plist.exists() and json.loads((d2 / "einstellungen.json").read_text()).get("autostart") is False and not list(autostart.iterdir()), json.dumps(aus))
+    nachher = sha(fremder_dienst) if fremder_dienst.is_file() else None
+    melde("D1", "der echte Anmeldeordner wurde nicht berührt (ein vorhandener Dienst gleicher Bundle-Id bleibt bytegleich)",
+          vorher == nachher and not (echt / "de.sirfyyn.fle-studio.autostart.plist").exists())
 
 
 def pruefe_echtes_studio(umg):
@@ -433,6 +490,7 @@ def main():
         pruefe_t3_t5(umg)
         pruefe_rollback_schutz(umg, bauten, log)
         pruefe_fehler(umg)
+        pruefe_d1b(umg)
         if umg.echtes_studio:
             pruefe_echtes_studio(umg)
     finally:

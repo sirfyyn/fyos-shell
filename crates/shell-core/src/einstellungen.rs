@@ -45,14 +45,63 @@ impl Default for Einstellungen {
 /// Lädt die Einstellungen. Eine beschädigte Datei liefert Standardwerte **und** den Fehler zum Anzeigen.
 pub fn laden(pfade: &Pfade) -> (Einstellungen, Option<Fehler>) {
     match json_lesen::<Einstellungen>(&pfade.einstellungen()) {
-        Gelesen::Ok(e) => (e, None),
+        // Von Hand eingetragene Geheimnisse werden nicht entfernt (das wäre Datenverlust), aber gemeldet.
+        Gelesen::Ok(e) => {
+            let warnung = geheimnis_suchen(&e).map(|schluessel| Fehler::GeheimnisInEinstellungen { schluessel });
+            (e, warnung)
+        }
         Gelesen::Fehlt => (Einstellungen::default(), None),
         Gelesen::Kaputt(f) => (Einstellungen::default(), Some(f)),
     }
 }
 
 pub fn speichern(pfade: &Pfade, e: &Einstellungen) -> Result<(), Fehler> {
+    if let Some(schluessel) = geheimnis_suchen(e) {
+        return Err(Fehler::GeheimnisInEinstellungen { schluessel });
+    }
     json_schreiben(&pfade.einstellungen(), e)
+}
+
+const GEHEIME_NAMEN: [&str; 8] = ["token", "passwort", "password", "secret", "geheim", "apikey", "api_key", "api-key"];
+
+fn klingt_geheim(name: &str) -> bool {
+    let n = name.to_lowercase();
+    GEHEIME_NAMEN.iter().any(|g| n.contains(g))
+}
+
+fn wert_ist_verweis_oder_leer(w: &Value) -> bool {
+    match w {
+        Value::Null => true,
+        Value::String(s) => s.is_empty() || crate::tresor::hat_verweis(s),
+        _ => false,
+    }
+}
+
+fn json_durchsuchen(pfad: &str, w: &Value) -> Option<String> {
+    match w {
+        Value::Object(o) => o.iter().find_map(|(k, v)| {
+            let hier = format!("{pfad}.{k}");
+            if klingt_geheim(k) && !wert_ist_verweis_oder_leer(v) {
+                Some(hier)
+            } else {
+                json_durchsuchen(&hier, v)
+            }
+        }),
+        Value::Array(a) => a.iter().enumerate().find_map(|(i, v)| json_durchsuchen(&format!("{pfad}[{i}]"), v)),
+        Value::String(s) => url_mit_passwort(s).then(|| pfad.to_string()),
+        _ => None,
+    }
+}
+
+fn url_mit_passwort(s: &str) -> bool {
+    url::Url::parse(s).map(|u| u.password().is_some()).unwrap_or(false)
+}
+
+/// Sieht irgendetwas in den Einstellungen nach einem Geheimnis aus (Schlüsselname wie `token`/`password` mit einem Klartextwert, oder eine
+/// Adresse mit Passwort)? Liefert den Pfad des ersten Fundes. Verweise der Form `{tresor:NAME}` und leere Werte sind in Ordnung.
+pub fn geheimnis_suchen(e: &Einstellungen) -> Option<String> {
+    let json = serde_json::to_value(e).ok()?;
+    json_durchsuchen("einstellungen", &json)
 }
 
 #[cfg(test)]
@@ -111,5 +160,57 @@ mod tests {
         let (e, f) = laden(&p);
         assert_eq!(e, Einstellungen::default());
         assert_eq!(f.unwrap().code(), "EINSTELLUNGEN_KAPUTT");
+    }
+
+    fn mit_env(name: &str, wert: &str) -> Einstellungen {
+        let mut e = Einstellungen::default();
+        let mut k = BegleiterKonfig::default();
+        k.env.insert(name.to_string(), wert.to_string());
+        e.begleiter = Some(k);
+        e
+    }
+
+    #[test]
+    fn klartext_geheimnisse_werden_nicht_gespeichert() {
+        let d = tempfile::tempdir().unwrap();
+        let p = Pfade::neu(d.path());
+        for (name, wert) in [("HF_TOKEN", "hf_abcdef"), ("DB_PASSWORD", "hunter2"), ("api-key", "k")] {
+            let f = speichern(&p, &mit_env(name, wert)).unwrap_err();
+            assert_eq!(f.code(), "GEHEIMNIS_IN_EINSTELLUNGEN", "{name}");
+        }
+        assert!(!p.einstellungen().exists(), "es darf nichts geschrieben worden sein");
+        // Unbekannte Felder (z. B. aus einer neueren Fassung) zählen auch
+        let mut e = Einstellungen::default();
+        e.weitere.insert("proxy".into(), serde_json::json!({"passwort": "x"}));
+        assert!(speichern(&p, &e).is_err());
+    }
+
+    #[test]
+    fn verweise_und_leere_werte_sind_erlaubt() {
+        let d = tempfile::tempdir().unwrap();
+        let p = Pfade::neu(d.path());
+        speichern(&p, &mit_env("HF_TOKEN", "{tresor:hf-token}")).unwrap();
+        speichern(&p, &mit_env("HF_TOKEN", "")).unwrap();
+        speichern(&p, &mit_env("LOG_LEVEL", "debug")).unwrap();
+    }
+
+    #[test]
+    fn adresse_mit_passwort_ist_ein_geheimnis() {
+        let mut e = Einstellungen::default();
+        e.update_basis = Some("https://nutzer:geheim@updates.example/studio/".into());
+        assert!(geheimnis_suchen(&e).is_some());
+        e.update_basis = Some("https://updates.example/studio/".into());
+        assert!(geheimnis_suchen(&e).is_none());
+    }
+
+    #[test]
+    fn handgeschriebenes_geheimnis_wird_gemeldet_aber_nicht_entfernt() {
+        let d = tempfile::tempdir().unwrap();
+        let p = Pfade::neu(d.path());
+        fs::write(p.einstellungen(), r#"{"begleiter":{"programm":"x","env":{"HF_TOKEN":"hf_klar"}}}"#).unwrap();
+        let (e, f) = laden(&p);
+        assert_eq!(f.unwrap().code(), "GEHEIMNIS_IN_EINSTELLUNGEN");
+        assert_eq!(e.begleiter.unwrap().env["HF_TOKEN"], "hf_klar");
+        assert!(fs::read_to_string(p.einstellungen()).unwrap().contains("hf_klar"));
     }
 }

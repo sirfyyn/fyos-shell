@@ -5,7 +5,8 @@
   linux_pruefen.py pruefen          --info und --selbsttest unter Xvfb, mit und ohne WEBKIT_DISABLE_DMABUF_RENDERER=1
   linux_pruefen.py schleife         Update-Schleife als AppImage: 0.0.1 -> 0.0.2, Rückweg, Daten bleiben, Signaturfehler,
                                     Rollback-Schutz (baut beide Versionen, startet den Test-Server im Container)
-  linux_pruefen.py pixel            Fenster unter Xvfb sichtbar öffnen, Abzug mit xwd, Pixelprobe (tools/pixelprobe.py)
+  linux_pruefen.py pixel            Fenster unter Xvfb sichtbar öffnen, Abzug über Xvfb -fbdir, Pixelprobe (tools/pixelprobe.py)
+  linux_pruefen.py tresor           ohne Secret-Service-Dienst: Verweis {tresor:NAME} gibt TRESOR_NICHT_VERFUEGBAR mit Abhilfe (kein stilles Ausweichen)
 
 Alles läuft ohne GPU und ohne echten Bildschirm (Xvfb, Mesa-Software). Der Selbsttest beweist: WebKitGTK startet, die lokale Seite
 wird geladen, JavaScript läuft, der Rust-Befehl antwortet; die Pixelprobe beweist zusätzlich, dass im Fenster etwas zu sehen ist
@@ -73,7 +74,7 @@ def appimage():
     return gefunden[0]
 
 
-def daten(name, update_basis=None):
+def daten(name, update_basis=None, begleiter_env=None):
     d = WURZEL / "daten-linux" / name
     if d.exists():
         shutil.rmtree(d)
@@ -82,6 +83,8 @@ def daten(name, update_basis=None):
     einst = {"schema": 1, "meine_eigene_einstellung": {"bleibt": [1, 2, 3]},
              "begleiter": {"programm": sys.executable, "frist_s": 20, "env": {},
                            "args": [str(TOOLS / "testserver.py"), "studio", "--version", "4.0.0-test"]}}
+    if begleiter_env:
+        einst["begleiter"]["env"] = begleiter_env
     if update_basis:
         einst["update_basis"] = update_basis
     (d / "einstellungen.json").write_text(json.dumps(einst), encoding="utf-8")
@@ -252,6 +255,22 @@ def fenster_id(anzeige, titel, sekunden=60):
     return None
 
 
+def tresor():
+    """Im Container läuft kein Secret-Service-Dienst (nur ein leerer D-Bus-Sitzungsbus). Verweist die Einstellung auf ein Geheimnis, muss
+    der Start mit dem Katalogfehler TRESOR_NICHT_VERFUEGBAR und einer Abhilfe scheitern, und nichts darf unbemerkt auf eine Datei ausweichen."""
+    app = appimage()
+    d = daten("tresor", begleiter_env={"HF_TOKEN": "{tresor:hf-token}"})
+    code, aus, err = unter_xvfb(app, d, "--selbsttest", {})
+    text = next((s["text"] for s in (aus or {}).get("schritte", []) if s["name"] == "begleiter"), "")
+    melde("ohne Secret Service: TRESOR_NICHT_VERFUEGBAR mit Abhilfe, Selbsttest meldet den Fehler",
+          code == 3 and "TRESOR_NICHT_VERFUEGBAR" in text and "Abhilfe:" in text, json.dumps(aus) + err)
+    melde("kein Begleiter wurde ohne das Geheimnis gestartet", not (d / "begleiter.log").exists() or "hf-token" not in (d / "begleiter.log").read_text())
+    melde("das Geheimnis steht nirgends in einer Datei der Einstellungen", "geheim" not in (d / "einstellungen.json").read_text().lower() or "{tresor:hf-token}" in (d / "einstellungen.json").read_text())
+    schlecht = [n for n, ok in ERGEBNISSE if not ok]
+    print(f"{len(ERGEBNISSE) - len(schlecht)} von {len(ERGEBNISSE)} Prüfungen bestanden.")
+    sys.exit(1 if schlecht else 0)
+
+
 def pixel():
     app = appimage()
     sys.path.insert(0, str(TOOLS))
@@ -303,6 +322,8 @@ if __name__ == "__main__":
         pruefen()
     elif modus == "schleife":
         schleife()
+    elif modus == "tresor":
+        tresor()
     elif modus == "pixel":
         pixel()
     else:

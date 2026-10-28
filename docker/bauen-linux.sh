@@ -5,6 +5,7 @@
 #   bash bauen-linux.sh bauen [profil]       AppImage bauen (Debug) mit Testschlüsseln, siehe tools/linux_pruefen.py
 #   bash bauen-linux.sh pruefen              Selbsttest unter Xvfb, mit und ohne WEBKIT_DISABLE_DMABUF_RENDERER=1
 #   bash bauen-linux.sh schleife             Update-Schleife als AppImage (baut 0.0.1 und 0.0.2, Test-Server im Container)
+#   bash bauen-linux.sh tresor               Tresor ohne Secret-Service-Dienst: Fehler mit Abhilfe
 #   bash bauen-linux.sh pixel                Pixelprobe: Fenster unter Xvfb öffnen, xwd-Abzug prüfen
 #
 # Begrenzungen (Umgebung): FYOS_BAU_CPUSET (z. B. 28-31; leer = alle Kerne), FYOS_BAU_SPEICHER in GB (Vorgabe 20), FYOS_BAU_JOBS (Vorgabe 4),
@@ -48,6 +49,9 @@ case "${1:-}" in
     ;;
   schleife)
     im_container bash -c "test -x node_modules/.bin/tauri || npm install --no-audit --no-fund; python3 tools/linux_pruefen.py schleife"
+    ;;
+  tresor)
+    im_container python3 tools/linux_pruefen.py tresor
     ;;
   pixel)
     im_container python3 tools/linux_pruefen.py pixel

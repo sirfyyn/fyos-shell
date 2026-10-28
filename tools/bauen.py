@@ -43,6 +43,9 @@ def overlay(a):
         conf["version"] = a.version
     if a.name:
         conf["productName"] = a.name
+    if a.kennung_zusatz:
+        basis = json.loads((APP / "profile" / f"{a.profil}.conf.json").read_text(encoding="utf-8"))["identifier"]
+        conf["identifier"] = f"{basis}.{a.kennung_zusatz}"
     updater = {}
     if a.update_basis:
         updater["endpoints"] = [a.update_basis.rstrip("/") + "/latest.json"]
@@ -65,6 +68,7 @@ def main():
     p.add_argument("--name", help="überschreibt den Produktnamen (Tests, damit nichts mit einer echten Installation verwechselt wird)")
     p.add_argument("--debug", action="store_true", help="Debug-Bau (schnell); ohne: Release")
     p.add_argument("--bundles", default=None, help="app, dmg (macOS) · appimage, deb (Linux) · nsis, msi (Windows)")
+    p.add_argument("--kennung-zusatz", help="hängt der Bundle-Id einen Zusatz an (<id>.<zusatz>): Test-Bau, der nicht mit einer installierten App kollidiert (Einzelinstanz, Daten, Tresor)")
     p.add_argument("--ohne-paket", action="store_true", help="nur das Programm bauen, kein Installationspaket (für den Selbsttest im CI)")
     p.add_argument("--schluesselbund", action="store_true", help="privaten Update-Schlüssel und Passwort dieses Profils aus dem macOS-Schlüsselbund holen")
     p.add_argument("--update-schluessel", help="Pfad (oder Inhalt) des privaten Update-Schlüssels; sonst Umgebung TAURI_SIGNING_PRIVATE_KEY")

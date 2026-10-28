@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-geheimnis-loeschen"
+description = "Enables the geheimnis_loeschen command without any pre-configured scope."
+commands.allow = ["geheimnis_loeschen"]
+
+[[permission]]
+identifier = "deny-geheimnis-loeschen"
+description = "Denies the geheimnis_loeschen command without any pre-configured scope."
+commands.deny = ["geheimnis_loeschen"]

@@ -52,6 +52,11 @@ AUSNAHMEN = [
      "Update-Adresse je Profil: Konfiguration, kein Geheimnis; die App holt Updates von dort"),
     (r"^crates/shell-core/src/profil\.rs$|^app/src/zustand\.rs$", "interne-adresse", r"https://fyos\.sirfyyn\.de/os\b",
      "Vorgabe der Start-URL des Profils os (die Weboberfläche des Projekts), Konfiguration pro Profil; Nutzer können sie in den Einstellungen ändern"),
+    # Erfundene Werte, an denen das Schwärzen und die Pfadlogik geprüft werden (Tests und e2e); keine echten Daten.
+    (r"^crates/shell-core/src/(bericht|autostart)\.rs$|^tools/e2e_update\.py$", "geheimnis", r"abcdefghijklmnop\d+|ghp_abcdefghijklmnopqrstuv|AKIAABCDEFGHIJKLMNOP|hf_AbCdEfGhIjKlMn123",
+     "Testwerte für das Schwärzen (erfunden)"),
+    (r"^crates/shell-core/src/(bericht|autostart)\.rs$", "persoenlicher-pfad", r"/Users/(anna|maxm)|/home/(x|anna)|C:\\\\Users\\\\Bob",
+     "erfundene Pfade für Tests der Pfadlogik und des Schwärzens"),
     (r"^tools/bauen\.py$", "interne-adresse", r"https://fyos\.sirfyyn\.de/update/<profil>/latest\.json",
      "Dokumentation der Update-Adresse je Profil (siehe app/profile/*.conf.json)"),
 ]

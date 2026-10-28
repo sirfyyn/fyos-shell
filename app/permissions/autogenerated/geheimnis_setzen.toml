@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-geheimnis-setzen"
+description = "Enables the geheimnis_setzen command without any pre-configured scope."
+commands.allow = ["geheimnis_setzen"]
+
+[[permission]]
+identifier = "deny-geheimnis-setzen"
+description = "Denies the geheimnis_setzen command without any pre-configured scope."
+commands.deny = ["geheimnis_setzen"]

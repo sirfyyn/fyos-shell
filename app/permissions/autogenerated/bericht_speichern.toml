@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bericht-speichern"
+description = "Enables the bericht_speichern command without any pre-configured scope."
+commands.allow = ["bericht_speichern"]
+
+[[permission]]
+identifier = "deny-bericht-speichern"
+description = "Denies the bericht_speichern command without any pre-configured scope."
+commands.deny = ["bericht_speichern"]

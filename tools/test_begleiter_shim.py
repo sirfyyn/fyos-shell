@@ -143,5 +143,81 @@ class BeendenTest(unittest.TestCase):
         self.assertFalse(lebt, "Studio läuft nach dem Beenden des Shims weiter")
 
 
+class PlattformTest(unittest.TestCase):
+    """Der Prozessbaum-Teil ist plattformneutral; der Windows-Zweig wird hier mit Attrappen geprüft (kein Windows-Rechner nötig)."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(SHIM.parent))
+        import begleiter_shim
+        cls.shim_modul = begleiter_shim
+
+    def test_start_unter_windows_nutzt_eigene_prozessgruppe_ohne_fenster(self):
+        aufrufe = []
+        self.shim_modul.kind_starten(["studio"], windows=True, popen=lambda *a, **kw: aufrufe.append((a, kw)))
+        (args, kw), = aufrufe
+        self.assertEqual(kw, {"creationflags": 0x00000200 | 0x08000000})
+        self.assertNotIn("start_new_session", kw)
+
+    def test_start_unter_unix_nutzt_eigene_sitzung(self):
+        aufrufe = []
+        self.shim_modul.kind_starten(["studio"], windows=False, popen=lambda *a, **kw: aufrufe.append(kw))
+        self.assertEqual(aufrufe, [{"start_new_session": True}])
+
+    def _attrappe(self, beendet):
+        class Kind:
+            pid = 4711
+            signale = []
+
+            def poll(self):
+                return 0 if beendet else None
+
+            def send_signal(self, s):
+                self.signale.append(s)
+
+            def wait(self, timeout=None):
+                if not beendet:
+                    raise subprocess.TimeoutExpired("studio", timeout)
+        return Kind()
+
+    def test_beenden_unter_windows_erst_ctrl_break_dann_taskkill_auf_den_baum(self):
+        k = self._attrappe(beendet=False)
+        befehle = []
+        self.shim_modul.baum_beenden(k, windows=True, ausfuehren=lambda cmd, **kw: befehle.append(cmd), sanft_s=0.01)
+        self.assertEqual(k.signale, [getattr(signal, "CTRL_BREAK_EVENT", 1)])
+        self.assertEqual(befehle, [["taskkill", "/PID", "4711", "/T", "/F"]])
+
+    def test_beenden_unter_windows_bei_schon_beendetem_studio_ist_kein_fehler(self):
+        k = self._attrappe(beendet=True)
+        befehle = []
+        self.shim_modul.baum_beenden(k, windows=True, ausfuehren=lambda cmd, **kw: befehle.append(cmd))
+        self.assertEqual(k.signale, [], "kein Signal an einen beendeten Prozess")
+        self.assertEqual(len(befehle), 1, "Nachkommen werden trotzdem eingesammelt")
+
+    @unittest.skipIf(os.name == "nt", "Unix-Zweig")
+    def test_beenden_unter_unix_nimmt_den_ganzen_baum(self):
+        kind = self.shim_modul.kind_starten(["sh", "-c", "sleep 30 & echo $! ; wait"], windows=False, popen=lambda b, **kw: subprocess.Popen(b, stdout=subprocess.PIPE, text=True, **kw))
+        enkel = int(kind.stdout.readline())
+        os.kill(enkel, 0)
+        self.shim_modul.baum_beenden(kind, windows=False, sanft_s=5)
+        ende = time.time() + 3
+        lebt = True
+        while lebt and time.time() < ende:
+            try:
+                os.kill(enkel, 0)
+                time.sleep(0.05)
+            except ProcessLookupError:
+                lebt = False
+        self.assertFalse(lebt)
+
+    def test_abbruchsignale_binden_sigterm(self):
+        alt = signal.getsignal(signal.SIGTERM)
+        try:
+            self.shim_modul.abbruchsignale(lambda *_: None)
+            self.assertNotEqual(signal.getsignal(signal.SIGTERM), alt)
+        finally:
+            signal.signal(signal.SIGTERM, alt)
+
+
 if __name__ == "__main__":
     unittest.main()

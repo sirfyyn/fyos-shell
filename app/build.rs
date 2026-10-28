@@ -10,6 +10,12 @@ const BEFEHLE: &[&str] = &[
     "inhalt_oeffnen",
     "einstellung_setzen",
     "seite_bereit",
+    "bericht_speichern",
+    "autostart_setzen",
+    "tresor_pruefen",
+    "geheimnis_setzen",
+    "geheimnis_loeschen",
+    "geheimnis_vorhanden",
 ];
 
 fn main() {

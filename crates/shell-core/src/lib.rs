@@ -5,12 +5,15 @@
 //! - [`speicher`], [`einstellungen`], [`verlauf`]: Datenordner, Einstellungen, Vorversion (Rückweg)
 //! - [`update`]: Versionsvergleich und Manifest-Adressen
 //! - [`links`]: Deeplink-Prüfung
+//! - [`bericht`]: Fehlerbericht ohne Geheimnisse
 //! - [`begleiter`]: Schnittstelle und Kindprozess für den Studio-Server
 //! - [`prozessgruppe`]: Prozessbaum beenden (Unix: Prozessgruppe, Windows: Job-Objekt)
 //! - [`studio`]: Lesen von `/api/state`
 //! - [`tresor`]: Schnittstelle für Geheimnisse
 
+pub mod autostart;
 pub mod begleiter;
+pub mod bericht;
 pub mod einstellungen;
 pub mod fehler;
 pub mod links;

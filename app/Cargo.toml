@@ -30,6 +30,7 @@ semver.workspace = true
 url.workspace = true
 ureq = "2"
 ctrlc = { version = "3", features = ["termination"] }
+shell-tresor = { path = "../crates/shell-tresor" }
 
 [dev-dependencies]
 tempfile.workspace = true

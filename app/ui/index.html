@@ -18,6 +18,7 @@
       <p id="meldung-ursache"></p>
       <p id="meldung-abhilfe"></p>
       <small id="meldung-code" class="leise"></small>
+      <div class="zeile"><button id="bericht" type="button">Bericht speichern</button></div>
     </section>
 
     <section id="erfolg" class="erfolg" hidden aria-live="polite"></section>
@@ -49,6 +50,33 @@
         <button id="update-einspielen" type="button" class="haupt" hidden>Installieren und neu starten</button>
         <button id="zurueck" type="button" hidden>Zurück zur Vorversion</button>
       </div>
+    </section>
+
+    <section>
+      <h2>Start</h2>
+      <label><input id="autostart" type="checkbox"> Bei der Anmeldung starten (nur im Tray, ohne Fenster)</label>
+      <p class="leise">Standard: aus. Du kannst es hier jederzeit wieder ausschalten.</p>
+    </section>
+
+    <section>
+      <h2>Geheimnisse</h2>
+      <p class="leise">Passwörter und Zugangsschlüssel liegen im Tresor des Systems, nie in einer Datei. In den Einstellungen verweist man mit <code>{tresor:NAME}</code> darauf.</p>
+      <div class="zeile">
+        <input id="g-name" type="text" aria-label="Name des Geheimnisses" placeholder="Name (z. B. hf-token)" autocomplete="off">
+        <input id="g-wert" type="password" aria-label="Wert des Geheimnisses" placeholder="Wert" autocomplete="off">
+      </div>
+      <div class="zeile">
+        <button id="g-speichern" type="button">Im Tresor speichern</button>
+        <button id="g-loeschen" type="button">Löschen</button>
+        <button id="g-pruefen" type="button">Tresor prüfen</button>
+      </div>
+      <p id="g-text" class="leise"></p>
+    </section>
+
+    <section>
+      <h2>Fehlerbericht</h2>
+      <p class="leise">Schreibt eine Textdatei mit Version, System, Meldungen und geschwärzten Einstellungen auf den Schreibtisch. Es wird nichts hochgeladen.</p>
+      <button id="bericht-fuss" type="button">Bericht speichern</button>
     </section>
 
     <footer class="leise">

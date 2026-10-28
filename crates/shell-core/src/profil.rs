@@ -31,10 +31,12 @@ impl Profil {
         }
     }
 
+    /// Erkennt das Profil an der Bundle-Id. Erlaubt ist auch `<Bundle-Id>.<Zusatz>` (Test-Bauten mit eigener Kennung, damit sie nicht mit einer
+    /// installierten App gleicher Bundle-Id kollidieren: Einzelinstanz-Socket, Datenordner, Tresor, Anmeldestart).
     pub fn aus_bundle_id(kennung: &str) -> Result<Profil, Fehler> {
         Profil::ALLE
             .into_iter()
-            .find(|p| p.bundle_id() == kennung)
+            .find(|p| kennung == p.bundle_id() || kennung.strip_prefix(p.bundle_id()).is_some_and(|rest| rest.starts_with('.') && rest.len() > 1))
             .ok_or_else(|| Fehler::ProfilUnbekannt { kennung: kennung.to_string() })
     }
 
@@ -69,6 +71,15 @@ mod tests {
     fn bundle_ids_gehen_hin_und_zurueck() {
         for p in Profil::ALLE {
             assert_eq!(Profil::aus_bundle_id(p.bundle_id()).unwrap(), p);
+        }
+    }
+
+    #[test]
+    fn test_bauten_mit_zusatz_werden_dem_profil_zugeordnet() {
+        assert_eq!(Profil::aus_bundle_id("de.sirfyyn.fle-studio.e2etest").unwrap(), Profil::Studio);
+        assert_eq!(Profil::aus_bundle_id("de.sirfyyn.fyos-os.probe.2").unwrap(), Profil::Os);
+        for falsch in ["de.sirfyyn.fle-studiox", "de.sirfyyn.fle-studio.", "xde.sirfyyn.fle-studio", "de.sirfyyn.fle", ""] {
+            assert!(Profil::aus_bundle_id(falsch).is_err(), "{falsch}");
         }
     }
 

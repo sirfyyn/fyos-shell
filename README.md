@@ -3,7 +3,8 @@
 One [Tauri 2](https://v2.tauri.app/) shell, three apps: **FLE Studio**, **FYOS Agent** and **FYOS OS** (macOS, Windows, Linux).
 Each app is a *profile* of the same code (`app/profile/<name>.conf.json`): its own bundle id, name, deep-link scheme, update address
 and update key. The shell gives every profile the same things: a single instance, a tray icon, deep links (`fle://` / `fyos://`),
-a supervised helper process, a self-updater with signature check and a "go back" button, and error messages that always say
+a supervised helper process, a self-updater with signature check and a "go back" button, secrets in the operating system's keychain (never in a file),
+an opt-in start at login, a "save report" button that writes a redacted error report to disk (nothing is uploaded), and error messages that always say
 **what happened and what you can do about it**.
 
 Status: first working slice ("D0/D1"). It is a shell and an update loop, not yet the finished apps. Licence: [Apache-2.0](LICENSE).
@@ -12,7 +13,8 @@ Status: first working slice ("D0/D1"). It is a shell and an update loop, not yet
 
 | Path | What |
 |---|---|
-| `crates/shell-core` | The core without any window code, fully unit-tested: error catalogue, settings that survive updates, version history (for "go back"), deep-link validation, helper-process supervision, process-tree handling (Unix process group, Windows job object), update decisions |
+| `crates/shell-core` | The core without any window code, fully unit-tested: error catalogue, settings that survive updates (and refuse plain-text secrets), version history (for "go back"), deep-link validation, helper-process supervision, process-tree handling (Unix process group, Windows job object), update decisions, error report with redaction, login-start entries |
+| `crates/shell-tresor` | System keychain behind one interface (`keyring`: macOS Keychain, Windows Credential Manager, Linux Secret Service); settings refer to secrets as `{tresor:NAME}` |
 | `app` | The Tauri application (window, tray, single instance, updater wiring, commands); `app/profile/*.conf.json` are the three profiles; `app/ui` is the small local page |
 | `tools` | Build script, test servers, end-to-end update test, Linux container checks, pixel probe, checksums, this repo's own "is it safe to publish" scan (`oeffentlich_pruefen.py`) |
 | `docker` | Linux build container and a MinGW container for a Windows compile check |
@@ -20,7 +22,7 @@ Status: first working slice ("D0/D1"). It is a shell and an update loop, not yet
 
 ## Build and test
 
-Requirements: Rust (stable), Node 22, Python 3.9+. On Linux also `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev`.
+Requirements: Rust (stable), Node 22, Python 3.9+. On Linux also `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev`.
 The Tauri CLI is installed locally (`npm ci`), nothing is installed globally.
 
 ```sh

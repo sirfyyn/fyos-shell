@@ -3,15 +3,15 @@
 //! Leitregel: Eine Fehlermeldung nennt, was los ist **und** was der Nutzer tun kann.
 //! Der Code ist stabil (Protokoll, Support, Tests); die Texte sind für Menschen.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io;
 use std::path::Path;
 
 /// Die Meldung, wie sie die Oberfläche und das Protokoll bekommen.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Meldung {
-    pub code: &'static str,
+    pub code: String,
     pub ursache: String,
     pub abhilfe: String,
     /// Technische Einzelheit (OS-Fehler, URL) für das Protokoll; nie das Einzige, was der Nutzer sieht.
@@ -59,6 +59,18 @@ pub enum Fehler {
     LinkAbgelehnt { link: String, grund: String },
     /// Das Programm kennt seine Profilkennung nicht.
     ProfilUnbekannt { kennung: String },
+    /// Auf diesem System ist kein Tresor (Schlüsselbund, Anmeldeinformationen, Secret Service) erreichbar.
+    TresorNichtVerfuegbar { grund: String },
+    /// Der Tresor ist da, verweigert aber Lesen oder Schreiben (gesperrt, Zugriff abgelehnt).
+    TresorZugriff { grund: String },
+    /// Ein Geheimnis, auf das die Einstellungen verweisen (`{tresor:NAME}`), liegt nicht im Tresor.
+    TresorEintragFehlt { name: String },
+    /// Jemand wollte ein Geheimnis in `einstellungen.json` schreiben.
+    GeheimnisInEinstellungen { schluessel: String },
+    /// Der Name eines Tresor-Eintrags ist unzulässig.
+    TresorNameUnzulaessig { name: String },
+    /// Der Eintrag für den Start bei der Anmeldung lässt sich nicht schreiben oder lesen.
+    AutostartFehlgeschlagen { ort: String, grund: String },
 }
 
 fn kurz(s: &str) -> String {
@@ -94,6 +106,12 @@ impl Fehler {
             Fehler::DatenordnerNichtBeschreibbar { .. } => "DATENORDNER_NICHT_BESCHREIBBAR",
             Fehler::LinkAbgelehnt { .. } => "LINK_ABGELEHNT",
             Fehler::ProfilUnbekannt { .. } => "PROFIL_UNBEKANNT",
+            Fehler::TresorNichtVerfuegbar { .. } => "TRESOR_NICHT_VERFUEGBAR",
+            Fehler::TresorZugriff { .. } => "TRESOR_ZUGRIFF",
+            Fehler::TresorEintragFehlt { .. } => "TRESOR_EINTRAG_FEHLT",
+            Fehler::GeheimnisInEinstellungen { .. } => "GEHEIMNIS_IN_EINSTELLUNGEN",
+            Fehler::TresorNameUnzulaessig { .. } => "TRESOR_NAME_UNZULAESSIG",
+            Fehler::AutostartFehlgeschlagen { .. } => "AUTOSTART_FEHLGESCHLAGEN",
         }
     }
 
@@ -195,8 +213,38 @@ impl Fehler {
                 "Die Anwendung mit einer Profildatei aus profile/ bauen oder die offizielle Fassung installieren.".into(),
                 Some(kennung.clone()),
             ),
+            Fehler::TresorNichtVerfuegbar { grund } => (
+                "Auf diesem Gerät ist kein Tresor für Geheimnisse (Passwörter, Zugangsschlüssel) erreichbar. Die Anwendung speichert Geheimnisse nie in einer Datei.".into(),
+                "macOS: den Schlüsselbund entsperren (Programm „Schlüsselbundverwaltung“). Windows: der Dienst „Anmeldeinformationsverwaltung“ muss laufen. Linux: einen Secret-Service-Dienst starten und anmelden (GNOME: „Passwörter und Schlüssel“, KDE: KWallet mit Secret-Service-Brücke), danach die Anwendung neu starten.".into(),
+                Some(kurz(grund)),
+            ),
+            Fehler::TresorZugriff { grund } => (
+                "Der Tresor verweigert den Zugriff (gesperrt oder abgelehnt).".into(),
+                "Den Schlüsselbund bzw. Tresor entsperren und die Rückfrage des Systems mit „Erlauben“ beantworten; bei „Immer erlauben“ fragt das System nicht erneut.".into(),
+                Some(kurz(grund)),
+            ),
+            Fehler::TresorEintragFehlt { name } => (
+                format!("Das Geheimnis „{name}“, auf das die Einstellungen verweisen, liegt nicht im Tresor."),
+                "Das Geheimnis in der Anwendung eintragen (Einstellungen → Geheimnisse) oder den Verweis {tresor:…} aus den Einstellungen entfernen.".into(),
+                None,
+            ),
+            Fehler::GeheimnisInEinstellungen { schluessel } => (
+                format!("Der Wert „{schluessel}“ sieht nach einem Geheimnis aus und wird nicht in der Einstellungsdatei gespeichert."),
+                "Das Geheimnis im Tresor ablegen und in den Einstellungen nur den Verweis {tresor:NAME} eintragen.".into(),
+                None,
+            ),
+            Fehler::TresorNameUnzulaessig { name } => (
+                "Der Name des Tresor-Eintrags ist nicht zulässig (erlaubt: Kleinbuchstaben, Ziffern, Punkt, Strich, Unterstrich; höchstens 64 Zeichen).".into(),
+                "Einen kürzeren Namen aus erlaubten Zeichen wählen, z. B. „hf-token“.".into(),
+                Some(kurz(name)),
+            ),
+            Fehler::AutostartFehlgeschlagen { ort, grund } => (
+                "Der Start bei der Anmeldung konnte nicht ein- oder ausgeschaltet werden.".into(),
+                "Prüfen, ob der Ordner bzw. Registrypfad beschreibbar ist (Benutzerrechte, Platz, Sicherheitssoftware). Die Anwendung läuft ganz normal weiter; der Start per Hand bleibt möglich.".into(),
+                Some(kurz(&format!("{ort}: {grund}"))),
+            ),
         };
-        Meldung { code: self.code(), ursache, abhilfe, details }
+        Meldung { code: self.code().to_string(), ursache, abhilfe, details }
     }
 
     /// Ein E/A-Fehler beim Schreiben unter `pfad`: „Platte voll“ wird erkannt, alles andere ist ein Datenordner-Fehler.
@@ -251,6 +299,12 @@ mod tests {
             Fehler::DatenordnerNichtBeschreibbar { pfad: s("p"), grund: s("g") },
             Fehler::LinkAbgelehnt { link: s("l"), grund: s("g") },
             Fehler::ProfilUnbekannt { kennung: s("k") },
+            Fehler::TresorNichtVerfuegbar { grund: s("g") },
+            Fehler::TresorZugriff { grund: s("g") },
+            Fehler::TresorEintragFehlt { name: s("n") },
+            Fehler::GeheimnisInEinstellungen { schluessel: s("s") },
+            Fehler::TresorNameUnzulaessig { name: s("n") },
+            Fehler::AutostartFehlgeschlagen { ort: s("o"), grund: s("g") },
         ]
     }
 

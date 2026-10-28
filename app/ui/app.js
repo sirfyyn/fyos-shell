@@ -6,7 +6,10 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 
+let letzteMeldung = null;
+
 function zeigeMeldung(m) {
+  letzteMeldung = m || null;
   $("meldung").hidden = !m;
   if (!m) return;
   $("meldung-kopf").textContent = "Das hat nicht geklappt";
@@ -52,6 +55,7 @@ async function laden() {
   $("url-eingabe").value = i.start_url;
   $("studio").hidden = i.profil !== "studio";
   $("studio-text").textContent = begleiterText(i.begleiter);
+  $("autostart").checked = !!i.autostart;
   $("zurueck").hidden = !i.vorherige;
   $("zurueck").textContent = i.vorherige ? `Zurück zu Version ${i.vorherige}` : "";
   $("fuss").textContent = `Daten: ${i.daten}`;
@@ -68,6 +72,43 @@ async function laden() {
 }
 
 $("oeffnen").addEventListener("click", () => aufruf("inhalt_oeffnen"));
+
+// Fehlerbericht: Datei auf den Schreibtisch, mit der gerade sichtbaren Meldung; die Meldung bleibt danach stehen
+async function berichtSpeichern() {
+  const gesehen = letzteMeldung;
+  const pfad = await invoke("bericht_speichern", { meldung: gesehen }).catch((m) => { zeigeMeldung(m); return null; });
+  if (pfad) {
+    zeigeMeldung(gesehen);
+    zeigeErfolg("Bericht gespeichert: " + pfad + " (ohne Passwörter; es wurde nichts hochgeladen).");
+  }
+}
+$("bericht").addEventListener("click", berichtSpeichern);
+$("bericht-fuss").addEventListener("click", berichtSpeichern);
+
+// Start bei der Anmeldung (Opt-in)
+$("autostart").addEventListener("change", async () => {
+  const gewollt = $("autostart").checked;
+  const ok = await aufruf("autostart_setzen", { an: gewollt });
+  if (ok === undefined) $("autostart").checked = !gewollt; // gescheitert: Anzeige zurück, die Meldung steht oben
+});
+
+// Geheimnisse: nur ablegen, löschen, prüfen; der Wert kommt nie zurück
+function geheimnisName() { return $("g-name").value.trim(); }
+$("g-speichern").addEventListener("click", async () => {
+  const ok = await aufruf("geheimnis_setzen", { name: geheimnisName(), wert: $("g-wert").value });
+  if (ok !== undefined) { $("g-wert").value = ""; $("g-text").textContent = `„${geheimnisName()}“ liegt im Tresor.`; }
+});
+$("g-loeschen").addEventListener("click", async () => {
+  const ok = await aufruf("geheimnis_loeschen", { name: geheimnisName() });
+  if (ok !== undefined) $("g-text").textContent = `„${geheimnisName()}“ ist gelöscht.`;
+});
+$("g-pruefen").addEventListener("click", async () => {
+  const ok = await aufruf("tresor_pruefen");
+  if (ok !== undefined) {
+    const name = geheimnisName();
+    $("g-text").textContent = name ? ((await aufruf("geheimnis_vorhanden", { name })) ? `Tresor bereit; „${name}“ ist vorhanden.` : `Tresor bereit; „${name}“ ist nicht vorhanden.`) : "Tresor bereit.";
+  }
+});
 
 $("url-speichern").addEventListener("click", async () => {
   await aufruf("einstellung_setzen", { schluessel: "start_url", wert: $("url-eingabe").value });

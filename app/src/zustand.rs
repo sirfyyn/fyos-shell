@@ -3,11 +3,13 @@
 use crate::studio_http;
 use serde::Serialize;
 use shell_core::begleiter::{freien_port, neue_kennung, Begleiter, Kindprozess};
+use shell_core::bericht::{self, Bericht};
 use shell_core::einstellungen::{self, Einstellungen};
 use shell_core::speicher::Pfade;
 use shell_core::verlauf::{Ausgang, Verlauf};
+use shell_core::tresor::{SpeicherTresor, Tresor};
 use shell_core::{Fehler, Meldung, Profil};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Stand des Begleiters für die Oberfläche.
 #[derive(Debug, Clone, Serialize)]
@@ -35,6 +37,8 @@ pub struct Huelle {
     /// Adresse (mit Schrägstrich am Ende) und Kennung des eigenen Begleiters
     pub begleiter_ziel: Mutex<Option<(String, String)>>,
     pub seite_bereit: Mutex<Option<(bool, String)>>,
+    /// Tresor für Geheimnisse (Systemtresor im Betrieb, Speicher-Tresor in Tests)
+    pub tresor: Arc<dyn Tresor>,
 }
 
 impl Huelle {
@@ -64,7 +68,14 @@ impl Huelle {
             begleiter_stand: Mutex::new(BegleiterStand::Keiner),
             begleiter_ziel: Mutex::new(None),
             seite_bereit: Mutex::new(None),
+            tresor: Arc::new(SpeicherTresor::default()),
         })
+    }
+
+    /// Setzt den Tresor (im Betrieb der Systemtresor).
+    pub fn mit_tresor(mut self, tresor: Arc<dyn Tresor>) -> Huelle {
+        self.tresor = tresor;
+        self
     }
 
     /// Start-URL des Inhaltsfensters: Adresse des eigenen Begleiters, sonst Einstellung, sonst Vorgabe des Profils.
@@ -125,6 +136,14 @@ impl Huelle {
                     }
                 },
             };
+            // Verweise {tresor:NAME} aus den Einstellungen erst jetzt einsetzen; ohne Verweis wird der Tresor nicht berührt
+            let konfig = match konfig.mit_geheimnissen(&*self.tresor) {
+                Ok(k) => k,
+                Err(f) => {
+                    *sperre(&self.begleiter_stand) = BegleiterStand::Fehler { meldung: f.meldung() };
+                    return Err(f);
+                }
+            };
             let kennung = neue_kennung();
             let basis = format!("http://127.0.0.1:{port}/");
             *sperre(&self.begleiter_ziel) = Some((basis.clone(), kennung.clone()));
@@ -166,6 +185,56 @@ impl Huelle {
         let mut stand = sperre(&self.begleiter_stand);
         if !matches!(*stand, BegleiterStand::Keiner) {
             *stand = BegleiterStand::Keiner;
+        }
+    }
+
+    /// Sammelt alles für den Fehlerbericht: stehende Meldungen (Warnungen, Updater, Ergebnis des letzten Updates, Begleiter), dazu optional die
+    /// Meldung, die der Nutzer gerade sieht. Geheimnisse schwärzt `Bericht::text`.
+    pub fn bericht(&self, produkt: &str, zusatz: Option<Meldung>) -> Bericht {
+        let mut meldungen: Vec<Meldung> = sperre(&self.warnungen).clone();
+        if let Some(f) = sperre(&self.updater_fehler).as_ref() {
+            meldungen.push(f.meldung());
+        }
+        if let Some(Ausgang::Misserfolg(f)) = &*sperre(&self.start_ausgang) {
+            meldungen.push(f.meldung());
+        }
+        let begleiter = match &*sperre(&self.begleiter_stand) {
+            BegleiterStand::Keiner => "kein Begleiter".to_string(),
+            BegleiterStand::Startet => "startet".to_string(),
+            BegleiterStand::Laeuft => "läuft".to_string(),
+            BegleiterStand::Fehler { meldung } => {
+                meldungen.push(meldung.clone());
+                format!("Fehler ({})", meldung.code)
+            }
+        };
+        meldungen.extend(zusatz);
+        let mut gesehen: Vec<(String, String, Option<String>)> = Vec::new();
+        let mut einmalig = Vec::new();
+        for m in meldungen {
+            let schluessel = (m.code.clone(), m.ursache.clone(), m.details.clone());
+            if !gesehen.contains(&schluessel) {
+                gesehen.push(schluessel);
+                einmalig.push(m);
+            }
+        }
+        let meldungen = einmalig;
+        let log = std::fs::read(self.pfade.daten.join("begleiter.log"))
+            .map(|b| String::from_utf8_lossy(&b[b.len().saturating_sub(64 * 1024)..]).into_owned())
+            .unwrap_or_default();
+        Bericht {
+            profil: self.profil.name().to_string(),
+            produkt: produkt.to_string(),
+            version: self.version.clone(),
+            vorherige: sperre(&self.verlauf).vorherige.clone().filter(|v| *v != self.version),
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            datenordner: self.pfade.daten.display().to_string(),
+            zeit_unix: bericht::jetzt(),
+            ausgang: sperre(&self.start_ausgang).as_ref().map(Ausgang::text),
+            meldungen,
+            begleiter,
+            einstellungen: sperre(&self.einstellungen).clone(),
+            log,
         }
     }
 
@@ -287,6 +356,77 @@ mod tests {
         let url = h.start_url();
         assert!(url.starts_with("http://127.0.0.1:") && url != "http://127.0.0.1:8642/", "{url}");
         assert_eq!(h.kennung().unwrap().len(), 32);
+    }
+
+    #[test]
+    fn geheimnis_aus_dem_tresor_erreicht_den_begleiter_aber_nie_die_einstellungsdatei() {
+        let d = tempfile::tempdir().unwrap();
+        let h = Huelle::laden(Profil::Studio, "0.0.1", Pfade::neu(d.path())).unwrap();
+        h.tresor.schreiben("hf-token", "hf_geheim_123").unwrap();
+        let ablage = d.path().join("gesehen.txt");
+        {
+            let mut e = sperre(&h.einstellungen);
+            e.begleiter = Some(shell_core::begleiter::BegleiterKonfig {
+                programm: "sh".into(),
+                args: vec!["-c".into(), format!("printf %s \"$HF_TOKEN\" > '{}'; exec sleep 30", ablage.display())],
+                env: std::collections::BTreeMap::from([("HF_TOKEN".to_string(), "{tresor:hf-token}".to_string())]),
+                frist_s: 2,
+                ..Default::default()
+            });
+            einstellungen::speichern(&h.pfade, &e).expect("Verweise dürfen gespeichert werden");
+        }
+        let _ = h.begleiter_starten(); // sleep antwortet nie; wichtig ist, was der Kindprozess sah
+        assert_eq!(std::fs::read_to_string(&ablage).unwrap(), "hf_geheim_123");
+        let datei = std::fs::read_to_string(h.pfade.einstellungen()).unwrap();
+        assert!(datei.contains("{tresor:hf-token}") && !datei.contains("hf_geheim_123"), "{datei}");
+        assert!(!std::fs::read_to_string(h.pfade.daten.join("begleiter.log")).unwrap_or_default().contains("hf_geheim_123"));
+    }
+
+    #[test]
+    fn fehlendes_geheimnis_und_kein_tresor_stoppen_den_start_mit_katalogtext() {
+        let d = tempfile::tempdir().unwrap();
+        let mit_verweis = || {
+            Some(shell_core::begleiter::BegleiterKonfig {
+                programm: "sh".into(),
+                args: vec!["-c".into(), "exec sleep 30".into()],
+                env: std::collections::BTreeMap::from([("T".to_string(), "{tresor:fehlt}".to_string())]),
+                frist_s: 1,
+                ..Default::default()
+            })
+        };
+        let h = Huelle::laden(Profil::Studio, "0.0.1", Pfade::neu(d.path())).unwrap();
+        sperre(&h.einstellungen).begleiter = mit_verweis();
+        assert_eq!(h.begleiter_starten().unwrap_err().code(), "TRESOR_EINTRAG_FEHLT");
+        assert!(sperre(&h.begleiter).is_none(), "es darf kein Prozess gestartet worden sein");
+
+        let kein = Huelle::laden(Profil::Studio, "0.0.1", Pfade::neu(d.path()))
+            .unwrap()
+            .mit_tresor(Arc::new(shell_core::tresor::KeinTresor("Dienst läuft nicht".into())));
+        sperre(&kein.einstellungen).begleiter = mit_verweis();
+        let f = kein.begleiter_starten().unwrap_err();
+        assert_eq!(f.code(), "TRESOR_NICHT_VERFUEGBAR");
+        assert!(!f.meldung().abhilfe.is_empty());
+    }
+
+    #[test]
+    fn bericht_sammelt_stehende_meldungen_ohne_doppelte_und_ohne_geheimnisse() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("einstellungen.json"), "{kaputt").unwrap(); // -> Warnung EINSTELLUNGEN_KAPUTT
+        std::fs::write(d.path().join("begleiter.log"), "start\nHF_TOKEN=hf_klartext_geheim_1\n").unwrap();
+        let h = Huelle::laden(Profil::Studio, "0.0.2", Pfade::neu(d.path())).unwrap();
+        sperre(&h.einstellungen).begleiter = Some(shell_core::begleiter::BegleiterKonfig { programm: "/gibt/es/nicht".into(), ..Default::default() });
+        let _ = h.begleiter_starten(); // BEGLEITER_STARTET_NICHT
+        let gesehen = Fehler::SignaturFalsch.meldung();
+        let b = h.bericht("FLE Studio", Some(gesehen.clone()));
+        let codes: Vec<&str> = b.meldungen.iter().map(|m| m.code.as_str()).collect();
+        assert_eq!(codes, ["EINSTELLUNGEN_KAPUTT", "BEGLEITER_STARTET_NICHT", "UPDATE_SIGNATUR_FALSCH"]);
+        let doppelt = h.bericht("FLE Studio", Some(h.bericht("x", None).meldungen[0].clone()));
+        assert_eq!(doppelt.meldungen.len(), 2, "dieselbe Meldung nicht zweimal");
+        let text = b.text();
+        assert!(text.contains("Ursache:") && text.contains("Abhilfe:") && text.contains("0.0.2"));
+        assert!(!text.contains("hf_klartext_geheim_1"));
+        let datei = shell_core::bericht::speichern(&d.path().join("berichte"), &b).unwrap();
+        assert!(datei.is_file());
     }
 
     #[test]

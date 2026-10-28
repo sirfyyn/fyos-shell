@@ -112,6 +112,57 @@ def handler_bauen(upstream_port, kennung):
     return Durchreichen
 
 
+# --- Prozessbaum: plattformneutral (Unix: eigene Sitzung und Prozessgruppe; Windows: eigene Prozessgruppe, taskkill /T) ---
+# Die Konstanten stehen hier, weil `subprocess.CREATE_NEW_PROCESS_GROUP` & Co. nur unter Windows existieren.
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_NO_WINDOW = 0x08000000
+SANFT_S = 8
+
+
+def ist_windows():
+    return os.name == "nt"
+
+
+def kind_starten(befehl, windows=None, popen=subprocess.Popen):
+    """Startet das Studio so, dass sich sein ganzer Baum beenden lässt. `windows`/`popen` nur für Tests."""
+    if ist_windows() if windows is None else windows:
+        return popen(befehl, creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
+    return popen(befehl, start_new_session=True)
+
+
+def baum_beenden(kind, windows=None, ausfuehren=subprocess.run, sanft_s=SANFT_S):
+    """Beendet das Studio samt Nachkommen: erst höflich, nach `sanft_s` Sekunden hart. Ein schon beendetes Studio ist kein Fehler.
+
+    Unix: SIGTERM/SIGKILL an die Prozessgruppe. Windows: CTRL_BREAK an die Prozessgruppe, danach `taskkill /T /F` auf den Baum
+    (fängt auch Enkel ab, die sich vom Elternprozess gelöst haben, solange der Baum zusammenhängt)."""
+    win = ist_windows() if windows is None else windows
+    if win:
+        if kind.poll() is None:
+            try:
+                kind.send_signal(getattr(signal, "CTRL_BREAK_EVENT", 1))
+                kind.wait(timeout=sanft_s)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        ausfuehren(["taskkill", "/PID", str(kind.pid), "/T", "/F"], capture_output=True)
+        return
+    try:
+        os.killpg(kind.pid, signal.SIGTERM)
+        kind.wait(timeout=sanft_s)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        try:
+            os.killpg(kind.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def abbruchsignale(funktion):
+    """Beenden-Signale der Plattform an `funktion` binden (SIGBREAK nur unter Windows)."""
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        nummer = getattr(signal, name, None)
+        if nummer is not None:
+            signal.signal(nummer, funktion)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port", type=int, required=True, help="Port, auf dem der Shim lauscht (von der Hülle vorgegeben)")
@@ -123,7 +174,7 @@ def main():
         sys.exit("Es fehlt der Befehl des Studios nach '--'.")
 
     upstream = freier_port()
-    kind = subprocess.Popen([arg.replace("{upstream}", str(upstream)) for arg in befehl], start_new_session=True)
+    kind = kind_starten([arg.replace("{upstream}", str(upstream)) for arg in befehl])
     server = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler_bauen(upstream, a.kennung))
     server.daemon_threads = True
 
@@ -131,23 +182,16 @@ def main():
         # in eigenem Thread: shutdown() wartet auf die Schleife, die im Signalbehandler steht
         threading.Thread(target=server.shutdown).start()
 
-    signal.signal(signal.SIGTERM, beenden)
-    signal.signal(signal.SIGINT, beenden)
+    abbruchsignale(beenden)
     # Endet das Studio von allein, endet auch der Shim (die Hülle sieht das und meldet es)
     threading.Thread(target=lambda: (kind.wait(), beenden()), daemon=True).start()
     try:
         server.serve_forever()
     finally:
         server.server_close()
-        try:
-            os.killpg(kind.pid, signal.SIGTERM)
-            kind.wait(timeout=8)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(kind.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-    sys.exit(0 if kind.returncode in (0, -signal.SIGTERM, None) else kind.returncode)
+        baum_beenden(kind)
+    sigterm = -getattr(signal, "SIGTERM", 15)
+    sys.exit(0 if kind.returncode in (0, sigterm, None) else kind.returncode)
 
 
 if __name__ == "__main__":

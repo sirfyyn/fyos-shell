@@ -74,6 +74,12 @@ pub fn run() {
             befehle::inhalt_oeffnen,
             befehle::einstellung_setzen,
             befehle::seite_bereit,
+            befehle::bericht_speichern,
+            befehle::autostart_setzen,
+            befehle::tresor_pruefen,
+            befehle::geheimnis_setzen,
+            befehle::geheimnis_loeschen,
+            befehle::geheimnis_vorhanden,
         ])
         .on_window_event(|fenster, ereignis| {
             // Mit Tray: Schließen des Hauptfensters versteckt nur (die Hülle lebt im Tray weiter). Ohne Tray beendet es.
@@ -93,7 +99,9 @@ pub fn run() {
             let profil = Profil::aus_bundle_id(&handle.config().identifier).map_err(melde)?;
             let daten = datenordner(&handle).map_err(melde)?;
             let version = handle.package_info().version.to_string();
-            let huelle = Arc::new(Huelle::laden(profil, &version, Pfade::neu(daten)).map_err(melde)?);
+            let huelle = Arc::new(
+                Huelle::laden(profil, &version, Pfade::neu(daten)).map_err(melde)?.mit_tresor(Arc::new(shell_tresor::SystemTresor::neu(&handle.config().identifier))),
+            );
             app.manage(huelle.clone());
             aktualisieren::plugin_einrichten(&handle, &huelle);
 
@@ -117,6 +125,13 @@ pub fn run() {
                 }
                 if let Err(e) = tray::bauen(&handle) {
                     eprintln!("Tray nicht verfügbar ({e}); Schließen des Fensters beendet die Anwendung.");
+                }
+                // Anmeldestart erneuern, wenn eingeschaltet: das Programm kann seit dem Einschalten verschoben oder aktualisiert worden sein
+                let autostart_an = zustand::sperre(&huelle.einstellungen).autostart;
+                if autostart_an {
+                    if let Err(f) = befehle::autostart_schalten(&handle, &huelle, true) {
+                        zustand::sperre(&huelle.warnungen).push(f.meldung());
+                    }
                 }
                 // Begleiter im Hintergrund starten, das Fenster wartet nicht darauf (die Oberfläche zeigt „startet …“)
                 let h3 = huelle.clone();

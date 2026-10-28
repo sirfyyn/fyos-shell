@@ -24,6 +24,14 @@ pub fn starten(app: AppHandle, h: Arc<Huelle>, modus: Modus) {
 async fn ausfuehren(app: &AppHandle, h: &Arc<Huelle>, modus: Modus) -> (Value, i32) {
     match modus {
         Modus::Info => (info(h), 0),
+        Modus::Autostart(an) => match crate::befehle::autostart_schalten(app, h, an) {
+            Ok(()) => (json!({"modus": "autostart", "ok": true, "autostart": an}), 0),
+            Err(f) => (json!({"modus": "autostart", "ok": false, "fehler": f.meldung()}), 2),
+        },
+        Modus::Bericht => match crate::befehle::bericht_schreiben(app, h, None) {
+            Ok(datei) => (json!({"modus": "bericht", "ok": true, "datei": datei.display().to_string()}), 0),
+            Err(f) => (json!({"modus": "bericht", "ok": false, "fehler": f.meldung()}), 2),
+        },
         Modus::Aktualisieren => update(app, h, Art::Update).await,
         Modus::Zurueck => update(app, h, Art::Rueckweg).await,
         Modus::Selbsttest => selbsttest(app, h).await,

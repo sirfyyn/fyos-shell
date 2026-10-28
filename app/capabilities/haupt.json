@@ -14,6 +14,12 @@
     "allow-studio-neustart",
     "allow-inhalt-oeffnen",
     "allow-einstellung-setzen",
-    "allow-seite-bereit"
+    "allow-seite-bereit",
+    "allow-bericht-speichern",
+    "allow-autostart-setzen",
+    "allow-tresor-pruefen",
+    "allow-geheimnis-setzen",
+    "allow-geheimnis-loeschen",
+    "allow-geheimnis-vorhanden"
   ]
 }

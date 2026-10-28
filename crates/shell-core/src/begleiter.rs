@@ -65,6 +65,17 @@ pub fn ohne_appdir(wert: &str, appdir: &str) -> Option<String> {
     }
 }
 
+impl BegleiterKonfig {
+    /// Setzt Verweise `{tresor:NAME}` in Argumenten und Umgebungswerten aus dem Tresor ein. Das Ergebnis lebt nur im Arbeitsspeicher
+    /// und beim Kindprozess; in `einstellungen.json` steht weiter nur der Verweis.
+    pub fn mit_geheimnissen(&self, tresor: &dyn crate::tresor::Tresor) -> Result<BegleiterKonfig, Fehler> {
+        let mut k = self.clone();
+        k.args = self.args.iter().map(|a| crate::tresor::aufloesen(a, tresor)).collect::<Result<_, _>>()?;
+        k.env = self.env.iter().map(|(n, w)| Ok((n.clone(), crate::tresor::aufloesen(w, tresor)?))).collect::<Result<_, Fehler>>()?;
+        Ok(k)
+    }
+}
+
 /// Name des Kopfes, mit dem der Begleiter seine Kennung bestätigt.
 pub const KENNUNG_KOPF: &str = "X-FYOS-Kennung";
 
@@ -262,6 +273,25 @@ mod tests {
         assert_eq!(s.env["FYOS_SHELL_PORT"], "4711");
         assert_eq!(s.env["FYOS_SHELL_KENNUNG"], "abc");
         assert_eq!(s.port, Some(4711));
+    }
+
+    #[test]
+    fn geheimnisse_kommen_nur_zur_laufzeit_aus_dem_tresor() {
+        use crate::tresor::{SpeicherTresor, Tresor};
+        let t = SpeicherTresor::default();
+        t.schreiben("hf-token", "hf_geheim").unwrap();
+        let k = BegleiterKonfig {
+            programm: "p".into(),
+            args: vec!["--x".into()],
+            env: BTreeMap::from([("HF_TOKEN".to_string(), "{tresor:hf-token}".to_string()), ("A".to_string(), "b".to_string())]),
+            ..Default::default()
+        };
+        let laufzeit = k.mit_geheimnissen(&t).unwrap();
+        assert_eq!(laufzeit.env["HF_TOKEN"], "hf_geheim");
+        assert_eq!(laufzeit.env["A"], "b");
+        assert_eq!(k.env["HF_TOKEN"], "{tresor:hf-token}", "die Konfiguration selbst bleibt unverändert");
+        assert_eq!(BegleiterKonfig { env: BTreeMap::from([("X".into(), "{tresor:fehlt}".into())]), ..Default::default() }
+            .mit_geheimnissen(&t).unwrap_err().code(), "TRESOR_EINTRAG_FEHLT");
     }
 
     #[test]

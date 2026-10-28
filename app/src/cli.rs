@@ -14,15 +14,21 @@ pub enum Modus {
     Zurueck,
     /// Gibt Profil, Version und Vorversion aus.
     Info,
+    /// Schreibt den Fehlerbericht auf den Schreibtisch und gibt den Pfad aus.
+    Bericht,
+    /// Schaltet den Start bei der Anmeldung ein (`true`) oder aus (`false`).
+    Autostart(bool),
 }
 
-pub const HILFE: &str = "Aufruf: fyos-shell [--versteckt | --selbsttest | --aktualisieren | --zurueck | --info]\n\
+pub const HILFE: &str = "Aufruf: fyos-shell [--versteckt | --selbsttest | --aktualisieren | --zurueck | --info | --bericht | --autostart-an | --autostart-aus]\n\
   (ohne Argument)  Fenster öffnen\n\
   --versteckt      nur im Tray starten\n\
   --selbsttest     Start, Begleiter, Fenster und Befehl prüfen, Ausgang 0 = gut\n\
   --aktualisieren  Update suchen und einspielen (ohne Neustart)\n\
   --zurueck        auf die gemerkte Vorversion zurückgehen (ohne Neustart)\n\
-  --info           Profil, Version, Vorversion, Datenordner\n\
+  --info           Profil, Version, Vorversion, Datenordner
+  --bericht        Fehlerbericht (ohne Geheimnisse) als Datei auf den Schreibtisch schreiben
+  --autostart-an   App bei der Anmeldung starten (nur im Tray); --autostart-aus nimmt es zurück\n\
   Umgebung: FYOS_SHELL_DATEN überschreibt den Datenordner (Tests).";
 
 /// Wertet die Argumente aus (ohne Programmnamen). Argumente ohne `--` (Deeplinks, macOS-Zusätze) werden ignoriert.
@@ -36,6 +42,9 @@ pub fn auswerten(args: &[String]) -> Result<Modus, String> {
             "--aktualisieren" => Modus::Aktualisieren,
             "--zurueck" => Modus::Zurueck,
             "--info" => Modus::Info,
+            "--bericht" => Modus::Bericht,
+            "--autostart-an" => Modus::Autostart(true),
+            "--autostart-aus" => Modus::Autostart(false),
             "--help" | "--hilfe" => return Err(HILFE.to_string()),
             andere => return Err(format!("Unbekannte Option {andere}.\n{HILFE}")),
         };
@@ -68,6 +77,9 @@ mod tests {
         assert_eq!(auswerten(&a(&["--aktualisieren"])).unwrap(), Modus::Aktualisieren);
         assert_eq!(auswerten(&a(&["--zurueck"])).unwrap(), Modus::Zurueck);
         assert_eq!(auswerten(&a(&["--info"])).unwrap(), Modus::Info);
+        assert_eq!(auswerten(&a(&["--bericht"])).unwrap(), Modus::Bericht);
+        assert_eq!(auswerten(&a(&["--autostart-an"])).unwrap(), Modus::Autostart(true));
+        assert_eq!(auswerten(&a(&["--autostart-aus"])).unwrap(), Modus::Autostart(false));
     }
 
     #[test]

@@ -1,0 +1,20 @@
+[package]
+name = "shell-tresor"
+description = "Systemtresor der FYOS-Hülle: macOS Schlüsselbund, Windows Anmeldeinformationsverwaltung, Linux Secret Service (Crate keyring) hinter der Schnittstelle shell_core::tresor::Tresor."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+shell-core = { path = "../shell-core" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
