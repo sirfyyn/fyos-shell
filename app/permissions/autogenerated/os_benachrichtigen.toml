@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-os-benachrichtigen"
+description = "Enables the os_benachrichtigen command without any pre-configured scope."
+commands.allow = ["os_benachrichtigen"]
+
+[[permission]]
+identifier = "deny-os-benachrichtigen"
+description = "Denies the os_benachrichtigen command without any pre-configured scope."
+commands.deny = ["os_benachrichtigen"]

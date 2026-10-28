@@ -61,6 +61,8 @@ AUSNAHMEN = [
      "Standard-Hosts des Profils os (Konfiguration: der Server und sein Anmeldeserver) und Tests der Navigationssperre und Fehlerklassen gegen diese Namen"),
     (r"^tools/bauen\.py$", "interne-adresse", r"https://fyos\.sirfyyn\.de/update/<profil>/latest\.json",
      "Dokumentation der Update-Adresse je Profil (siehe app/profile/*.conf.json)"),
+    (r"^app/capabilities/os-meldungen\.json$|^app/src/mitteilung\.rs$", "interne-adresse", r"https://fyos\.sirfyyn\.de/\*",
+     "Capability des Profils os: der Befehl für Systemmitteilungen gilt nur für Seiten des Servers (Konfiguration und ihr Test)"),
 ]
 
 SKIP_ORDNER = {".git", "node_modules", "target", "__pycache__", "gen", "dist-linux", "lauf-linux", "daten-linux", "testschluessel"}

@@ -126,6 +126,27 @@ class OsServer(http.server.BaseHTTPRequestHandler):
             return self._antwort(200, rumpf=seite)
         if pfad == "/os/herz-ruhig":
             return self._antwort(204)
+        if host == "127.0.0.1" and pfad == "/os/ergebnis":
+            return self._antwort(204)  # Meldungsprüfung: die Seite berichtet über den Pfad (steht im Protokoll)
+        if host == "127.0.0.1" and pfad == "/os/meldungen":
+            # Meldungsprüfung (e2e_meldungen.py): Hauptseite ruft die Brücke, ein Sandbox-Rahmen (Ursprung null) und ein gleicher Ursprung nicht
+            if f"{self.praefix}fyos_dauer=1" not in self.headers.get("Cookie", ""):
+                return self._antwort(302, kopf=[("Location", f"{auth}/auth/login?next={server}/os/meldungen")])
+            rahmen = ("<script>var b=window.__FYOS_HUELLE__;var r=[typeof b,typeof window.__TAURI_INTERNALS__];"
+                      "try{r.push(typeof parent.__FYOS_HUELLE__)}catch(e){r.push('gesperrt')}"
+                      "new Image().src='" + server + "/os/ergebnis?k=RAHMEN&w='+encodeURIComponent(r.join(','))+'&t='+Date.now();</script>")
+            seite = ("<!doctype html><title>FYOS OS Meldungen (Test)</title><h1>Meldungen</h1>"
+                     '<iframe id="sandbox" sandbox="allow-scripts" srcdoc="' + rahmen.replace('"', '&quot;') + '"></iframe>'
+                     '<iframe id="gleich" src="/os/rahmen"></iframe>'
+                     "<script>function melde(k,w){return fetch('/os/ergebnis?k='+k+'&w='+encodeURIComponent(w)+'&t='+Date.now());}"
+                     "melde('HAUPT','bruecke='+typeof window.__FYOS_HUELLE__+';profil='+(window.__FYOS_HUELLE__&&window.__FYOS_HUELLE__.profil));"
+                     "setTimeout(async function(){var b=window.__FYOS_HUELLE__;if(!b){melde('ZEIGEN','keine-bruecke');return;}"
+                     "try{var e=await b.benachrichtigen('x'.repeat(81),'zu lang');melde('LANG','erlaubt:'+JSON.stringify(e));}catch(f){melde('LANG','abgelehnt:'+String(f&&f.code||f));}"
+                     "try{var e=await b.benachrichtigen('FYOS OS Test','Pr\\u00fcfmitteilung 1 von 1 (e2e)',{still:true});melde('ZEIGEN','ok:'+JSON.stringify(e));}catch(f){melde('ZEIGEN','fehler:'+String(f&&f.code||f));}"
+                     "},1500);setInterval(function(){fetch('/os/herz');},1000);</script>")
+            return self._antwort(200, rumpf=seite)
+        if host == "127.0.0.1" and pfad == "/os/rahmen":
+            return self._antwort(200, rumpf="<!doctype html><script>new Image().src='/os/ergebnis?k=GLEICH&w='+encodeURIComponent(typeof window.__FYOS_HUELLE__+','+typeof window.__TAURI_INTERNALS__)+'&t='+Date.now();</script>")
         if host == "127.0.0.1" and pfad == "/os":
             with self.sperre:
                 OsServer.zaehler += 1
@@ -143,14 +164,14 @@ class OsServer(http.server.BaseHTTPRequestHandler):
             return self._antwort(302, kopf=[("Location", f"{auth}/auth/login?next={server}/os")])
         if host == "localhost" and pfad == "/auth/login":
             # Anmeldeseite (200, wie die von Anmeldeserver); ein Browser folgt der Weiterleitung im Kopf selbsttätig, ein einfacher Client bleibt hier stehen
-            return self._antwort(200, rumpf='<!doctype html><title>Anmeldung (Test)</title><meta http-equiv="refresh" content="0;url=/auth/fertig"><p>Anmeldung …</p>')
+            return self._antwort(200, rumpf='<!doctype html><title>Anmeldung (Test)</title><meta http-equiv="refresh" content="0;url=/auth/fertig' + ('?w=meldungen' if 'os/meldungen' in self.path else '') + '"><p>Anmeldung …</p>')
         if host == "localhost" and pfad == "/auth/fertig":
             # „Anmeldung“ ohne Zugangsdaten: Sitzung beim Anmeldeserver setzen und zurück zum Server
-            return self._antwort(302, kopf=[("Set-Cookie", "anmelde_session=1; Path=/; Expires=Fri, 01 Jan 2100 00:00:00 GMT; HttpOnly"), ("Location", f"{server}/os/rueck")])
+            return self._antwort(302, kopf=[("Set-Cookie", "anmelde_session=1; Path=/; Expires=Fri, 01 Jan 2100 00:00:00 GMT; HttpOnly"), ("Location", f"{server}/os/rueck" + ("?w=meldungen" if "w=meldungen" in self.path else ""))])
         if host == "127.0.0.1" and pfad == "/os/herz":
             return self._antwort(204)
         if host == "127.0.0.1" and pfad == "/os/rueck":
-            return self._antwort(302, kopf=[("Set-Cookie", f"{self.praefix}fyos_dauer=1; Path=/; Expires=Fri, 01 Jan 2100 00:00:00 GMT; HttpOnly"), ("Set-Cookie", f"{self.praefix}fyos_sitzung=1; Path=/; HttpOnly"), ("Location", f"{server}/os")])
+            return self._antwort(302, kopf=[("Set-Cookie", f"{self.praefix}fyos_dauer=1; Path=/; Expires=Fri, 01 Jan 2100 00:00:00 GMT; HttpOnly"), ("Set-Cookie", f"{self.praefix}fyos_sitzung=1; Path=/; HttpOnly"), ("Location", f"{server}/os" + ("/meldungen" if "w=meldungen" in self.path else ""))])
         return self._antwort(404, "text/plain", "nicht gefunden")
 
 

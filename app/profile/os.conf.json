@@ -12,6 +12,11 @@
       "profile/icons/os/icon.ico"
     ]
   },
+  "app": {
+    "security": {
+      "capabilities": ["haupt", "inhalt", "os-meldungen"]
+    }
+  },
   "plugins": {
     "updater": {
       "endpoints": [

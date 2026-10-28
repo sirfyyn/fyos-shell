@@ -98,6 +98,12 @@ fn inhalt_bauen(app: &AppHandle, ziel: WebviewUrl) -> tauri::Result<()> {
             }
             NewWindowResponse::Deny
         });
+    // Profil OS: Brücke `window.__FYOS_HUELLE__` für System-Mitteilungen (nur Hauptrahmen, siehe mitteilung.rs)
+    if let Some(h) = app.try_state::<Arc<Huelle>>() {
+        if h.profil == Profil::Os {
+            b = b.initialization_script(crate::mitteilung::bruecke_skript(h.profil.name(), &h.version));
+        }
+    }
     // Cookies und Anmeldung bleiben über Neustarts und Updates im Datenordner. macOS (WKWebView) hält sie im Speicher der App-Kennung.
     #[cfg(not(target_os = "macos"))]
     if let Some(h) = app.try_state::<Arc<Huelle>>() {

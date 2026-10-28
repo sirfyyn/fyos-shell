@@ -89,6 +89,12 @@ pub enum Fehler {
     AnmeldeserverFehler { status: u16, url: String },
     /// Der Server antwortet mit einem Fehlerstatus (5xx oder 404).
     ServerFehler { status: u16, url: String },
+    /// Das System lässt Mitteilungen dieser Anwendung nicht zu (Berechtigung verweigert oder nicht erteilt).
+    MitteilungenNichtErlaubt { grund: String },
+    /// Eine Mitteilung der Seite hat die Prüfung nicht bestanden (Absender, Länge, leerer Titel).
+    MitteilungAbgelehnt { grund: String },
+    /// Das System konnte die Mitteilung nicht anzeigen (Mitteilungsdienst nicht erreichbar).
+    MitteilungFehlgeschlagen { grund: String },
 }
 
 fn kurz(s: &str) -> String {
@@ -139,6 +145,9 @@ impl Fehler {
             Fehler::UebernahmeFehlgeschlagen { .. } => "UEBERNAHME_FEHLGESCHLAGEN",
             Fehler::UebernahmeSchonErfolgt { .. } => "UEBERNAHME_SCHON_ERFOLGT",
             Fehler::UebernahmeTeilweise { .. } => "UEBERNAHME_TEILWEISE",
+            Fehler::MitteilungenNichtErlaubt { .. } => "MITTEILUNGEN_NICHT_ERLAUBT",
+            Fehler::MitteilungAbgelehnt { .. } => "MITTEILUNG_ABGELEHNT",
+            Fehler::MitteilungFehlgeschlagen { .. } => "MITTEILUNG_FEHLGESCHLAGEN",
         }
     }
 
@@ -319,6 +328,21 @@ impl Fehler {
                 "Meist ein Neustart oder eine Wartung auf Seiten des Servers. Die Anwendung versucht es automatisch erneut; bleibt es, den Betreiber informieren.".into(),
                 Some(url.clone()),
             ),
+            Fehler::MitteilungenNichtErlaubt { grund } => (
+                "Das System zeigt keine Mitteilungen dieser Anwendung an: Die Berechtigung fehlt oder wurde verweigert. Im Fenster der Anwendung erscheinen Meldungen weiterhin.".into(),
+                "macOS: Systemeinstellungen > Mitteilungen > FYOS OS > Mitteilungen erlauben. Windows: Einstellungen > System > Benachrichtigungen > FYOS OS. Linux: den Mitteilungsdienst der Oberfläche prüfen und „Nicht stören“ ausschalten. Danach in FYOS OS unter Einstellungen > Meldungen > Systemmitteilungen erneut einschalten.".into(),
+                Some(kurz(grund)),
+            ),
+            Fehler::MitteilungAbgelehnt { grund } => (
+                format!("Die Hülle hat die Mitteilung nicht angezeigt: {grund}."),
+                "Das ist ein Fehler der Seite, nicht des Geräts: Titel (höchstens 80 Zeichen) und Text (höchstens 240 Zeichen) müssen vorhanden und die Seite muss der Server des Profils sein. Den Fehler dem Betreiber melden.".into(),
+                None,
+            ),
+            Fehler::MitteilungFehlgeschlagen { grund } => (
+                "Das System hat die Mitteilung nicht angenommen; im Fenster der Anwendung erscheint sie trotzdem.".into(),
+                "Prüfen, ob der Mitteilungsdienst des Systems läuft (Linux: ein Dienst wie dunst oder der Desktop-Mitteilungsdienst) und ob „Nicht stören“ aktiv ist. Die Anwendung versucht es bei der nächsten Meldung erneut.".into(),
+                Some(kurz(grund)),
+            ),
         };
         Meldung { code: self.code().to_string(), ursache, abhilfe, details }
     }
@@ -390,6 +414,9 @@ mod tests {
             Fehler::UebernahmeFehlgeschlagen { ort: s("o"), grund: s("g") },
             Fehler::UebernahmeSchonErfolgt { wann: s("w") },
             Fehler::UebernahmeTeilweise { anzahl: 1, beispiel: s("b") },
+            Fehler::MitteilungenNichtErlaubt { grund: s("g") },
+            Fehler::MitteilungAbgelehnt { grund: s("g") },
+            Fehler::MitteilungFehlgeschlagen { grund: s("g") },
         ]
     }
 

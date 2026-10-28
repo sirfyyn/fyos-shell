@@ -64,6 +64,13 @@ def overlay(a):
             "resources/python/": "python/", "resources/studio/": "studio/", "resources/shim/": "shim/", "resources/buendel.json": "buendel.json"}
     if updater:
         conf["plugins"] = {"updater": updater}
+    if a.meldungen_test_ursprung:
+        # Nur Prüfbauten: Der Testserver (http, eigener Rechner) darf den Meldungsbefehl wie der echte Server aufrufen (inline Capability).
+        profil = json.loads((APP / "profile" / f"{a.profil}.conf.json").read_text(encoding="utf-8"))
+        liste = list(profil.get("app", {}).get("security", {}).get("capabilities", ["haupt", "inhalt"]))
+        liste.append({"identifier": "os-meldungen-test", "windows": ["inhalt"], "local": False,
+                      "remote": {"urls": [a.meldungen_test_ursprung.rstrip("/") + "/*"]}, "permissions": ["allow-os-benachrichtigen"]})
+        conf["app"] = {"security": {"capabilities": liste}}
     return conf
 
 
@@ -80,6 +87,7 @@ def main():
     p.add_argument("--schluesselbund", action="store_true", help="privaten Update-Schlüssel und Passwort dieses Profils aus dem macOS-Schlüsselbund holen")
     p.add_argument("--update-schluessel", help="Pfad (oder Inhalt) des privaten Update-Schlüssels; sonst Umgebung TAURI_SIGNING_PRIVATE_KEY")
     p.add_argument("--update-pubkey", help="öffentlicher Schlüssel (.pub); Vorgabe app/profile/<profil>.pub")
+    p.add_argument("--meldungen-test-ursprung", help="nur Prüfbauten: erlaubt dem Server mit diesem Ursprung (z. B. http://127.0.0.1:18661) den Meldungsbefehl zusätzlich zur Server-Adresse des Profils")
     p.add_argument("--update-basis", help="überschreibt die Basisadresse der Manifeste (Tests), z. B. http://127.0.0.1:18700/")
     a = p.parse_args()
 

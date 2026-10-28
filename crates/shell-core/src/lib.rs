@@ -19,6 +19,7 @@ pub mod einstellungen;
 pub mod fehler;
 pub mod fensterlage;
 pub mod links;
+pub mod mitteilung;
 pub mod navigation;
 pub mod netz;
 pub mod profil;

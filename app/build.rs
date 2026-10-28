@@ -19,6 +19,7 @@ const BEFEHLE: &[&str] = &[
     "studio_uebernehmen",
     "os_stand",
     "os_wiederholen",
+    "os_benachrichtigen",
 ];
 
 fn main() {

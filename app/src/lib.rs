@@ -9,6 +9,7 @@ mod befehle;
 mod cli;
 mod fenster;
 mod headless;
+mod mitteilung;
 mod os;
 mod studio_http;
 mod tray;
@@ -75,6 +76,8 @@ pub fn run() {
 
     let app = bauer
         .plugin(tauri_plugin_deep_link::init())
+        // Systemmitteilungen: nur Rust ruft das Plugin (mitteilung.rs); das Plugin bekommt in keiner Capability Rechte für Seiten
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             befehle::info,
             befehle::update_pruefen,
@@ -94,6 +97,7 @@ pub fn run() {
             befehle::studio_uebernehmen,
             os::os_stand,
             os::os_wiederholen,
+            mitteilung::os_benachrichtigen,
         ])
         .on_window_event(|fenster, ereignis| {
             // Mit Tray: Schließen des Hauptfensters versteckt nur (die Hülle lebt im Tray weiter). Ohne Tray beendet es.
@@ -140,6 +144,7 @@ pub fn run() {
             }
             app.manage(huelle.clone());
             app.manage(os::Fluss::default());
+            app.manage(mitteilung::Begrenzer::default());
             aktualisieren::plugin_einrichten(&handle, &huelle);
 
             // SIGINT/SIGTERM: sauber beenden, damit der Begleiter nicht als Waise weiterläuft

@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "os-meldungen",
+  "description": "Nur Profil os (profile/os.conf.json listet sie, die Grundkonfiguration nicht): Die Seite des Servers im Inhaltsfenster darf genau einen Befehl aufrufen, os_benachrichtigen (System-Mitteilung mit Längen- und Ratenprüfung). Nicht der Anmeldeserver, nicht Sandbox-Rahmen (Ursprung null); die Rechte des Notification-Plugins bekommt keine Seite.",
+  "windows": ["inhalt"],
+  "local": false,
+  "remote": {
+    "urls": ["https://fyos.sirfyyn.de/*"]
+  },
+  "permissions": [
+    "allow-os-benachrichtigen"
+  ]
+}

@@ -11,6 +11,7 @@
     "macOSPrivateApi": false,
     "windows": [],
     "security": {
+      "capabilities": ["haupt", "inhalt"],
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
     }
   },
