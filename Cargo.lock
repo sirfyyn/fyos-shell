@@ -3785,7 +3785,7 @@ dependencies = [
 name = "shell-core"
 version = "0.0.4"
 dependencies = [
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "libc",
  "regex",
  "semver",
