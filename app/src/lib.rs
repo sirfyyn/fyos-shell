@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{Manager, RunEvent, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
+use shell_core::buendel::Buendel;
 use zustand::Huelle;
 
 /// Datenordner: `FYOS_SHELL_DATEN` (Tests), sonst der Datenordner des Systems für diese Bundle-Id.
@@ -30,6 +31,14 @@ fn datenordner(app: &tauri::AppHandle) -> Result<PathBuf, Fehler> {
         return Ok(PathBuf::from(p));
     }
     app.path().app_data_dir().map_err(|e| Fehler::DatenordnerNichtBeschreibbar { pfad: "(Datenordner des Systems)".into(), grund: e.to_string() })
+}
+
+/// Ressourcenordner der App (dort liegt das Python-Bündel). `FYOS_SHELL_RESSOURCEN` überschreibt ihn.
+fn ressourcenordner(app: &tauri::AppHandle) -> PathBuf {
+    if let Some(p) = std::env::var_os("FYOS_SHELL_RESSOURCEN").filter(|p| !p.is_empty()) {
+        return PathBuf::from(p);
+    }
+    app.path().resource_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// Deeplinks aus Argumenten (Windows/Linux: der zweite Start reicht sie weiter).
@@ -99,9 +108,20 @@ pub fn run() {
             let profil = Profil::aus_bundle_id(&handle.config().identifier).map_err(melde)?;
             let daten = datenordner(&handle).map_err(melde)?;
             let version = handle.package_info().version.to_string();
+            // Python-Bündel mit dem Studio-Server: im Ressourcenordner der App (FYOS_SHELL_RESSOURCEN überschreibt ihn für Entwicklung und Tests)
+            let (buendel, buendel_fehler) = match Buendel::lesen(&ressourcenordner(&handle)) {
+                Ok(b) => (b.filter(|_| profil.hat_begleiter()), None),
+                Err(f) => (None, Some(f)),
+            };
             let huelle = Arc::new(
-                Huelle::laden(profil, &version, Pfade::neu(daten)).map_err(melde)?.mit_tresor(Arc::new(shell_tresor::SystemTresor::neu(&handle.config().identifier))),
+                Huelle::laden(profil, &version, Pfade::neu(daten))
+                    .map_err(melde)?
+                    .mit_tresor(Arc::new(shell_tresor::SystemTresor::neu(&handle.config().identifier)))
+                    .mit_buendel(buendel),
             );
+            if let Some(f) = buendel_fehler {
+                zustand::sperre(&huelle.warnungen).push(f.meldung());
+            }
             app.manage(huelle.clone());
             aktualisieren::plugin_einrichten(&handle, &huelle);
 
@@ -134,9 +154,17 @@ pub fn run() {
                     }
                 }
                 // Begleiter im Hintergrund starten, das Fenster wartet nicht darauf (die Oberfläche zeigt „startet …“)
-                let h3 = huelle.clone();
+                let (h3, app3) = (huelle.clone(), handle.clone());
                 std::thread::spawn(move || {
-                    let _ = h3.begleiter_starten();
+                    // Profil Studio: ist der Server gesund, zeigt die Hülle gleich das Studio (Einstellung `inhalt_automatisch`, Vorgabe an;
+                    // nicht beim Anmeldestart mit --versteckt)
+                    if h3.begleiter_starten().is_ok() && h3.profil.hat_begleiter() && !versteckt && zustand::sperre(&h3.einstellungen).inhalt_automatisch {
+                        if matches!(*zustand::sperre(&h3.begleiter_stand), zustand::BegleiterStand::Laeuft) {
+                            if let Err(f) = fenster::inhalt(&app3, &h3.start_url()) {
+                                zustand::sperre(&h3.warnungen).push(f.meldung());
+                            }
+                        }
+                    }
                 });
                 // Wächter: meldet einen von allein beendeten Begleiter
                 let h4 = huelle.clone();

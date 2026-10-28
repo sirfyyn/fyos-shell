@@ -1,0 +1,112 @@
+diff --git a/src/fle_studio/selfupdate.py b/src/fle_studio/selfupdate.py
+index 71633a4..57401f0 100644
+--- a/src/fle_studio/selfupdate.py
++++ b/src/fle_studio/selfupdate.py
+@@ -885,6 +885,10 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+ def cli(argv: Sequence[str], host: Host | None = None) -> int:
+     args = build_parser().parse_args(list(argv))
++    app = os.environ.get("FLE_STUDIO_MANAGED_BY", "").strip()
++    if app:  # a desktop app ships this copy and replaces it with its own updates
++        print(f"Updates come through the app ({app}); this copy of FLE Studio does not update itself. Update the app instead.")
++        return 0
+     if args.home:
+         os.environ["FLE_STUDIO_HOME"] = str(Path(args.home).expanduser())
+     opts = Options(args.version, args.rollback, args.reinstall, args.dry_run, args.no_restart, tuple(args.drop))
+diff --git a/src/fle_studio_updater/updates.py b/src/fle_studio_updater/updates.py
+index 19df834..f5e5ee9 100644
+--- a/src/fle_studio_updater/updates.py
++++ b/src/fle_studio_updater/updates.py
+@@ -203,6 +203,16 @@ def in_service(env: dict[str, str] | None = None, tty: bool | None = None, engin
+     return bool(env.get("INVOCATION_ID") or env.get("JOURNAL_STREAM")) and not tty
+ 
+ 
++MANAGED_ENV = "FLE_STUDIO_MANAGED_BY"
++
++
++def managed_by(env: dict[str, str] | None = None) -> str:
++    """Name of the app that manages this copy of FLE Studio ("" when none does). A desktop app that ships FLE Studio inside its
++    package sets FLE_STUDIO_MANAGED_BY=<app>; it replaces the package with its own updates, so Studio must not update itself."""
++    env = os.environ if env is None else env
++    return env.get(MANAGED_ENV, "").strip()
++
++
+ def detect_install(
+     engine_unit: bool = False,
+     env: dict[str, str] | None = None,
+@@ -210,9 +220,12 @@ def detect_install(
+     direct_url: dict[str, Any] | None | bool = False,
+     tty: bool | None = None,
+ ) -> dict[str, Any]:
+-    """How this FLE Studio was installed: {"kind": uv-tool | pip | source, "source": git | folder | wheel | index,
++    """How this FLE Studio was installed: {"kind": uv-tool | pip | source | managed, "source": git | folder | wheel | index | <app>,
+     "service": bool, "launcher": str}. The keyword arguments let tests say what the machine looks like."""
+     service = in_service(env, tty, engine_unit)
++    app = managed_by(env)
++    if app:
++        return {"kind": "managed", "source": app, "service": service, "launcher": ""}
+     receipt = read_receipt(prefix)
+     if receipt is not None:
+         info = parse_receipt(receipt)
+@@ -248,6 +261,12 @@ def advice(install: dict[str, Any], tag: str, uv: bool, git: bool) -> dict[str,
+     """Whether the one-click update is possible and, when it is not, what to do instead."""
+     command = update_command(install, tag)
+     reason = ""
++    if install["kind"] == "managed":
++        return {
++            "can_auto": False,
++            "reason": f"Updates come through the app ({install['source']}). Update the app; it replaces this copy of FLE Studio.",
++            "command": "",
++        }
+     if install["kind"] != "uv-tool":
+         reason = {
+             "pip": "This copy was installed with pip, so pip updates it.",
+diff --git a/tests/plugins/test_updates.py b/tests/plugins/test_updates.py
+index bcdd22b..c902dfe 100644
+--- a/tests/plugins/test_updates.py
++++ b/tests/plugins/test_updates.py
+@@ -570,3 +570,30 @@ def test_result_of_a_windows_update_is_shown_once(tmp_path: Path, monkeypatch: p
+     assert u.view()["result"]["status"] == "failed"
+     u.ack()
+     assert u.view()["result"] is None
++
++
++# ------------------------------------------------------------------------------------------------ managed by an app
++
++
++def test_a_copy_managed_by_an_app_does_not_update_itself() -> None:
++    install = updates.detect_install(env={"FLE_STUDIO_MANAGED_BY": "fyos-shell"}, tty=True)
++    assert install == {"kind": "managed", "source": "fyos-shell", "service": False, "launcher": ""}
++    verdict = updates.advice(install, "v9.9.9", uv=True, git=True)
++    assert verdict["can_auto"] is False
++    assert "Updates come through the app (fyos-shell)" in verdict["reason"]
++    assert verdict["command"] == ""
++
++
++def test_without_the_marker_nothing_changes() -> None:
++    assert updates.managed_by({}) == ""
++    assert updates.managed_by({"FLE_STUDIO_MANAGED_BY": "  "}) == ""
++    assert updates.detect_install(env={}, prefix=Path("/nonexistent"), direct_url=None, tty=True)["kind"] == "pip"
++
++
++def test_apply_refuses_when_managed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
++    monkeypatch.setenv("FLE_STUDIO_MANAGED_BY", "fyos-shell")
++    config = Config(tmp_path)
++    service = updates.Updates(tmp_path, config, None)
++    service.state = {"app": {"version": "99.0.0", "tag": "v99.0.0"}}
++    with pytest.raises(updates.UpdateError, match="Updates come through the app"):
++        service.apply("v99.0.0")
+diff --git a/tests/test_selfupdate.py b/tests/test_selfupdate.py
+index 062a092..74ec1ce 100644
+--- a/tests/test_selfupdate.py
++++ b/tests/test_selfupdate.py
+@@ -812,3 +812,9 @@ def test_the_update_refreshes_the_starter_on_the_mac_only(machine: Machine) -> N
+     assert "the old one" in program.read_text()
+     run_update(machine, platform="darwin", version="v0.4.2")
+     assert "fle-studio" in program.read_text() and "open" in program.read_text()
++
++
++def test_update_command_says_updates_come_through_the_app(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
++    monkeypatch.setenv("FLE_STUDIO_MANAGED_BY", "fyos-shell")
++    assert selfupdate.cli([]) == 0
++    assert "Updates come through the app (fyos-shell)" in capsys.readouterr().out

@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "hinweis": "Festgenagelte Quellen des Python-Bündels (tools/buendel_bauen.py). Änderungen bewusst, mit neuer Prüfsumme; der Bau bricht bei jeder Abweichung ab.",
+  "python": {
+    "version": "3.11.18",
+    "release": "20261026",
+    "quelle": "https://github.com/astral-sh/python-build-standalone/releases/tag/20261026",
+    "lizenz": "PSF-2.0 (CPython), weitere Lizenzen der Distribution liegen im Paket unter python/LICENSE.txt",
+    "systeme": {
+      "macos-aarch64": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-aarch64-apple-darwin-install_only_stripped.tar.gz",
+        "sha256": "f3e1cd83a7f1d70e58b0d69102c18bd6867d2f973068dc5cbfd5822e445c66df",
+        "interpreter": "python/bin/python3.11"
+      },
+      "macos-x86_64": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-apple-darwin-install_only_stripped.tar.gz",
+        "sha256": "d38edc2df25e7e7f886c802bf2fa552422b097c509dbdcbae828827470356095",
+        "interpreter": "python/bin/python3.11"
+      },
+      "linux-x86_64": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "sha256": "17c4978a36c496dc53c08899ef8dad1ad2734f6325f08d6033a1e66419e0af26",
+        "interpreter": "python/bin/python3.11"
+      },
+      "windows-x86_64": {
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+        "sha256": "67215a7bf1643e33d01b17ee3f1e91a8b0b39163746855ee02594bf0608f68b4",
+        "interpreter": "python/python.exe"
+      }
+    }
+  },
+  "studio": {
+    "version": "0.4.1",
+    "tag": "v0.4.1",
+    "commit": "6d5b01e61821ad6f4d937f8ea5885a41cef19c3c",
+    "url": "https://codeload.github.com/sirfyyn/fle-studio/tar.gz/6d5b01e61821ad6f4d937f8ea5885a41cef19c3c",
+    "inhalt_sha256": "e1b26a629902499b97d9c9da45c6f9d22a5245b6086c3d4f9a0f89b27472b5d4",
+    "lizenz": "MIT (LICENSE des Studio-Projekts liegt im Paket unter studio/)",
+    "hinweis": "Keine Abhängigkeiten. Der Inhalts-Hash ist über die entpackten Dateien (src/, pyproject.toml, LICENSE) gebildet und deshalb unabhängig davon, wie GitHub das Archiv packt."
+  }
+}

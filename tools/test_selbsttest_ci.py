@@ -30,6 +30,16 @@ class CI(unittest.TestCase):
             with mock.patch.object(s.sys, "platform", p):
                 self.assertEqual(s.befehl("app.exe", False), ["app.exe", "--selbsttest"])
 
+    def test_buendel_verlangt_kein_begleiter_und_die_quelle_buendel(self):
+        self.assertEqual(s.einstellungen(buendel=True), {"schema": 1})
+        echt = json.loads(json.dumps(GUT))
+        echt["schritte"][1]["text"] = "läuft (http://127.0.0.1:5/api/state), /api/state meldet fle-studio 0.4.1; Quelle: Bündel"
+        self.assertTrue(s.auswerten(0, json.dumps(echt), buendel=True)[0])
+        testserver = json.loads(json.dumps(GUT))
+        testserver["schritte"][1]["text"] = "läuft, meldet FLE Studio (Testserver) 4.0.0; Quelle: Einstellungen"
+        self.assertFalse(s.auswerten(0, json.dumps(testserver), buendel=True)[0])
+        self.assertTrue(s.auswerten(0, json.dumps(testserver))[0])
+
     def test_auswerten(self):
         self.assertTrue(s.auswerten(0, "Warnung\n" + json.dumps(GUT))[0])
         schlecht = dict(GUT, ok=False)

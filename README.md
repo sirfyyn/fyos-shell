@@ -17,6 +17,8 @@ Status: first working slice ("D0/D1"). It is a shell and an update loop, not yet
 | `crates/shell-tresor` | System keychain behind one interface (`keyring`: macOS Keychain, Windows Credential Manager, Linux Secret Service); settings refer to secrets as `{tresor:NAME}` |
 | `app` | The Tauri application (window, tray, single instance, updater wiring, commands); `app/profile/*.conf.json` are the three profiles; `app/ui` is the small local page |
 | `tools` | Build script, test servers, end-to-end update test, Linux container checks, pixel probe, checksums, this repo's own "is it safe to publish" scan (`oeffentlich_pruefen.py`) |
+| `python-buendel.lock.json`, `tools/buendel_bauen.py` | The *studio* profile ships its own Python and FLE Studio (python-build-standalone 3.11, SHA-256 pinned per system; Studio pinned by commit and content hash; no dependencies). `python3 tools/bauen.py studio --mit-python` builds it into the package; user data and plugin packages stay outside (`<data>/studio-home`, `<data>/studio-plugins`) |
+| `studio-patch` | A small proposed patch for FLE Studio ("updates come through the app" when `FLE_STUDIO_MANAGED_BY` is set); not applied upstream |
 | `docker` | Linux build container and a MinGW container for a Windows compile check |
 | `.github/workflows` | Build and `--selbsttest` on Ubuntu, macOS and Windows (unsigned); a manual release job with SHA-256 checksums |
 

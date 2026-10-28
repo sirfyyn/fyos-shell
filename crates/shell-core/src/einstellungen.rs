@@ -25,6 +25,8 @@ pub struct Einstellungen {
     pub begleiter: Option<BegleiterKonfig>,
     /// Beim Anmelden starten (wird in D1 verdrahtet; hier nur gemerkt).
     pub autostart: bool,
+    /// Profil mit Begleiter (Studio): beim Start das Inhaltsfenster mit dem Studio öffnen, sobald der Begleiter gesund ist (Vorgabe an).
+    pub inhalt_automatisch: bool,
     #[serde(flatten)]
     pub weitere: Map<String, Value>,
 }
@@ -37,6 +39,7 @@ impl Default for Einstellungen {
             update_basis: None,
             begleiter: None,
             autostart: false,
+            inhalt_automatisch: true,
             weitere: Map::new(),
         }
     }

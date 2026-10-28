@@ -43,6 +43,12 @@ pub struct Info {
     /// Gesetzt, wenn Updates in dieser Fassung nicht möglich sind
     updater: Option<Meldung>,
     begleiter: BegleiterStand,
+    /// Woher der Studio-Server kommt: "Einstellungen" oder "Bündel" (leer: keiner)
+    begleiter_quelle: String,
+    /// Versionen im mitgelieferten Python-Bündel (Python, Studio)
+    buendel: Option<(String, String)>,
+    /// Plugin-Pakete des Nutzers (Ordner studio-plugins im Datenordner), unverändert
+    studio_plugins: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -83,6 +89,9 @@ pub fn info(app: AppHandle, h: H<'_>) -> Info {
         warnungen: sperre(&h.warnungen).clone(),
         updater: sperre(&h.updater_fehler).as_ref().map(Fehler::meldung),
         begleiter: sperre(&h.begleiter_stand).clone(),
+        begleiter_quelle: sperre(&h.begleiter_quelle).clone(),
+        buendel: h.buendel.as_ref().map(|b| (b.python_version.clone(), b.studio_version.clone())),
+        studio_plugins: shell_core::buendel::nutzer_plugins_gefunden(&h.pfade.daten),
     }
 }
 

@@ -42,6 +42,14 @@ function begleiterText(b) {
   }
 }
 
+// Studio-Zeile: Zustand des Servers, woher er kommt (Bündel = mit der App geliefert) und Plugins des Nutzers
+function studioZeile(i) {
+  let t = begleiterText(i.begleiter);
+  if (i.begleiter_quelle === "Bündel" && i.buendel) t += ` Mitgeliefert: Studio ${i.buendel[1]}, Python ${i.buendel[0]}.`;
+  if (i.studio_plugins && i.studio_plugins.length) t += ` ${i.studio_plugins.length} Plugin-Einträge des Nutzers gefunden (werden nicht verändert).`;
+  return t;
+}
+
 let letzteInfo = null;
 
 async function laden() {
@@ -54,7 +62,7 @@ async function laden() {
   $("start-url").textContent = i.start_url;
   $("url-eingabe").value = i.start_url;
   $("studio").hidden = i.profil !== "studio";
-  $("studio-text").textContent = begleiterText(i.begleiter);
+  $("studio-text").textContent = studioZeile(i);
   $("autostart").checked = !!i.autostart;
   $("zurueck").hidden = !i.vorherige;
   $("zurueck").textContent = i.vorherige ? `Zurück zu Version ${i.vorherige}` : "";
@@ -163,7 +171,7 @@ setInterval(async () => {
   if (!letzteInfo || letzteInfo.profil !== "studio") return;
   try {
     const i = await invoke("info");
-    $("studio-text").textContent = begleiterText(i.begleiter);
+    $("studio-text").textContent = studioZeile(i);
   } catch (_) { /* nächste Runde */ }
 }, 3000);
 

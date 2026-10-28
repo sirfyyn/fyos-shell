@@ -2,7 +2,8 @@
 
 use crate::studio_http;
 use serde::Serialize;
-use shell_core::begleiter::{freien_port, neue_kennung, Begleiter, Kindprozess};
+use shell_core::begleiter::{freien_port, neue_kennung, Begleiter, BegleiterKonfig, Kindprozess};
+use shell_core::buendel::Buendel;
 use shell_core::bericht::{self, Bericht};
 use shell_core::einstellungen::{self, Einstellungen};
 use shell_core::speicher::Pfade;
@@ -39,6 +40,10 @@ pub struct Huelle {
     pub seite_bereit: Mutex<Option<(bool, String)>>,
     /// Tresor für Geheimnisse (Systemtresor im Betrieb, Speicher-Tresor in Tests)
     pub tresor: Arc<dyn Tresor>,
+    /// Python-Bündel mit dem Studio-Server (nur Profil Studio, nur wenn die App es mitbringt)
+    pub buendel: Option<Buendel>,
+    /// Woher der laufende Begleiter kommt: "Einstellungen" oder "Bündel" (leer: keiner)
+    pub begleiter_quelle: Mutex<String>,
 }
 
 impl Huelle {
@@ -69,7 +74,27 @@ impl Huelle {
             begleiter_ziel: Mutex::new(None),
             seite_bereit: Mutex::new(None),
             tresor: Arc::new(SpeicherTresor::default()),
+            buendel: None,
+            begleiter_quelle: Mutex::new(String::new()),
         })
+    }
+
+    /// Welcher Begleiter gilt? Eine Einstellung des Nutzers (Feld „begleiter“ in der Einstellungsdatei) hat Vorrang; sonst, im Profil Studio,
+    /// der Server aus dem mitgelieferten Bündel; sonst keiner. Das zweite Stück sagt der Anzeige, woher er kommt.
+    pub fn begleiter_konfig(&self) -> Option<(BegleiterKonfig, &'static str)> {
+        if !self.profil.hat_begleiter() {
+            return None;
+        }
+        if let Some(k) = sperre(&self.einstellungen).begleiter.clone().filter(|k| !k.programm.trim().is_empty()) {
+            return Some((k, "Einstellungen"));
+        }
+        self.buendel.as_ref().map(|b| (b.begleiter_konfig(&self.pfade.daten, cfg!(windows)), "Bündel"))
+    }
+
+    /// Setzt das Bündel (im Betrieb aus dem Ressourcenordner der App gelesen).
+    pub fn mit_buendel(mut self, buendel: Option<Buendel>) -> Huelle {
+        self.buendel = buendel;
+        self
     }
 
     /// Setzt den Tresor (im Betrieb der Systemtresor).
@@ -113,14 +138,11 @@ impl Huelle {
     /// Startet den Begleiter (nur Profil Studio mit eingestelltem Programm) und wartet, bis er gesund ist.
     /// Der Stand steht danach in `begleiter_stand`; hier wird nichts angezeigt.
     pub fn begleiter_starten(&self) -> Result<(), Fehler> {
-        let Some(konfig) = self.profil.hat_begleiter().then(|| sperre(&self.einstellungen).begleiter.clone()).flatten() else {
+        let Some((konfig, quelle)) = self.begleiter_konfig() else {
             *sperre(&self.begleiter_stand) = BegleiterStand::Keiner;
             return Ok(());
         };
-        if konfig.programm.trim().is_empty() {
-            *sperre(&self.begleiter_stand) = BegleiterStand::Keiner;
-            return Ok(());
-        }
+        *sperre(&self.begleiter_quelle) = quelle.to_string();
         *sperre(&self.begleiter_stand) = BegleiterStand::Startet;
         let mut kasten = sperre(&self.begleiter);
         if kasten.is_none() {
@@ -427,6 +449,45 @@ mod tests {
         assert!(!text.contains("hf_klartext_geheim_1"));
         let datei = shell_core::bericht::speichern(&d.path().join("berichte"), &b).unwrap();
         assert!(datei.is_file());
+    }
+
+    fn fake_buendel(ordner: &std::path::Path) -> Buendel {
+        std::fs::create_dir_all(ordner.join("studio")).unwrap();
+        std::fs::create_dir_all(ordner.join("shim")).unwrap();
+        std::fs::create_dir_all(ordner.join("python/bin")).unwrap();
+        std::fs::write(ordner.join("shim/begleiter_shim.py"), "#").unwrap();
+        std::fs::write(ordner.join("python/bin/python3.11"), "x").unwrap();
+        std::fs::write(
+            ordner.join("buendel.json"),
+            r#"{"format":1,"system":"macos-aarch64","python":{"version":"3.11.18","interpreter":"python/bin/python3.11"},"studio":{"version":"0.4.1","ordner":"studio"},"shim":"shim/begleiter_shim.py"}"#,
+        )
+        .unwrap();
+        Buendel::lesen(ordner).unwrap().unwrap()
+    }
+
+    #[test]
+    fn begleiter_aus_dem_buendel_nur_im_profil_studio_und_einstellung_hat_vorrang() {
+        let d = tempfile::tempdir().unwrap();
+        let b = fake_buendel(&d.path().join("res"));
+        let studio = Huelle::laden(Profil::Studio, "0.0.1", Pfade::neu(d.path().join("daten"))).unwrap().mit_buendel(Some(b.clone()));
+        let (k, quelle) = studio.begleiter_konfig().unwrap();
+        assert_eq!(quelle, "Bündel");
+        assert!(k.programm.ends_with("python/bin/python3.11") && k.args.iter().any(|a| a == "fle_studio"));
+        assert!(k.args.iter().any(|a| a.ends_with("studio-home")), "Daten des Studios im Datenordner, nicht im Paket");
+
+        // eine Einstellung des Nutzers hat Vorrang vor dem Bündel
+        sperre(&studio.einstellungen).begleiter = Some(shell_core::begleiter::BegleiterKonfig { programm: "/mein/studio".into(), ..Default::default() });
+        let (k, quelle) = studio.begleiter_konfig().unwrap();
+        assert_eq!((k.programm.as_str(), quelle), ("/mein/studio", "Einstellungen"));
+
+        // andere Profile bekommen nie einen Begleiter, auch wenn ein Bündel da wäre
+        let os = Huelle::laden(Profil::Os, "0.0.1", Pfade::neu(d.path().join("daten2"))).unwrap().mit_buendel(Some(b));
+        assert!(os.begleiter_konfig().is_none());
+        // Studio ohne Bündel und ohne Einstellung: keiner
+        let leer = Huelle::laden(Profil::Studio, "0.0.1", Pfade::neu(d.path().join("daten3"))).unwrap();
+        assert!(leer.begleiter_konfig().is_none());
+        leer.begleiter_starten().unwrap();
+        assert!(matches!(*sperre(&leer.begleiter_stand), BegleiterStand::Keiner));
     }
 
     #[test]

@@ -78,7 +78,7 @@ async fn selbsttest(app: &AppHandle, h: &Arc<Huelle>) -> (Value, i32) {
                 let url = h.gesundheits_url();
                 let kennung = h.kennung();
                 match studio_http::holen(&url, kennung.as_deref()) {
-                    Ok(z) => schritt("begleiter", true, format!("läuft ({}), /api/state meldet {} {}", url, z.app, z.version)),
+                    Ok(z) => schritt("begleiter", true, format!("läuft ({}), /api/state meldet {} {}; Quelle: {}", url, z.app, z.version, sperre(&h.begleiter_quelle))),
                     Err(f) => schritt("begleiter", false, f.to_string()),
                 }
             }

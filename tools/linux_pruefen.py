@@ -56,8 +56,10 @@ def schluessel(name):
 
 
 def bauen_version(profil, version, key):
+    # Studio-Profil immer mit Python-Bündel (S-A): das AppImage bringt Interpreter und Studio mit
+    mit = ["--mit-python"] if profil == "studio" else []
     r = lauf([sys.executable, TOOLS / "bauen.py", profil, "--version", version, "--debug", "--bundles", "appimage",
-              "--update-schluessel", key, "--update-pubkey", str(key) + ".pub", "--update-basis", UPDATE_BASIS, "--name", NAME])
+              "--update-schluessel", key, "--update-pubkey", str(key) + ".pub", "--update-basis", UPDATE_BASIS, "--name", NAME, *mit])
     if r.returncode != 0:
         sys.exit(r.returncode)
 
@@ -74,7 +76,7 @@ def appimage():
     return gefunden[0]
 
 
-def daten(name, update_basis=None, begleiter_env=None):
+def daten(name, update_basis=None, begleiter_env=None, ohne_begleiter=False):
     d = WURZEL / "daten-linux" / name
     if d.exists():
         shutil.rmtree(d)
@@ -83,6 +85,8 @@ def daten(name, update_basis=None, begleiter_env=None):
     einst = {"schema": 1, "meine_eigene_einstellung": {"bleibt": [1, 2, 3]},
              "begleiter": {"programm": sys.executable, "frist_s": 20, "env": {},
                            "args": [str(TOOLS / "testserver.py"), "studio", "--version", "4.0.0-test"]}}
+    if ohne_begleiter:
+        del einst["begleiter"]  # das Bündel gilt
     if begleiter_env:
         einst["begleiter"]["env"] = begleiter_env
     if update_basis:
@@ -232,6 +236,17 @@ def schleife():
         code, aus, err = lauf_app("--info")
         melde("danach läuft 0.0.1, Vorversion 0.0.2, Daten unverändert",
               aus and aus["version"] == "0.0.1" and aus["vorherige"] == "0.0.2" and {n: sha(d / n) for n in vorher} == vorher, json.dumps(aus) + err)
+
+        print("S-A Python-Bündel im AppImage")
+        d4 = daten("buendel", ohne_begleiter=True)
+        (d4 / "studio-home").mkdir()
+        (d4 / "studio-home" / "daten-des-studios.txt").write_text("Studio-Daten\n")
+        gesamt_vorher = {n: sha(d4 / n) for n in ("einstellungen.json", "daten-marke.txt", "plugins", "studio-home")}
+        code, aus, err = lauf_app("--selbsttest", daten_ordner=d4)
+        text = next((x["text"] for x in (aus or {}).get("schritte", []) if x["name"] == "begleiter"), "")
+        melde("echtes Studio aus dem Bündel: läuft, /api/state mit Kennung, Quelle Bündel", code == 0 and "fle-studio 0.4.1" in text and "Quelle: Bündel" in text, json.dumps(aus) + err)
+        melde("Daten und Studio-Daten des Nutzers nach dem Start unverändert (ausser neuen Dateien des Studios)",
+              all(sha(d4 / n) == gesamt_vorher[n] for n in ("einstellungen.json", "daten-marke.txt", "plugins")) and (d4 / "studio-home" / "daten-des-studios.txt").is_file())
     finally:
         server.terminate()
         server.wait(timeout=10)
@@ -242,14 +257,14 @@ def schleife():
 
 # ---------------------------------------------------------------- Pixelprobe
 
-def fenster_id(anzeige, titel, sekunden=60):
+def fenster_id(anzeige, titel, sekunden=60, min_breite=100):
     ende = time.time() + sekunden
     while time.time() < ende:
         r = subprocess.run(["xwininfo", "-display", anzeige, "-root", "-tree"], capture_output=True, text=True)
         for zeile in r.stdout.splitlines():
             # Beispiel:  0x400003 "FLE Studio D0-Linux": ("fyos-shell" "FYOS Shell")  760x720+0+0  +12+34
             m = re.match(r"^\s+(0x[0-9a-f]+) \"([^\"]*)\".*?\s(\d+)x(\d+)\+-?\d+\+-?\d+\s+\+(-?\d+)\+(-?\d+)", zeile)
-            if m and titel in m.group(2) and int(m.group(3)) > 100 and int(m.group(4)) > 100:
+            if m and titel in m.group(2) and int(m.group(3)) > min_breite and int(m.group(4)) > 100:
                 return m.group(1), int(m.group(5)), int(m.group(6)), int(m.group(3)), int(m.group(4))
         time.sleep(1)
     return None
@@ -284,17 +299,17 @@ def pixel():
         fbdir.mkdir(parents=True, exist_ok=True)
         xvfb = subprocess.Popen(["Xvfb", anzeige, "-screen", "0", "1280x800x24", "-fbdir", str(fbdir)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(2)
-        d = daten(f"pixel-{name}")
+        d = daten(f"pixel-{name}", ohne_begleiter=True)  # echtes Studio aus dem Bündel im Inhaltsfenster
         env = dict(os.environ, DISPLAY=anzeige, FYOS_SHELL_DATEN=str(d), CUDA_VISIBLE_DEVICES="", **extra)
         prozess = subprocess.Popen(["dbus-run-session", "--", str(app)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         try:
-            fenster = fenster_id(anzeige, NAME)
+            fenster = fenster_id(anzeige, NAME, min_breite=1100)  # das Inhaltsfenster mit dem Studio (1200 breit), nicht die Hülle (760)
             if not fenster:
                 print(f"[FEHLER] {name}: kein Fenster mit dem Titel {NAME} erschienen")
                 fehler += 1
                 continue
             wid, x, y, w, h = fenster
-            time.sleep(8)  # Seite laden und zeichnen lassen
+            time.sleep(15)  # Seite laden und zeichnen lassen (das echte Studio lädt mehr als die Testseite)
             abzug = fbdir / "Xvfb_screen0"
             kopie = LAUF / f"bildschirm-{name}.xwd"
             shutil.copy(abzug, kopie)

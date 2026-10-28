@@ -13,6 +13,7 @@
 
 pub mod autostart;
 pub mod begleiter;
+pub mod buendel;
 pub mod bericht;
 pub mod einstellungen;
 pub mod fehler;

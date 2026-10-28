@@ -22,6 +22,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 WURZEL = Path(__file__).resolve().parent.parent
 APP = WURZEL / "app"
 PROFILE = ("studio", "agent", "os")
@@ -56,6 +58,10 @@ def overlay(a):
         sys.exit(f"Der öffentliche Schlüssel fehlt: {pubkey_datei}. Abhilfe: tools/schluessel_erzeugen.sh oder --update-pubkey.")
     if a.signiert:
         conf["bundle"] = {"createUpdaterArtifacts": True}
+    if a.mit_python:
+        # Interpreter, Studio und Shim (von buendel_bauen.py nach app/resources gebaut) kommen als Ressourcen ins Paket
+        conf.setdefault("bundle", {})["resources"] = {
+            "resources/python/": "python/", "resources/studio/": "studio/", "resources/shim/": "shim/", "resources/buendel.json": "buendel.json"}
     if updater:
         conf["plugins"] = {"updater": updater}
     return conf
@@ -69,6 +75,7 @@ def main():
     p.add_argument("--debug", action="store_true", help="Debug-Bau (schnell); ohne: Release")
     p.add_argument("--bundles", default=None, help="app, dmg (macOS) · appimage, deb (Linux) · nsis, msi (Windows)")
     p.add_argument("--kennung-zusatz", help="hängt der Bundle-Id einen Zusatz an (<id>.<zusatz>): Test-Bau, der nicht mit einer installierten App kollidiert (Einzelinstanz, Daten, Tresor)")
+    p.add_argument("--mit-python", action="store_true", help="Python-Bündel mit dem Studio-Server bauen (tools/buendel_bauen.py) und ins Paket legen; nur Profil studio")
     p.add_argument("--ohne-paket", action="store_true", help="nur das Programm bauen, kein Installationspaket (für den Selbsttest im CI)")
     p.add_argument("--schluesselbund", action="store_true", help="privaten Update-Schlüssel und Passwort dieses Profils aus dem macOS-Schlüsselbund holen")
     p.add_argument("--update-schluessel", help="Pfad (oder Inhalt) des privaten Update-Schlüssels; sonst Umgebung TAURI_SIGNING_PRIVATE_KEY")
@@ -80,6 +87,12 @@ def main():
     if not tauri.exists():
         sys.exit("Die lokale Tauri-CLI fehlt. Abhilfe: im Ordner apps/fyos-shell einmal 'npm install' ausführen.")
 
+    if a.mit_python:
+        if a.profil != "studio":
+            sys.exit("--mit-python gibt es nur für das Profil studio (nur dieses hat einen Begleiter).")
+        import buendel_bauen
+        if buendel_bauen.main([]) != 0:
+            sys.exit("Das Python-Bündel konnte nicht gebaut werden (Meldung oben).")
     env = dict(os.environ)
     if a.schluesselbund:
         env["TAURI_SIGNING_PRIVATE_KEY"] = aus_schluesselbund(a.profil, "schluessel")

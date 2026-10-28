@@ -76,14 +76,14 @@ def schluessel(arbeit):
     return ordner / "studio.key", ordner / "agent.key"
 
 
-def bauen(version, key, ausgabe):
+def bauen(version, key, ausgabe, extra=()):
     ziel = ausgabe / version
     if ziel.exists():
         shutil.rmtree(ziel)
     ziel.mkdir(parents=True)
     r = subprocess.run([sys.executable, str(TOOLS / "bauen.py"), "studio", "--version", version, "--debug", "--bundles", "app",
                         "--update-schluessel", str(key), "--update-pubkey", str(key) + ".pub",
-                        "--update-basis", f"http://127.0.0.1:{PORT_UPDATE}/", "--name", APPNAME, "--kennung-zusatz", "e2etest"])
+                        "--update-basis", f"http://127.0.0.1:{PORT_UPDATE}/", "--name", APPNAME, "--kennung-zusatz", "e2etest", *extra])
     if r.returncode != 0:
         sys.exit(f"Bau {version} fehlgeschlagen")
     bundle = WURZEL / "target" / "debug" / "bundle" / "macos"

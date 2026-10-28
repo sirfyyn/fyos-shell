@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "fyos-shell"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "ctrlc",
  "semver",
@@ -3716,7 +3716,7 @@ dependencies = [
 
 [[package]]
 name = "shell-core"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
@@ -3731,7 +3731,7 @@ dependencies = [
 
 [[package]]
 name = "shell-tresor"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "keyring",
  "shell-core",

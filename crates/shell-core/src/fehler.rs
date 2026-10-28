@@ -71,6 +71,8 @@ pub enum Fehler {
     TresorNameUnzulaessig { name: String },
     /// Der Eintrag für den Start bei der Anmeldung lässt sich nicht schreiben oder lesen.
     AutostartFehlgeschlagen { ort: String, grund: String },
+    /// Das mitgelieferte Python-Paket (Studio-Server) fehlt oder ist unvollständig.
+    BuendelUnvollstaendig { grund: String },
 }
 
 fn kurz(s: &str) -> String {
@@ -112,6 +114,7 @@ impl Fehler {
             Fehler::GeheimnisInEinstellungen { .. } => "GEHEIMNIS_IN_EINSTELLUNGEN",
             Fehler::TresorNameUnzulaessig { .. } => "TRESOR_NAME_UNZULAESSIG",
             Fehler::AutostartFehlgeschlagen { .. } => "AUTOSTART_FEHLGESCHLAGEN",
+            Fehler::BuendelUnvollstaendig { .. } => "BUENDEL_UNVOLLSTAENDIG",
         }
     }
 
@@ -243,6 +246,11 @@ impl Fehler {
                 "Prüfen, ob der Ordner bzw. Registrypfad beschreibbar ist (Benutzerrechte, Platz, Sicherheitssoftware). Die Anwendung läuft ganz normal weiter; der Start per Hand bleibt möglich.".into(),
                 Some(kurz(&format!("{ort}: {grund}"))),
             ),
+            Fehler::BuendelUnvollstaendig { grund } => (
+                "Das mitgelieferte Python-Paket mit dem Studio-Server ist unvollständig oder beschädigt, deshalb startet der Studio-Server nicht.".into(),
+                "Die Anwendung neu installieren (das Paket gehört zur Anwendung; Einstellungen und Daten bleiben erhalten). Wer das Studio selbst bereitstellt, trägt in den Einstellungen unter „begleiter“ ein eigenes Programm ein.".into(),
+                Some(kurz(grund)),
+            ),
         };
         Meldung { code: self.code().to_string(), ursache, abhilfe, details }
     }
@@ -305,6 +313,7 @@ mod tests {
             Fehler::GeheimnisInEinstellungen { schluessel: s("s") },
             Fehler::TresorNameUnzulaessig { name: s("n") },
             Fehler::AutostartFehlgeschlagen { ort: s("o"), grund: s("g") },
+            Fehler::BuendelUnvollstaendig { grund: s("g") },
         ]
     }
 

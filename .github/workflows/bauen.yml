@@ -59,6 +59,18 @@ jobs:
         run: python tools/bauen.py "${{ inputs.profil || 'studio' }}" --debug --ohne-paket
       - name: Selbsttest
         run: python tools/selbsttest_ci.py "target/debug/fyos-shell${{ runner.os == 'Windows' && '.exe' || '' }}"
+      - name: Python-Bündel (Studio), Cache
+        if: ${{ (inputs.profil || 'studio') == 'studio' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/fyos-shell/buendel
+          key: buendel-${{ runner.os }}-${{ hashFiles('python-buendel.lock.json') }}
+      - name: Python-Bündel (Studio) bauen und das echte Studio starten
+        if: ${{ (inputs.profil || 'studio') == 'studio' }}
+        # Download mit festgenagelter Prüfsumme (python-buendel.lock.json), gestutzt; der Selbsttest startet das Studio aus dem Bündel (Quelle: Bündel)
+        run: |
+          python tools/buendel_bauen.py
+          python tools/selbsttest_ci.py "target/debug/fyos-shell${{ runner.os == 'Windows' && '.exe' || '' }}" --buendel
 
   release:
     if: ${{ inputs.release }}
@@ -88,6 +100,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev patchelf
       - run: npm ci
+      - name: Python-Bündel (Studio), Cache
+        if: ${{ (inputs.profil || 'studio') == 'studio' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/fyos-shell/buendel
+          key: buendel-${{ runner.os }}-${{ hashFiles('python-buendel.lock.json') }}
       - name: Bau (Release, ungesignierte Installationspakete)
         env:
           # Je Profil ein eigenes Geheimnispaar: TAURI_SIGNING_PRIVATE_KEY_STUDIO / _AGENT / _OS und je ein _PASSWORD.
@@ -95,7 +113,8 @@ jobs:
           # Fehlt es, entstehen Pakete ohne Update-Fähigkeit.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets[format('TAURI_SIGNING_PRIVATE_KEY_{0}', inputs.profil || 'studio')] }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets[format('TAURI_SIGNING_PRIVATE_KEY_PASSWORD_{0}', inputs.profil || 'studio')] }}
-        run: python tools/bauen.py "${{ inputs.profil || 'studio' }}" --bundles "${{ matrix.buendel }}"
+        # Studio: mit dem Python-Bündel (Interpreter + Studio im Paket); agent/os ohne
+        run: python tools/bauen.py "${{ inputs.profil || 'studio' }}" --bundles "${{ matrix.buendel }}" ${{ (inputs.profil || 'studio') == 'studio' && '--mit-python' || '' }}
       - name: Prüfsummen
         run: |
           mkdir -p ausgabe
