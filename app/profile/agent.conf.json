@@ -12,6 +12,11 @@
       "profile/icons/agent/icon.ico"
     ]
   },
+  "app": {
+    "security": {
+      "capabilities": ["haupt", "inhalt", "agent-chat", "agent-haupt"]
+    }
+  },
   "plugins": {
     "updater": {
       "endpoints": [

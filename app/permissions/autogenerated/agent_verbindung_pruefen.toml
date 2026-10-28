@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-verbindung-pruefen"
+description = "Enables the agent_verbindung_pruefen command without any pre-configured scope."
+commands.allow = ["agent_verbindung_pruefen"]
+
+[[permission]]
+identifier = "deny-agent-verbindung-pruefen"
+description = "Denies the agent_verbindung_pruefen command without any pre-configured scope."
+commands.deny = ["agent_verbindung_pruefen"]

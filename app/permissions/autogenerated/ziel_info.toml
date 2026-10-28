@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ziel-info"
+description = "Enables the ziel_info command without any pre-configured scope."
+commands.allow = ["ziel_info"]
+
+[[permission]]
+identifier = "deny-ziel-info"
+description = "Denies the ziel_info command without any pre-configured scope."
+commands.deny = ["ziel_info"]

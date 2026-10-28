@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-zustand-melden"
+description = "Enables the zustand_melden command without any pre-configured scope."
+commands.allow = ["zustand_melden"]
+
+[[permission]]
+identifier = "deny-zustand-melden"
+description = "Denies the zustand_melden command without any pre-configured scope."
+commands.deny = ["zustand_melden"]

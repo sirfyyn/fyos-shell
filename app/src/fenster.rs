@@ -40,6 +40,10 @@ pub fn nach_vorn(app: &AppHandle) {
             crate::os::oeffnen(app, &h);
             return;
         }
+        if h.profil == Profil::Agent {
+            crate::agent::fenster::start_fenster(app, &h);
+            return;
+        }
     }
     if let Err(e) = haupt(app, true) {
         eprintln!("Hauptfenster lässt sich nicht öffnen: {e}");
@@ -179,6 +183,10 @@ pub fn inhalt(app: &AppHandle, adresse: &str) -> Result<(), Fehler> {
 /// Abgelehnte Links erscheinen als Meldung im Hauptfenster.
 pub fn deeplink(app: &AppHandle, h: &Huelle, link: &str) {
     let ergebnis = links::pruefe(link, h.profil).and_then(|pfad| {
+        if h.profil == Profil::Agent {
+            // Profil Agent: jeder gültige Link öffnet das Chat-Fenster (es gibt keine Seite des Runners im Fenster)
+            return crate::agent::fenster::chat_oeffnen(app).map_err(|e| Fehler::LinkAbgelehnt { link: link.to_string(), grund: e.to_string() });
+        }
         let basis = Url::parse(&h.start_url()).map_err(|e| Fehler::LinkAbgelehnt { link: link.to_string(), grund: e.to_string() })?;
         let ziel = basis.join(&pfad).map_err(|e| Fehler::LinkAbgelehnt { link: link.to_string(), grund: e.to_string() })?;
         inhalt(app, ziel.as_str())

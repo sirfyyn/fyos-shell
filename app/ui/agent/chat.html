@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent</title>
+  <link rel="stylesheet" href="chat.css">
+</head>
+<body>
+  <div class="app">
+    <header class="kopf">
+      <div class="kopf-links">
+        <span id="avatar" class="avatar" aria-hidden="true">A</span>
+        <div class="kopf-text">
+          <h1 id="titel">Agent</h1>
+          <div class="unterzeile"><span id="verbindung">verbinde …</span></div>
+        </div>
+      </div>
+      <div class="kopf-rechts">
+        <button id="bericht" type="button" class="leise-knopf" title="Schreibt eine Textdatei mit Version, Meldungen und geschwärzten Einstellungen auf den Schreibtisch. Es wird nichts hochgeladen.">Bericht speichern</button>
+        <span id="zustand" class="zustand bereit" role="status"><span class="punkt" aria-hidden="true"></span><span id="zustandText">bereit</span></span>
+      </div>
+    </header>
+
+    <div class="mitte">
+      <div id="banner" class="banner" role="status" hidden></div>
+      <main id="verlauf" class="verlauf" tabindex="0" role="log" aria-live="off" aria-label="Gespräch">
+        <div id="spalte" class="spalte"></div>
+      </main>
+      <button id="zumEnde" class="zum-ende" type="button" hidden>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v9 M4 8.5l4 4 4-4" /></svg>
+        Zum Ende
+      </button>
+    </div>
+
+    <footer class="unten">
+      <form id="eingabeForm" class="eingabe" autocomplete="off">
+        <div id="menue" class="menue" role="listbox" aria-label="Vorschläge" hidden></div>
+        <textarea id="eingabe" rows="1" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="menue" aria-label="Nachricht an den Agenten" placeholder="Nachricht …  /  für Befehle"></textarea>
+        <div class="eingabe-zeile">
+          <span class="hinweis">Enter sendet · Umschalt+Enter neue Zeile · Strg/Cmd+Enter greift ein</span>
+          <span class="rechts">
+            <button id="stopp" type="button" class="gefahr" hidden aria-keyshortcuts="Escape">Stopp <kbd>Esc</kbd></button>
+            <button id="senden" type="submit" class="primaer">Senden</button>
+          </span>
+        </div>
+      </form>
+      <div class="statuszeile" aria-label="Status">
+        <span class="modus-wrap">
+          <button id="modus" type="button" class="modus-knopf" aria-haspopup="menu" aria-expanded="false">Berechtigungen umgehen</button>
+          <div id="modusMenue" class="modus-menue" role="menu" aria-label="Modus" hidden></div>
+        </span>
+        <span id="modell" class="modell-knopf" title="Modell">–</span>
+        <span id="kontext" class="kontext" role="meter" aria-label="Kontextfüllung" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-stufe="ok">
+          <span class="balken" aria-hidden="true"><i></i></span>
+          <span id="kontextText">–</span>
+          <span id="kontextTitel" class="leise"></span>
+        </span>
+        <span id="tokens" class="leise"></span>
+        <span id="kosten" class="leise"></span>
+      </div>
+    </footer>
+    <div id="ansage" class="sr" aria-live="polite" aria-atomic="true"></div>
+  </div>
+
+  <script src="markdown-strom.js"></script>
+  <script src="chat-renderer.js"></script>
+  <script src="runner-adapter.js"></script>
+  <script src="echt.js"></script>
+  <script src="modus.js"></script>
+  <script src="chat.js"></script>
+</body>
+</html>

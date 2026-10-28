@@ -23,7 +23,26 @@
 
     <section id="erfolg" class="erfolg" hidden aria-live="polite"></section>
 
-    <section>
+    <section id="agent" hidden>
+      <h2>Runner-Verbindung</h2>
+      <p class="leise">Der Runner läuft auf einem anderen Rechner (eigenes Netz oder Tunnel). Die Anwendung bringt keinen mit. Das Token liegt im Tresor des Systems, nie in einer Datei.</p>
+      <div class="zeile">
+        <input id="a-adresse" type="text" aria-label="Adresse des Runners" placeholder="Adresse, z. B. rechner:18438 oder https://runner.example.org" autocomplete="off">
+      </div>
+      <div class="zeile">
+        <input id="a-token" type="password" aria-label="Token des Runners" placeholder="Token (leer lassen, um das gespeicherte zu behalten)" autocomplete="off">
+      </div>
+      <p id="a-hinweis" class="leise"></p>
+      <div class="zeile">
+        <button id="a-speichern" type="button" class="haupt">Speichern</button>
+        <button id="a-pruefen" type="button">Verbindung prüfen</button>
+        <button id="a-chat" type="button">Chat öffnen</button>
+        <button id="a-alt" type="button" hidden>Aus der bisherigen Agent-App übernehmen</button>
+      </div>
+      <p id="a-text" class="leise"></p>
+    </section>
+
+    <section id="seite">
       <h2>Seite</h2>
       <p class="leise">Adresse: <span id="start-url"></span></p>
       <div class="zeile">

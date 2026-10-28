@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "agent-haupt",
+  "description": "Profil agent: das Hauptfenster (Einstellungen, lokale Seite ui/index.html) darf zusätzlich die Runner-Verbindung lesen, speichern, prüfen und aus der bisherigen Agent-App übernehmen sowie das Chat-Fenster öffnen.",
+  "windows": ["haupt"],
+  "local": true,
+  "permissions": [
+    "allow-agent-verbindung",
+    "allow-agent-verbindung-speichern",
+    "allow-agent-verbindung-pruefen",
+    "allow-agent-alt-uebernehmen",
+    "allow-agent-chat-oeffnen"
+  ]
+}

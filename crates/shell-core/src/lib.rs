@@ -11,6 +11,7 @@
 //! - [`studio`]: Lesen von `/api/state`
 //! - [`tresor`]: Schnittstelle für Geheimnisse
 
+pub mod agent;
 pub mod autostart;
 pub mod begleiter;
 pub mod buendel;

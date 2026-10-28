@@ -29,6 +29,8 @@ pub struct Einstellungen {
     pub inhalt_automatisch: bool,
     /// Zusätzliche Hosts, die das Inhaltsfenster laden darf (`*.beispiel.de` = alle Unterdomänen). Zu den Standards des Profils und dem Host der Start-URL.
     pub erlaubte_hosts: Vec<String>,
+    /// Profil Agent: Runner-Adresse, Token-Verweis, Ruhe (die anderen Profile lassen den Abschnitt unberührt).
+    pub agent: crate::agent::AgentEinst,
     #[serde(flatten)]
     pub weitere: Map<String, Value>,
 }
@@ -43,6 +45,7 @@ impl Default for Einstellungen {
             autostart: false,
             inhalt_automatisch: true,
             erlaubte_hosts: Vec::new(),
+            agent: crate::agent::AgentEinst::default(),
             weitere: Map::new(),
         }
     }
@@ -207,6 +210,38 @@ mod tests {
         assert!(geheimnis_suchen(&e).is_some());
         e.update_basis = Some("https://updates.example/studio/".into());
         assert!(geheimnis_suchen(&e).is_none());
+    }
+
+    #[test]
+    fn agent_einstellungen_halten_nur_den_verweis_und_ueberleben_den_neustart() {
+        let d = tempfile::tempdir().unwrap();
+        let p = Pfade::neu(d.path());
+        let mut e = Einstellungen::default();
+        e.agent.runner_adresse = Some("http://127.0.0.1:18438".into());
+        speichern(&p, &e).expect("Adresse und Verweis dürfen gespeichert werden");
+        let datei = fs::read_to_string(p.einstellungen()).unwrap();
+        assert!(datei.contains("{tresor:runner-token}") && datei.contains("18438"));
+        assert_eq!(laden(&p).0.agent, e.agent);
+        // ein Klartext-Token im Abschnitt agent wird verweigert
+        e.agent.runner_token = "w".repeat(24);
+        assert_eq!(speichern(&p, &e).unwrap_err().code(), "GEHEIMNIS_IN_EINSTELLUNGEN");
+    }
+
+    #[test]
+    fn einstellungen_der_bisherigen_agent_app_werden_gelesen_und_nicht_beschnitten() {
+        // Dieselbe Datei im selben Datenordner (Bundle-Id bleibt): alte Felder bleiben in `weitere`, der Abschnitt agent bekommt Vorgaben.
+        let d = tempfile::tempdir().unwrap();
+        let p = Pfade::neu(d.path());
+        fs::write(p.einstellungen(), r#"{"hub":"http://hub.example","geraet_runner":true,"remotes":[{"id":"r1","name":"Runner Eins","url":"http://rechner:18438"}],"aktiv":"r1","ruhe":true,"gemeldet":{"r1":["1@2"]}}"#).unwrap();
+        let (e, f) = laden(&p);
+        assert!(f.is_none());
+        assert_eq!(e.agent, crate::agent::AgentEinst::default());
+        let alt = crate::agent::alt_ziel(&e.weitere).unwrap();
+        assert_eq!((alt.url.as_str(), alt.konto.as_str()), ("http://rechner:18438", "runner:r1"));
+        speichern(&p, &e).unwrap();
+        let roh: Value = serde_json::from_str(&fs::read_to_string(p.einstellungen()).unwrap()).unwrap();
+        assert_eq!(roh["remotes"][0]["id"], "r1");
+        assert_eq!(roh["gemeldet"]["r1"][0], "1@2");
     }
 
     #[test]

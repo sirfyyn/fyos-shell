@@ -13,6 +13,11 @@ pub fn vorhanden() -> bool {
     VORHANDEN.load(Ordering::SeqCst)
 }
 
+/// Für den eigenen Tray eines Profils (z. B. `agent::tray`): meldet, dass ein Tray-Symbol existiert (Schließen versteckt dann nur).
+pub fn als_vorhanden_markieren() {
+    VORHANDEN.store(true, Ordering::SeqCst);
+}
+
 pub fn bauen(app: &AppHandle) -> tauri::Result<()> {
     let name = app.config().product_name.clone().unwrap_or_else(|| "FYOS".into());
     let anzeigen = MenuItem::with_id(app, "anzeigen", "Öffnen", true, None::<&str>)?;

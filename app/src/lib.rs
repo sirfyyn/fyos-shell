@@ -4,6 +4,7 @@
 //! Alle Entscheidungen liegen in `shell-core`; hier stehen nur Fenster, Tray, Updater-Anbindung und Befehle.
 //! Übersicht und Bedienung: `apps/fyos-shell/README.md`.
 
+mod agent;
 mod aktualisieren;
 mod befehle;
 mod cli;
@@ -42,6 +43,22 @@ fn ressourcenordner(app: &tauri::AppHandle) -> PathBuf {
         return PathBuf::from(p);
     }
     app.path().resource_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Der Tresor: im Betrieb der Systemtresor. **Nur in Debug-Bauten** (Tests) kann `FYOS_SHELL_TRESOR_SAAT=name=wert;name2=wert2` einen Tresor im
+/// Arbeitsspeicher mit diesen Einträgen vorgeben, damit e2e-Läufe nie den Schlüsselbund des Entwicklers berühren. Release-Bauten kennen die Variable nicht.
+fn tresor_waehlen(dienst: &str) -> Arc<dyn shell_core::tresor::Tresor> {
+    #[cfg(debug_assertions)]
+    if let Some(saat) = std::env::var_os("FYOS_SHELL_TRESOR_SAAT").filter(|s| !s.is_empty()) {
+        let t = shell_core::tresor::SpeicherTresor::default();
+        for paar in saat.to_string_lossy().split(';') {
+            if let Some((n, w)) = paar.split_once('=') {
+                let _ = shell_core::tresor::Tresor::schreiben(&t, n.trim(), w.trim());
+            }
+        }
+        return Arc::new(t);
+    }
+    Arc::new(shell_tresor::SystemTresor::neu(dienst))
 }
 
 /// Deeplinks aus Argumenten (Windows/Linux: der zweite Start reicht sie weiter).
@@ -97,12 +114,23 @@ pub fn run() {
             befehle::studio_uebernehmen,
             os::os_stand,
             os::os_wiederholen,
+            agent::bruecke::runner_anfrage,
+            agent::bruecke::strom_oeffnen,
+            agent::bruecke::strom_schliessen,
+            agent::befehle::agent_verbindung,
+            agent::befehle::agent_verbindung_speichern,
+            agent::befehle::agent_verbindung_pruefen,
+            agent::befehle::agent_alt_uebernehmen,
+            agent::befehle::agent_chat_oeffnen,
+            agent::befehle::ziel_info,
+            agent::befehle::ruhe_setzen,
+            agent::befehle::zustand_melden,
             mitteilung::os_benachrichtigen,
         ])
         .on_window_event(|fenster, ereignis| {
             // Mit Tray: Schließen des Hauptfensters versteckt nur (die Hülle lebt im Tray weiter). Ohne Tray beendet es.
             if let WindowEvent::CloseRequested { api, .. } = ereignis {
-                if fenster.label() == fenster::HAUPT && tray::vorhanden() {
+                if (fenster.label() == fenster::HAUPT || fenster.label() == agent::fenster::CHAT) && tray::vorhanden() {
                     api.prevent_close();
                     let _ = fenster.hide();
                 }
@@ -136,14 +164,21 @@ pub fn run() {
             let huelle = Arc::new(
                 Huelle::laden(profil, &version, Pfade::neu(daten))
                     .map_err(melde)?
-                    .mit_tresor(Arc::new(shell_tresor::SystemTresor::neu(&handle.config().identifier)))
+                    .mit_tresor(tresor_waehlen(&handle.config().identifier))
                     .mit_buendel(buendel),
             );
             if let Some(f) = buendel_fehler {
                 zustand::sperre(&huelle.warnungen).push(f.meldung());
             }
             app.manage(huelle.clone());
+            // Prüfbau (nur Debug, nur mit FYOS_SHELL_AGENT_E2E=1): kein Dock-Symbol, kein Fokusraub während der Prüfläufe
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            if std::env::var("FYOS_SHELL_AGENT_E2E").as_deref() == Ok("1") {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
             app.manage(os::Fluss::default());
+            let agent_zustand = Arc::new(agent::AgentZustand::neu());
+            app.manage(agent_zustand.clone());
             app.manage(mitteilung::Begrenzer::default());
             aktualisieren::plugin_einrichten(&handle, &huelle);
 
@@ -165,8 +200,14 @@ pub fn run() {
                 if let Err(e) = app.deep_link().register_all() {
                     eprintln!("Deeplink-Schema nicht registriert: {e}");
                 }
-                if let Err(e) = tray::bauen(&handle) {
+                let tray_ergebnis = if profil == Profil::Agent { agent::tray::bauen(&handle) } else { tray::bauen(&handle) };
+                if let Err(e) = tray_ergebnis {
                     eprintln!("Tray nicht verfügbar ({e}); Schließen des Fensters beendet die Anwendung.");
+                }
+                if profil == Profil::Agent {
+                    // Beobachter für offene Freigaben und laufende Läufe (Tray, auch bei geschlossenem Fenster)
+                    agent::beobachter::starte(handle.clone(), huelle.clone(), agent_zustand.clone());
+                    agent::tray::aktualisieren(&handle);
                 }
                 // Anmeldestart erneuern, wenn eingeschaltet: das Programm kann seit dem Einschalten verschoben oder aktualisiert worden sein
                 let autostart_an = zustand::sperre(&huelle.einstellungen).autostart;
@@ -199,6 +240,11 @@ pub fn run() {
                     // Einstellungen und Update öffnet das Tray-Menü bei Bedarf. Die Anwendung bleibt über das Tray-Symbol am Leben (siehe `ExitRequested`).
                     if !versteckt || !tray::vorhanden() {
                         os::oeffnen(&handle, &huelle);
+                    }
+                } else if profil == Profil::Agent {
+                    // Chat-Fenster, sobald ein Runner eingetragen ist; sonst die Einstellungen mit der Runner-Verbindung
+                    if !versteckt || !tray::vorhanden() {
+                        agent::fenster::start_fenster(&handle, &huelle);
                     }
                 } else if !versteckt || !tray::vorhanden() {
                     fenster::haupt(&handle, true)?;

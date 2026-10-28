@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-alt-uebernehmen"
+description = "Enables the agent_alt_uebernehmen command without any pre-configured scope."
+commands.allow = ["agent_alt_uebernehmen"]
+
+[[permission]]
+identifier = "deny-agent-alt-uebernehmen"
+description = "Denies the agent_alt_uebernehmen command without any pre-configured scope."
+commands.deny = ["agent_alt_uebernehmen"]

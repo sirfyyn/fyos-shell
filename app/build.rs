@@ -19,6 +19,18 @@ const BEFEHLE: &[&str] = &[
     "studio_uebernehmen",
     "os_stand",
     "os_wiederholen",
+    // Profil agent (Chat-Fenster `chat` und Einstellungen): capabilities/agent-chat.json und agent-haupt.json
+    "runner_anfrage",
+    "strom_oeffnen",
+    "strom_schliessen",
+    "agent_verbindung",
+    "agent_verbindung_speichern",
+    "agent_verbindung_pruefen",
+    "agent_alt_uebernehmen",
+    "agent_chat_oeffnen",
+    "ziel_info",
+    "ruhe_setzen",
+    "zustand_melden",
     "os_benachrichtigen",
 ];
 

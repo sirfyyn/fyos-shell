@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-strom-oeffnen"
+description = "Enables the strom_oeffnen command without any pre-configured scope."
+commands.allow = ["strom_oeffnen"]
+
+[[permission]]
+identifier = "deny-strom-oeffnen"
+description = "Denies the strom_oeffnen command without any pre-configured scope."
+commands.deny = ["strom_oeffnen"]

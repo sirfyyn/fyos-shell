@@ -89,6 +89,24 @@ pub enum Fehler {
     AnmeldeserverFehler { status: u16, url: String },
     /// Der Server antwortet mit einem Fehlerstatus (5xx oder 404).
     ServerFehler { status: u16, url: String },
+    /// Profil Agent: es ist noch keine Runner-Adresse eingetragen.
+    RunnerNichtEingerichtet,
+    /// Profil Agent: die eingetragene Runner-Adresse ist nicht lesbar oder kein http(s).
+    RunnerAdresseUnbrauchbar { eingabe: String, grund: String },
+    /// Profil Agent: `http` zu einer öffentlichen Adresse würde das Token unverschlüsselt senden.
+    RunnerAdresseUnsicher { host: String },
+    /// Profil Agent: der Runner antwortet nicht (aus, falsche Adresse, Netz, Tunnel zu).
+    RunnerNichtErreichbar { url: String, grund: String },
+    /// Profil Agent: der Runner lehnt das Token ab (401/403).
+    TokenAbgelehnt { status: u16 },
+    /// Profil Agent: zur Runner-Adresse gehört kein Token im Tresor.
+    TokenFehlt,
+    /// Profil Agent: die Antwort des Runners ist kein JSON oder hat nicht die erwartete Form.
+    RunnerAntwortUnlesbar { grund: String },
+    /// Profil Agent: der Runner antwortet mit einem Fehlerstatus (nicht 401/403).
+    RunnerFehler { status: u16, text: Option<String> },
+    /// Profil Agent: das eingegebene Token ist zu kurz oder enthält Leerraum.
+    TokenUnbrauchbar,
     /// Das System lässt Mitteilungen dieser Anwendung nicht zu (Berechtigung verweigert oder nicht erteilt).
     MitteilungenNichtErlaubt { grund: String },
     /// Eine Mitteilung der Seite hat die Prüfung nicht bestanden (Absender, Länge, leerer Titel).
@@ -145,6 +163,15 @@ impl Fehler {
             Fehler::UebernahmeFehlgeschlagen { .. } => "UEBERNAHME_FEHLGESCHLAGEN",
             Fehler::UebernahmeSchonErfolgt { .. } => "UEBERNAHME_SCHON_ERFOLGT",
             Fehler::UebernahmeTeilweise { .. } => "UEBERNAHME_TEILWEISE",
+            Fehler::RunnerNichtEingerichtet => "RUNNER_NICHT_EINGERICHTET",
+            Fehler::RunnerAdresseUnbrauchbar { .. } => "RUNNER_ADRESSE_UNBRAUCHBAR",
+            Fehler::RunnerAdresseUnsicher { .. } => "RUNNER_ADRESSE_UNSICHER",
+            Fehler::RunnerNichtErreichbar { .. } => "RUNNER_NICHT_ERREICHBAR",
+            Fehler::TokenAbgelehnt { .. } => "TOKEN_ABGELEHNT",
+            Fehler::TokenFehlt => "TOKEN_FEHLT",
+            Fehler::RunnerAntwortUnlesbar { .. } => "RUNNER_ANTWORT_UNLESBAR",
+            Fehler::RunnerFehler { .. } => "RUNNER_FEHLER",
+            Fehler::TokenUnbrauchbar => "TOKEN_UNBRAUCHBAR",
             Fehler::MitteilungenNichtErlaubt { .. } => "MITTEILUNGEN_NICHT_ERLAUBT",
             Fehler::MitteilungAbgelehnt { .. } => "MITTEILUNG_ABGELEHNT",
             Fehler::MitteilungFehlgeschlagen { .. } => "MITTEILUNG_FEHLGESCHLAGEN",
@@ -328,6 +355,54 @@ impl Fehler {
                 "Meist ein Neustart oder eine Wartung auf Seiten des Servers. Die Anwendung versucht es automatisch erneut; bleibt es, den Betreiber informieren.".into(),
                 Some(url.clone()),
             ),
+            Fehler::RunnerNichtEingerichtet => (
+                "Es ist noch kein Runner eingetragen, mit dem der Agent sprechen soll.".into(),
+                "In den Einstellungen unter „Runner-Verbindung“ die Adresse des Runners (zum Beispiel http://rechner:18438 im Heimnetz oder die https-Adresse eines Tunnels) und das Token eintragen, dann „Verbindung prüfen“.".into(),
+                None,
+            ),
+            Fehler::RunnerAdresseUnbrauchbar { eingabe, grund } => (
+                format!("Die Runner-Adresse ist nicht brauchbar: {grund}."),
+                "Eine Adresse der Form rechner:18438, http://192.0.2.10:18438 oder https://runner.example.org eintragen. Zugangsdaten gehören nicht in die Adresse, das Token kommt in das eigene Feld.".into(),
+                Some(kurz(eingabe)),
+            ),
+            Fehler::RunnerAdresseUnsicher { host } => (
+                format!("Zu „{host}“ würde das Token unverschlüsselt (http) durchs Internet gehen. Das lässt die Anwendung nicht zu."),
+                "Die https-Adresse des Runners eintragen (zum Beispiel über einen Tunnel mit Zertifikat). Nur im eigenen Rechner und im Heimnetz ist http erlaubt.".into(),
+                Some(host.clone()),
+            ),
+            Fehler::RunnerNichtErreichbar { url, grund } => (
+                "Der Runner antwortet nicht (er ist aus, die Adresse stimmt nicht, das Netz oder der Tunnel ist unterbrochen).".into(),
+                "Prüfen, ob der Runner läuft und die Adresse in den Einstellungen stimmt; im Heimnetz das Gerät mit dem Netz verbinden, bei einem Tunnel dessen Verbindung prüfen. Die Anwendung verbindet sich von allein neu, sobald der Runner wieder da ist; der Verlauf kommt dann vollständig zurück.".into(),
+                Some(format!("{url}: {}", kurz(grund))),
+            ),
+            Fehler::TokenAbgelehnt { status } => (
+                format!("Der Runner hat das Token abgelehnt (Status {status})."),
+                "In den Einstellungen unter „Runner-Verbindung“ das richtige Token eintragen (es wurde vielleicht auf dem Runner erneuert) und „Verbindung prüfen“ wählen.".into(),
+                None,
+            ),
+            Fehler::TokenFehlt => (
+                "Zu dieser Runner-Adresse ist kein Token im Tresor des Systems gespeichert.".into(),
+                "In den Einstellungen unter „Runner-Verbindung“ das Token eintragen; es wird im Tresor abgelegt, nie in einer Datei. Wer das Token der früheren Agent-App nutzen will, wählt „Aus der bisherigen Agent-App übernehmen“.".into(),
+                None,
+            ),
+            Fehler::RunnerAntwortUnlesbar { grund } => (
+                "Der Runner hat geantwortet, aber die Antwort ist unlesbar oder hat nicht die erwartete Form.".into(),
+                "Vermutlich läuft unter der Adresse ein anderes Programm oder eine nicht passende Runner-Version. Adresse in den Einstellungen prüfen oder den Runner aktualisieren.".into(),
+                Some(kurz(grund)),
+            ),
+            Fehler::TokenUnbrauchbar => (
+                "Das eingegebene Token ist zu kurz oder enthält Leerraum und wurde nicht gespeichert.".into(),
+                "Das Token genau so eintragen, wie der Runner es nennt (mindestens 16 Zeichen, ohne Leerzeichen und Zeilenumbruch), am besten aus der Zwischenablage einfügen.".into(),
+                None,
+            ),
+            Fehler::RunnerFehler { status, text } => (
+                format!("Der Runner antwortet mit einem Fehler (Status {status})."),
+                "Die Aktion noch einmal versuchen. Bleibt der Fehler, „Bericht speichern“ wählen und den Bericht dem Betreiber des Runners schicken.".into(),
+                Some(match text.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                    Some(t) => format!("HTTP {status}: {}", kurz(t)),
+                    None => format!("HTTP {status}"),
+                }),
+            ),
             Fehler::MitteilungenNichtErlaubt { grund } => (
                 "Das System zeigt keine Mitteilungen dieser Anwendung an: Die Berechtigung fehlt oder wurde verweigert. Im Fenster der Anwendung erscheinen Meldungen weiterhin.".into(),
                 "macOS: Systemeinstellungen > Mitteilungen > FYOS OS > Mitteilungen erlauben. Windows: Einstellungen > System > Benachrichtigungen > FYOS OS. Linux: den Mitteilungsdienst der Oberfläche prüfen und „Nicht stören“ ausschalten. Danach in FYOS OS unter Einstellungen > Meldungen > Systemmitteilungen erneut einschalten.".into(),
@@ -414,6 +489,15 @@ mod tests {
             Fehler::UebernahmeFehlgeschlagen { ort: s("o"), grund: s("g") },
             Fehler::UebernahmeSchonErfolgt { wann: s("w") },
             Fehler::UebernahmeTeilweise { anzahl: 1, beispiel: s("b") },
+            Fehler::RunnerNichtEingerichtet,
+            Fehler::RunnerAdresseUnbrauchbar { eingabe: s("e"), grund: s("g") },
+            Fehler::RunnerAdresseUnsicher { host: s("h") },
+            Fehler::RunnerNichtErreichbar { url: s("u"), grund: s("g") },
+            Fehler::TokenAbgelehnt { status: 401 },
+            Fehler::TokenFehlt,
+            Fehler::RunnerAntwortUnlesbar { grund: s("g") },
+            Fehler::RunnerFehler { status: 500, text: None },
+            Fehler::TokenUnbrauchbar,
             Fehler::MitteilungenNichtErlaubt { grund: s("g") },
             Fehler::MitteilungAbgelehnt { grund: s("g") },
             Fehler::MitteilungFehlgeschlagen { grund: s("g") },
