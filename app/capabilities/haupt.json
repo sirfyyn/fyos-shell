@@ -20,6 +20,7 @@
     "allow-tresor-pruefen",
     "allow-geheimnis-setzen",
     "allow-geheimnis-loeschen",
-    "allow-geheimnis-vorhanden"
+    "allow-geheimnis-vorhanden",
+    "allow-studio-uebernehmen"
   ]
 }

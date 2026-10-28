@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-studio-uebernehmen"
+description = "Enables the studio_uebernehmen command without any pre-configured scope."
+commands.allow = ["studio_uebernehmen"]
+
+[[permission]]
+identifier = "deny-studio-uebernehmen"
+description = "Denies the studio_uebernehmen command without any pre-configured scope."
+commands.deny = ["studio_uebernehmen"]

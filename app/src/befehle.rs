@@ -49,6 +49,8 @@ pub struct Info {
     buendel: Option<(String, String)>,
     /// Plugin-Pakete des Nutzers (Ordner studio-plugins im Datenordner), unverändert
     studio_plugins: Vec<String>,
+    /// Angebot „Aus bestehendem Studio übernehmen“ (Studio-Profil): Stand, Ort, Anzahl und Größe
+    uebernahme: crate::uebernahme::Anzeige,
 }
 
 #[derive(Serialize)]
@@ -92,6 +94,7 @@ pub fn info(app: AppHandle, h: H<'_>) -> Info {
         begleiter_quelle: sperre(&h.begleiter_quelle).clone(),
         buendel: h.buendel.as_ref().map(|b| (b.python_version.clone(), b.studio_version.clone())),
         studio_plugins: shell_core::buendel::nutzer_plugins_gefunden(&h.pfade.daten),
+        uebernahme: crate::uebernahme::anzeige(&app, &h),
     }
 }
 
@@ -146,6 +149,23 @@ pub async fn studio_neustart(h: H<'_>) -> Result<(), Meldung> {
         .await
         .map_err(|e| m(Fehler::BegleiterBeendet { grund: e.to_string() }))?
         .map_err(m)
+}
+
+/// Übernimmt Chats und Einstellungen aus dem bestehenden Python-Studio (einmalig, nur kopierend; `trocken` zeigt nur den Plan).
+/// Nach einer echten Übernahme startet der Studio-Server neu, damit er die übernommenen Dateien liest.
+#[tauri::command]
+pub async fn studio_uebernehmen(app: AppHandle, h: H<'_>, trocken: bool) -> Result<serde_json::Value, Meldung> {
+    let h = h.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut ergebnis = crate::uebernahme::ausfuehren(&app, &h, trocken)?;
+        if !trocken && ergebnis["neustart_noetig"] == true {
+            ergebnis["neustart"] = serde_json::json!(h.begleiter_neustarten().is_ok());
+        }
+        Ok::<_, Fehler>(ergebnis)
+    })
+    .await
+    .map_err(|e| m(Fehler::UebernahmeFehlgeschlagen { ort: String::new(), grund: e.to_string() }))?
+    .map_err(m)
 }
 
 #[tauri::command]

@@ -11,6 +11,7 @@ mod fenster;
 mod headless;
 mod studio_http;
 mod tray;
+mod uebernahme;
 mod zustand;
 
 use cli::Modus;
@@ -89,6 +90,7 @@ pub fn run() {
             befehle::geheimnis_setzen,
             befehle::geheimnis_loeschen,
             befehle::geheimnis_vorhanden,
+            befehle::studio_uebernehmen,
         ])
         .on_window_event(|fenster, ereignis| {
             // Mit Tray: Schließen des Hauptfensters versteckt nur (die Hülle lebt im Tray weiter). Ohne Tray beendet es.

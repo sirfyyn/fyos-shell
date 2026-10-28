@@ -52,6 +52,48 @@ function studioZeile(i) {
 
 let letzteInfo = null;
 
+function groesse(b) {
+  return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.ceil(b / 1024)) + " KB";
+}
+
+// Übernahme aus dem bestehenden Studio: der Knopf erscheint nur, wenn es ein altes Datenverzeichnis gibt und das neue Studio noch leer ist.
+// Danach bleibt das Ergebnis stehen (Anzahl, Größe, Übersprungenes, Hinweise), ohne dass der Knopf noch einmal angeboten wird.
+function uebernahmeZeigen(u) {
+  const zeigen = !!u && u.profil_passt && u.stand === "moeglich";
+  if (!$("uebernahme-ergebnis").hidden) { $("uebernahme").hidden = false; $("uebernahme-los").hidden = true; return; }
+  $("uebernahme").hidden = !zeigen;
+  if (!zeigen) return;
+  $("uebernahme-los").hidden = false;
+  $("uebernahme-text").textContent = `Gefunden: ${u.ort}. Kopiert ${u.dateien} Dateien (${groesse(u.bytes)}) Chats und Einstellungen in die App; das alte Studio wird nicht verändert, nichts wird überschrieben.`;
+}
+
+function uebernahmeErgebnis(e) {
+  const zeilen = [`Kopiert: ${e.kopiert} Dateien (${groesse(e.kopiert_bytes)}) aus ${e.ort}.`];
+  if (e.uebersprungen.length) zeilen.push(`Übersprungen (schon vorhanden): ${e.uebersprungen.join(", ")}`);
+  const aus = e.ausgelassen.map((a) => `${a.pfad} (${a.grund})`);
+  if (aus.length) zeilen.push(`Nicht kopiert: ${aus.join("; ")}`);
+  if (e.verlinkt.length) zeilen.push(`Verknüpfungen nicht verfolgt: ${e.verlinkt.join(", ")}`);
+  for (const f of e.fehlgeschlagen) zeilen.push(`Fehlgeschlagen: ${f.pfad}: ${f.grund}`);
+  for (const h of e.hinweise) zeilen.push(`Hinweis: ${h}`);
+  for (const b of e.befunde) zeilen.push(`Befund: ${b}. Die Datei wurde unverändert übernommen und bleibt eine Studio-Datei; die Hülle speichert davon nichts.`);
+  if (e.neustart) zeilen.push("Der Studio-Server wurde neu gestartet und liest jetzt die übernommenen Daten.");
+  $("uebernahme-ergebnis").textContent = zeilen.join("\n");
+  $("uebernahme-ergebnis").hidden = false;
+}
+
+$("uebernahme-los").addEventListener("click", async () => {
+  $("uebernahme-los").disabled = true;
+  $("uebernahme-text").textContent = "Kopiere …";
+  const e = await aufruf("studio_uebernehmen", { trocken: false });
+  $("uebernahme-los").disabled = false;
+  if (!e) { $("uebernahme-text").textContent = "Übernahme nicht abgeschlossen."; return; } // die Meldung steht oben
+  uebernahmeErgebnis(e);
+  $("uebernahme-text").textContent = "Übernahme abgeschlossen.";
+  $("uebernahme-los").hidden = true;
+  await laden();
+  if (e.meldung) zeigeMeldung(e.meldung);
+});
+
 async function laden() {
   const i = await aufruf("info");
   if (!i) return;
@@ -63,6 +105,7 @@ async function laden() {
   $("url-eingabe").value = i.start_url;
   $("studio").hidden = i.profil !== "studio";
   $("studio-text").textContent = studioZeile(i);
+  uebernahmeZeigen(i.uebernahme);
   $("autostart").checked = !!i.autostart;
   $("zurueck").hidden = !i.vorherige;
   $("zurueck").textContent = i.vorherige ? `Zurück zu Version ${i.vorherige}` : "";

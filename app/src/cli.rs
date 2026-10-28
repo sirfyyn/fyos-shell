@@ -18,9 +18,11 @@ pub enum Modus {
     Bericht,
     /// Schaltet den Start bei der Anmeldung ein (`true`) oder aus (`false`).
     Autostart(bool),
+    /// Kopiert Chats und Einstellungen aus dem bestehenden Python-Studio (`trocken`: nur zeigen).
+    UebernehmenStudio { trocken: bool },
 }
 
-pub const HILFE: &str = "Aufruf: fyos-shell [--versteckt | --selbsttest | --aktualisieren | --zurueck | --info | --bericht | --autostart-an | --autostart-aus]\n\
+pub const HILFE: &str = "Aufruf: fyos-shell [--versteckt | --selbsttest | --aktualisieren | --zurueck | --info | --bericht | --autostart-an | --autostart-aus | --uebernehmen-studio [--trocken]]\n\
   (ohne Argument)  Fenster öffnen\n\
   --versteckt      nur im Tray starten\n\
   --selbsttest     Start, Begleiter, Fenster und Befehl prüfen, Ausgang 0 = gut\n\
@@ -29,14 +31,19 @@ pub const HILFE: &str = "Aufruf: fyos-shell [--versteckt | --selbsttest | --aktu
   --info           Profil, Version, Vorversion, Datenordner
   --bericht        Fehlerbericht (ohne Geheimnisse) als Datei auf den Schreibtisch schreiben
   --autostart-an   App bei der Anmeldung starten (nur im Tray); --autostart-aus nimmt es zurück\n\
+  --uebernehmen-studio  Chats und Einstellungen aus dem bestehenden Python-Studio kopieren (nur Studio-Profil, einmalig, überschreibt nichts)\n\
+  --trocken        mit --uebernehmen-studio: nur zeigen, was kopiert würde\n\
   Umgebung: FYOS_SHELL_DATEN überschreibt den Datenordner (Tests).";
 
 /// Wertet die Argumente aus (ohne Programmnamen). Argumente ohne `--` (Deeplinks, macOS-Zusätze) werden ignoriert.
 pub fn auswerten(args: &[String]) -> Result<Modus, String> {
     let mut modus = Modus::Fenster { versteckt: false };
     let mut gesetzt = false;
+    let trocken = args.iter().any(|a| a == "--trocken");
     for a in args.iter().filter(|a| a.starts_with("--")) {
         let neu = match a.as_str() {
+            "--trocken" => continue,
+            "--uebernehmen-studio" => Modus::UebernehmenStudio { trocken },
             "--versteckt" => Modus::Fenster { versteckt: true },
             "--selbsttest" => Modus::Selbsttest,
             "--aktualisieren" => Modus::Aktualisieren,
@@ -53,6 +60,9 @@ pub fn auswerten(args: &[String]) -> Result<Modus, String> {
         }
         modus = neu;
         gesetzt = true;
+    }
+    if trocken && !matches!(modus, Modus::UebernehmenStudio { .. }) {
+        return Err(format!("--trocken gehört zu --uebernehmen-studio.\n{HILFE}"));
     }
     Ok(modus)
 }
@@ -80,6 +90,11 @@ mod tests {
         assert_eq!(auswerten(&a(&["--bericht"])).unwrap(), Modus::Bericht);
         assert_eq!(auswerten(&a(&["--autostart-an"])).unwrap(), Modus::Autostart(true));
         assert_eq!(auswerten(&a(&["--autostart-aus"])).unwrap(), Modus::Autostart(false));
+        assert_eq!(auswerten(&a(&["--uebernehmen-studio"])).unwrap(), Modus::UebernehmenStudio { trocken: false });
+        assert_eq!(auswerten(&a(&["--uebernehmen-studio", "--trocken"])).unwrap(), Modus::UebernehmenStudio { trocken: true });
+        assert_eq!(auswerten(&a(&["--trocken", "--uebernehmen-studio"])).unwrap(), Modus::UebernehmenStudio { trocken: true });
+        assert!(auswerten(&a(&["--trocken"])).unwrap_err().contains("gehört zu --uebernehmen-studio"));
+        assert!(auswerten(&a(&["--info", "--trocken"])).unwrap_err().contains("gehört zu"));
     }
 
     #[test]
