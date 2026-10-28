@@ -10,7 +10,7 @@ use crate::prozessgruppe::{self, Gruppe};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -110,6 +110,17 @@ pub type Gesundheit = Box<dyn Fn() -> bool + Send>;
 
 const HOEFLICH_S: u64 = 8;
 const TAKT: Duration = Duration::from_millis(100);
+const LOG_ZEILEN: usize = 12;
+
+/// Die letzten `zeilen` Zeilen der Protokolldatei ab Byte `ab`, mit " | " verbunden, Geheimnisse geschwärzt. Leer, wenn nichts da ist.
+pub fn log_ende(pfad: &Path, ab: u64, zeilen: usize) -> String {
+    let Ok(bytes) = std::fs::read(pfad) else { return String::new() };
+    let teil = bytes.get(ab as usize..).unwrap_or(&[]);
+    let text = String::from_utf8_lossy(teil);
+    let letzte: Vec<&str> = text.lines().map(str::trim_end).filter(|z| !z.is_empty()).collect();
+    let von = letzte.len().saturating_sub(zeilen);
+    crate::bericht::schwaerzen(&letzte[von..].join(" | "))
+}
 
 /// Begleiter als Kindprozess in eigener Prozessgruppe (Unix), damit auch dessen Kinder mit enden.
 pub struct Kindprozess {
@@ -177,6 +188,8 @@ impl Begleiter for Kindprozess {
             return Ok(());
         }
         self.hart_beenden();
+        // Ab hier schreibt dieser Start ins Protokoll: merken, wo, damit ein Fehler nur die eigenen Zeilen zeigt
+        let log_ab = self.logdatei.as_ref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len()).unwrap_or(0);
         let mut befehl = self.befehl()?;
         let kind = befehl.spawn().map_err(|e| Fehler::BegleiterStartetNicht {
             befehl: self.konfig.programm.clone(),
@@ -189,7 +202,10 @@ impl Begleiter for Kindprozess {
             if let Some(k) = self.kind.as_mut() {
                 if let Ok(Some(status)) = k.try_wait() {
                     self.kind = None;
-                    return Err(Fehler::BegleiterBeendet { grund: format!("beendet beim Start mit {status}") });
+                    // Die letzten Zeilen von stdout/stderr des Begleiters (ohne Geheimnisse) gehören in die Meldung: ohne sie bleibt die Ursache unsichtbar
+                    let ende = self.logdatei.as_deref().map(|p| log_ende(p, log_ab, LOG_ZEILEN)).unwrap_or_default();
+                    let grund = if ende.is_empty() { format!("beendet beim Start mit {status}") } else { format!("beendet beim Start mit {status}. Letzte Ausgabe: {ende}") };
+                    return Err(Fehler::BegleiterBeendet { grund });
                 }
             }
             if (self.gesund)() {
@@ -374,6 +390,21 @@ mod tests {
         let f = b.starten().unwrap_err();
         assert_eq!(f.code(), "BEGLEITER_BEENDET");
         assert!(!b.laeuft());
+    }
+
+    #[test]
+    fn beendet_beim_start_nennt_die_letzten_zeilen_der_ausgabe_ohne_geheimnisse_und_ohne_alte_zeilen() {
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("begleiter.log");
+        std::fs::write(&log, "Zeile vom vorigen Start\n").unwrap();
+        let skript = "echo 'Traceback (most recent call last):'; echo 'ModuleNotFoundError: No module named fle_studio'; echo 'token=hf_abcdefghij1234567890' >&2; exit 1";
+        let mut b = Kindprozess::neu(sh(skript, 5), "u".into(), Box::new(|| false), Some(log));
+        let m = b.starten().unwrap_err().meldung();
+        let d = m.details.unwrap_or_default();
+        assert_eq!(m.code, "BEGLEITER_BEENDET");
+        assert!(d.contains("ModuleNotFoundError: No module named fle_studio"), "{d}");
+        assert!(!d.contains("vorigen Start"), "nur die Ausgabe dieses Starts: {d}");
+        assert!(!d.contains("abcdefghij1234567890"), "Geheimnis geschwärzt: {d}");
     }
 
     #[test]

@@ -23,6 +23,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 KOPF = "X-FYOS-Kennung"
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
@@ -123,11 +124,23 @@ def ist_windows():
     return os.name == "nt"
 
 
-def kind_starten(befehl, windows=None, popen=subprocess.Popen):
+def ein_ausgabe():
+    """Ein-/Ausgabe des Studios ausdrücklich festlegen: Eingabe leer, Ausgabe und Fehler in die des Shims (also in das Protokoll der Hülle).
+    Ohne Angabe erbt ein unter Windows ohne Konsole gestarteter Kindprozess unter Umständen KEINE gültigen Standardhandles; Python setzt dann
+    sys.stdout/sys.stderr auf None, und jeder Zugriff darauf im Studio wäre ein Absturz."""
+    def strom(s):
+        try:
+            return s.fileno() if s is not None else subprocess.DEVNULL
+        except (OSError, ValueError, AttributeError):
+            return subprocess.DEVNULL
+    return {"stdin": subprocess.DEVNULL, "stdout": strom(sys.stdout), "stderr": strom(sys.stderr)}
+
+
+def kind_starten(befehl, windows=None, popen=subprocess.Popen, **ein_aus):
     """Startet das Studio so, dass sich sein ganzer Baum beenden lässt. `windows`/`popen` nur für Tests."""
     if ist_windows() if windows is None else windows:
-        return popen(befehl, creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
-    return popen(befehl, start_new_session=True)
+        return popen(befehl, creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW, **ein_aus)
+    return popen(befehl, start_new_session=True, **ein_aus)
 
 
 def baum_beenden(kind, windows=None, ausfuehren=subprocess.run, sanft_s=SANFT_S):
@@ -174,7 +187,6 @@ def main():
         sys.exit("Es fehlt der Befehl des Studios nach '--'.")
 
     upstream = freier_port()
-    kind = kind_starten([arg.replace("{upstream}", str(upstream)) for arg in befehl])
     server = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler_bauen(upstream, a.kennung))
     server.daemon_threads = True
 
@@ -182,9 +194,20 @@ def main():
         # in eigenem Thread: shutdown() wartet auf die Schleife, die im Signalbehandler steht
         threading.Thread(target=server.shutdown).start()
 
+    # Signale VOR dem Start des Studios binden: ein SIGTERM, der zwischen Start und Bindung einträfe, würde den Shim
+    # ohne Aufräumen beenden und das Studio verwaist zurücklassen (Wettlauf, in der CI des öffentlichen Repos beobachtet).
     abbruchsignale(beenden)
+    start = time.monotonic()
+    kind = kind_starten([arg.replace("{upstream}", str(upstream)) for arg in befehl], **ein_ausgabe())
+
+    def studio_ende():
+        code = kind.wait()
+        # Diagnose: ohne Zeile wüsste die Hülle nur „Begleiter beendet“; so steht Code und Laufzeit im Protokoll der Hülle (begleiter.log)
+        print(f"[shim] Studio beendet mit Code {code} nach {time.monotonic() - start:.1f} s", file=sys.stderr, flush=True)
+        beenden()
+
     # Endet das Studio von allein, endet auch der Shim (die Hülle sieht das und meldet es)
-    threading.Thread(target=lambda: (kind.wait(), beenden()), daemon=True).start()
+    threading.Thread(target=studio_ende, daemon=True).start()
     try:
         server.serve_forever()
     finally:

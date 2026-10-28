@@ -73,6 +73,14 @@ pub enum Fehler {
     AutostartFehlgeschlagen { ort: String, grund: String },
     /// Das mitgelieferte Python-Paket (Studio-Server) fehlt oder ist unvollständig.
     BuendelUnvollstaendig { grund: String },
+    /// Das alte Studio-Datenverzeichnis, aus dem übernommen werden soll, gibt es nicht.
+    UebernahmeQuelleFehlt { ort: String },
+    /// Beim Übernehmen ist etwas Grundsätzliches schiefgegangen (Quelle nicht lesbar, Platte voll).
+    UebernahmeFehlgeschlagen { ort: String, grund: String },
+    /// Die Übernahme wurde schon einmal gemacht.
+    UebernahmeSchonErfolgt { wann: String },
+    /// Einzelne Dateien ließen sich nicht übernehmen.
+    UebernahmeTeilweise { anzahl: usize, beispiel: String },
 }
 
 fn kurz(s: &str) -> String {
@@ -115,6 +123,10 @@ impl Fehler {
             Fehler::TresorNameUnzulaessig { .. } => "TRESOR_NAME_UNZULAESSIG",
             Fehler::AutostartFehlgeschlagen { .. } => "AUTOSTART_FEHLGESCHLAGEN",
             Fehler::BuendelUnvollstaendig { .. } => "BUENDEL_UNVOLLSTAENDIG",
+            Fehler::UebernahmeQuelleFehlt { .. } => "UEBERNAHME_QUELLE_FEHLT",
+            Fehler::UebernahmeFehlgeschlagen { .. } => "UEBERNAHME_FEHLGESCHLAGEN",
+            Fehler::UebernahmeSchonErfolgt { .. } => "UEBERNAHME_SCHON_ERFOLGT",
+            Fehler::UebernahmeTeilweise { .. } => "UEBERNAHME_TEILWEISE",
         }
     }
 
@@ -194,7 +206,11 @@ impl Fehler {
             Fehler::BegleiterBeendet { grund } => (
                 "Das Hilfsprogramm von Studio hat sich unerwartet beendet.".into(),
                 "„Studio neu starten“ wählen. Tritt es wiederholt auf, „Bericht speichern“ wählen und den Bericht dem Betreiber schicken.".into(),
-                Some(kurz(grund)),
+                // Die Ursache steht am Ende der Ausgabe (Python-Ablaufverfolgung): hier das Ende behalten, nicht den Anfang
+                Some({
+                    let n = grund.chars().count();
+                    if n > 1500 { format!("…{}", grund.chars().skip(n - 1500).collect::<String>()) } else { grund.clone() }
+                }),
             ),
             Fehler::EinstellungenKaputt { pfad, grund } => (
                 "Die Einstellungsdatei ist beschädigt. Sie wurde als Kopie zur Seite gelegt, und die Anwendung läuft mit Standardwerten.".into(),
@@ -250,6 +266,26 @@ impl Fehler {
                 "Das mitgelieferte Python-Paket mit dem Studio-Server ist unvollständig oder beschädigt, deshalb startet der Studio-Server nicht.".into(),
                 "Die Anwendung neu installieren (das Paket gehört zur Anwendung; Einstellungen und Daten bleiben erhalten). Wer das Studio selbst bereitstellt, trägt in den Einstellungen unter „begleiter“ ein eigenes Programm ein.".into(),
                 Some(kurz(grund)),
+            ),
+            Fehler::UebernahmeQuelleFehlt { ort } => (
+                "Das Datenverzeichnis des bestehenden Studios wurde nicht gefunden, deshalb gibt es nichts zu übernehmen.".into(),
+                "Prüfen, ob das alte Studio auf diesem Gerät je gestartet wurde. Liegen seine Daten woanders, das Programm mit gesetztem FLE_STUDIO_HOME starten (so wie das alte Studio es auch liest). Es wurde nichts verändert.".into(),
+                Some(ort.clone()),
+            ),
+            Fehler::UebernahmeFehlgeschlagen { ort, grund } => (
+                "Die Übernahme aus dem bestehenden Studio ist abgebrochen (Quelle nicht lesbar oder Datenträger voll).".into(),
+                "Das alte Verzeichnis wurde nicht verändert; schon kopierte Dateien sind unschädlich. Rechte auf dem alten Ordner prüfen, Platz schaffen und die Übernahme erneut starten.".into(),
+                Some(format!("{ort}: {}", kurz(grund))),
+            ),
+            Fehler::UebernahmeSchonErfolgt { wann } => (
+                format!("Die Übernahme wurde schon einmal gemacht (am {wann}) und wird nicht wiederholt, damit nichts doppelt oder zurückgesetzt wird."),
+                "Nichts zu tun. Soll sie trotzdem noch einmal laufen, die Datei uebernahme.json im Datenordner der Anwendung löschen; vorhandene Dateien werden auch dann nie überschrieben.".into(),
+                None,
+            ),
+            Fehler::UebernahmeTeilweise { anzahl, beispiel } => (
+                format!("{anzahl} Datei(en) ließen sich nicht übernehmen; alle anderen sind kopiert."),
+                "Die Rechte der genannten Dateien im alten Verzeichnis prüfen (Lesen für den eigenen Benutzer) und die Übernahme erneut starten: Bereits kopiertes wird übersprungen, nie überschrieben.".into(),
+                Some(kurz(beispiel)),
             ),
         };
         Meldung { code: self.code().to_string(), ursache, abhilfe, details }
@@ -314,6 +350,10 @@ mod tests {
             Fehler::TresorNameUnzulaessig { name: s("n") },
             Fehler::AutostartFehlgeschlagen { ort: s("o"), grund: s("g") },
             Fehler::BuendelUnvollstaendig { grund: s("g") },
+            Fehler::UebernahmeQuelleFehlt { ort: s("o") },
+            Fehler::UebernahmeFehlgeschlagen { ort: s("o"), grund: s("g") },
+            Fehler::UebernahmeSchonErfolgt { wann: s("w") },
+            Fehler::UebernahmeTeilweise { anzahl: 1, beispiel: s("b") },
         ]
     }
 

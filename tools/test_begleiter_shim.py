@@ -128,17 +128,42 @@ class BeendenTest(unittest.TestCase):
         ende = time.time() + 10
         while not pidfile.exists() and time.time() < ende:
             time.sleep(0.1)
-        kind = int(pidfile.read_text())
+        # Die Pid-Datei wird beim Öffnen angelegt, der Inhalt kommt einen Augenblick später: auf eine ganze Zahl warten.
+        kind = None
+        while kind is None and time.time() < ende + 10:
+            try:
+                kind = int(pidfile.read_text())
+            except (ValueError, FileNotFoundError):
+                time.sleep(0.1)
+        self.assertIsNotNone(kind, "das Studio hat seine Pid nicht geschrieben")
+        # Erst SIGTERM, wenn der Shim wirklich lauscht (dann sind Signalbehandlung und Studio bereit); vorher wäre der Test ein Wettlauf.
+        bereit = time.time() + 15
+        while time.time() < bereit:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+                break
+            except OSError:
+                time.sleep(0.1)
         shim.send_signal(signal.SIGTERM)
-        shim.wait(timeout=15)
-        ende = time.time() + 5
+        shim.wait(timeout=20)
+        # Frist großzügig und die Prozessgruppe prüfen: ein beendeter, aber noch nicht eingesammelter Prozess (Zombie) meldet kill(pid, 0) als lebend.
+        ende = time.time() + 20
         lebt = True
         while lebt and time.time() < ende:
             try:
                 os.kill(kind, 0)
-                time.sleep(0.1)
+                zustand = subprocess.run(["ps", "-o", "stat=", "-p", str(kind)], capture_output=True, text=True).stdout.strip()
+                if zustand.startswith("Z") or not zustand:
+                    lebt = False  # Zombie zählt als beendet
+                else:
+                    time.sleep(0.1)
             except ProcessLookupError:
                 lebt = False
+        if lebt:
+            try:
+                os.kill(kind, signal.SIGKILL)  # nicht verwaist zurücklassen
+            except ProcessLookupError:
+                pass
         pidfile.unlink(missing_ok=True)
         self.assertFalse(lebt, "Studio läuft nach dem Beenden des Shims weiter")
 

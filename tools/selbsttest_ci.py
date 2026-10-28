@@ -48,6 +48,39 @@ def auswerten(code, stdout, buendel=False):
     return gut, json.dumps(aus, ensure_ascii=False)
 
 
+def freier_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def diagnose_buendel(res, daten):
+    """Nur bei Fehlschlag: den Interpreter des Bündels so aufrufen, wie die Hülle es tut (gleiche Umgebung), und zeigen, was er sagt.
+    1) sys.path und Import von fle_studio, 2) das Studio direkt für ein paar Sekunden (stdout/stderr gezeigt, ohne Shim)."""
+    try:
+        beschr = json.loads((res / "buendel.json").read_text(encoding="utf-8"))
+        python = str(res / beschr["python"]["interpreter"])
+        studio = str(res / beschr["studio"]["ordner"])
+    except Exception as e:  # noqa: BLE001
+        print(f"--- Bündel-Diagnose nicht möglich: {e}")
+        return
+    env = dict(os.environ, PYTHONPATH=studio, PYTHONDONTWRITEBYTECODE="1", PYTHONNOUSERSITE="1", PYTHONUTF8="1", FLE_STUDIO_MANAGED_BY="fyos-shell")
+    for titel, args, frist in (
+        ("Import", [python, "-c", "import sys; print(sys.version); print(sys.executable); print(sys.path); import fle_studio; print('fle_studio', fle_studio.__file__)"], 60),
+        ("Studio direkt (6 s)", [python, "-m", "fle_studio", "--port", str(freier_port()), "--no-browser", "--home", str(daten / "diagnose-home")], 6),
+    ):
+        try:
+            r = subprocess.run(args, capture_output=True, text=True, env=env, timeout=frist, errors="replace")
+            print(f"--- {titel}: Ausgang {r.returncode}\n{r.stdout[-1500:]}\n{r.stderr[-2500:]}")
+        except subprocess.TimeoutExpired as t:
+            aus = (t.stdout or b"")
+            aus = aus.decode("utf-8", "replace") if isinstance(aus, bytes) else aus
+            print(f"--- {titel}: läuft nach {frist} s noch (also kein Absturz)\n{aus[-800:]}")
+        except OSError as e:
+            print(f"--- {titel}: Start nicht möglich: {e}")
+
+
 def main(argv):
     if not argv or argv[0].startswith("-"):
         sys.exit(__doc__)
@@ -62,10 +95,25 @@ def main(argv):
         if buendel:
             env["FYOS_SHELL_RESSOURCEN"] = str(Path(__file__).resolve().parent.parent / "app" / "resources")
         r = subprocess.run(befehl(programm, bool(os.environ.get("DISPLAY")), "--ohne-xvfb" in argv), capture_output=True, text=True, env=env, timeout=300)
-    gut, text = auswerten(r.returncode, r.stdout, buendel)
-    print(("[ok] " if gut else "[FEHLER] ") + text)
-    if not gut:
-        print(r.stderr[-800:], file=sys.stderr)
+        gut, text = auswerten(r.returncode, r.stdout, buendel)
+        print(("[ok] " if gut else "[FEHLER] ") + text)
+        if not gut:
+            print(r.stderr[-800:], file=sys.stderr)
+            # Diagnose: Ausgabe des Begleiters (Shim und Studio), solange der Wegwerf-Ordner noch da ist
+            log = daten / "begleiter.log"
+            if log.is_file():
+                zeilen = log.read_text(encoding="utf-8", errors="replace").splitlines()
+                print(f"--- begleiter.log (letzte {min(60, len(zeilen))} von {len(zeilen)} Zeilen) ---")
+                print("\n".join(zeilen[-60:]))
+            else:
+                print("--- kein begleiter.log (der Begleiter wurde nie gestartet) ---")
+            if buendel:
+                res = Path(os.environ.get("FYOS_SHELL_RESSOURCEN") or Path(__file__).resolve().parent.parent / "app" / "resources")
+                print(f"--- Bündel {res}: " + ", ".join(sorted(p.name for p in res.iterdir())) if res.is_dir() else f"--- Bündel {res} fehlt")
+                py = res / "python"
+                if py.is_dir():
+                    print("--- python/: " + ", ".join(sorted(p.name for p in py.iterdir())))
+                diagnose_buendel(res, daten)
     return 0 if gut else 1
 
 

@@ -32,6 +32,16 @@ async fn ausfuehren(app: &AppHandle, h: &Arc<Huelle>, modus: Modus) -> (Value, i
             Ok(datei) => (json!({"modus": "bericht", "ok": true, "datei": datei.display().to_string()}), 0),
             Err(f) => (json!({"modus": "bericht", "ok": false, "fehler": f.meldung()}), 2),
         },
+        Modus::UebernehmenStudio { trocken } => match crate::uebernahme::ausfuehren(app, h, trocken) {
+            Ok(mut v) => {
+                v["modus"] = json!("uebernehmen-studio");
+                v["ok"] = json!(true);
+                // Einzelne Fehlschläge: Ausgang 2 mit Katalogtext, der Rest ist trotzdem kopiert
+                let teilweise = v.get("meldung").is_some();
+                (v, if teilweise { 2 } else { 0 })
+            }
+            Err(f) => (json!({"modus": "uebernehmen-studio", "ok": false, "fehler": f.meldung()}), 2),
+        },
         Modus::Aktualisieren => update(app, h, Art::Update).await,
         Modus::Zurueck => update(app, h, Art::Rueckweg).await,
         Modus::Selbsttest => selbsttest(app, h).await,
@@ -84,7 +94,11 @@ async fn selbsttest(app: &AppHandle, h: &Arc<Huelle>) -> (Value, i32) {
             }
             _ => schritt("begleiter", true, "kein Begleiter in diesem Profil oder dieser Einstellung".into()),
         },
-        Ok(Err(f)) => schritt("begleiter", false, f.to_string()),
+        Ok(Err(f)) => {
+            // mit Details (z. B. letzte Ausgabe des Begleiters): sie sind die Ursache
+            let d = f.meldung().details.map(|d| format!(" Details: {d}")).unwrap_or_default();
+            schritt("begleiter", false, format!("{f}{d}"))
+        }
         Err(e) => schritt("begleiter", false, e.to_string()),
     }
 
