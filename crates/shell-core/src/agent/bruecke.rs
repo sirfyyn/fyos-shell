@@ -114,6 +114,21 @@ mod tests {
     }
 
     #[test]
+    fn wege_des_arbeitsplatzes_gehen_durch_die_bruecke_und_nicht_mehr() {
+        // Seitenleiste: Liste, Konfiguration (Arbeitsbereiche), Modelle, eine Sitzung (Arbeitsordner), neue Sitzung, Aktivitätsstrom
+        for gut in ["/api/gespraeche", "/api/konfiguration", "/api/modelle", "/api/gespraech/14", "/api/gespraech/14/ansicht?voll=1", "/api/strom"] {
+            assert!(pfad_erlaubt(gut), "{gut}");
+        }
+        assert!(strom_pfad_ok("strom", "/api/strom"));
+        // die Seite kann die Brücke weder auf fremde Wege noch auf andere Ströme lenken
+        for schlecht in ["/api/gespraech/../x", "/api/strom/../../x", "api/gespraeche", "//api/gespraeche"] {
+            assert!(!pfad_erlaubt(schlecht), "{schlecht}");
+        }
+        assert!(!strom_pfad_ok("strom", "/api/strom?x=1"));
+        assert!(!strom_pfad_ok("sitzung", "/api/gespraech/1/ereignisse"));
+    }
+
+    #[test]
     fn methoden() {
         assert_eq!(methode_erlaubt("post"), Some("POST"));
         assert_eq!(methode_erlaubt("GET"), Some("GET"));

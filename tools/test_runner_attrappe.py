@@ -101,6 +101,92 @@ class Tests(Basis):
         finally:
             self.z.tempo = 0.02
 
+    def test_sitzungsliste_konfiguration_und_neue_sitzung(self):
+        liste = self.anfrage("/api/gespraeche")["gespraeche"]
+        self.assertEqual([g["id"] for g in liste][:2], [1, 2])
+        bereiche = self.anfrage("/api/konfiguration")["arbeitsbereiche"]
+        self.assertIn(liste[1]["arbeitsbereich"], bereiche)
+        self.assertEqual(self.anfrage("/api/gespraech/2")["agent"]["cwd"], bereiche["projekt"]["pfad"])
+        neu = self.anfrage("/api/gespraeche", {"titel": "Eigene", "arbeitsbereich": "projekt"})["gespraech"]
+        self.assertGreaterEqual(neu["id"], 3)
+        self.assertEqual(self.anfrage(f"/api/gespraech/{neu['id']}")["meta"]["titel"], "Eigene")
+        with self.assertRaises(urllib.error.HTTPError) as f:
+            self.anfrage("/api/gespraeche", {"arbeitsbereich": "gibt-es-nicht"})
+        self.assertEqual(f.exception.code, 400)
+
+    def test_sitzungen_haben_getrennte_verlaeufe(self):
+        self.anfrage("/api/gespraech/2/nachricht", {"text": "reset"})
+        deadline = time.time() + 5
+        while time.time() < deadline and self.z.sitzungen[2].laeuft:
+            time.sleep(0.05)
+        zwei = [e["kind"] for e in self.anfrage("/api/gespraech/2/ansicht?voll=1")["entries"]]
+        self.assertIn("pi.reset", zwei)
+        eins = [e["kind"] for e in self.anfrage("/api/gespraech/1/ansicht?voll=1")["entries"]]
+        self.assertNotIn("pi.reset", eins)
+
+    def test_terminal_und_diff_szenarien_liefern_werkzeugereignisse(self):
+        for text, name in (("terminal", "bash"), ("diff", "edit")):
+            threading.Timer(0.1, lambda t=text: self.anfrage("/api/gespraech/2/nachricht", {"text": t})).start()
+            req = urllib.request.Request(self.basis + "/api/gespraech/2/ereignisse", headers={"Authorization": f"Bearer {TOKEN}"})
+            evs, art = [], None
+            with urllib.request.urlopen(req, timeout=8) as a:
+                for zeile in a:
+                    z = zeile.decode().rstrip("\n")
+                    if z.startswith("event: "):
+                        art = z[7:]
+                    elif z.startswith("data: ") and art == "ereignisse":
+                        evs.extend(json.loads(z[6:]))
+                        if any(x["type"] == "run_end" for x in evs):
+                            break
+            starts = [x for x in evs if x["type"] == "tool_execution_start"]
+            self.assertEqual(starts[0]["toolName"], name)
+            if name == "bash":
+                teile = "".join(x["output"]["append"] for x in evs if x["type"] == "tool_execution_update")
+                self.assertIn("\x1b[32m", teile)
+            else:
+                self.assertIn("edits", starts[0]["args"])
+                self.assertEqual(starts[1]["toolName"], "write")
+
+    def test_aktivitaetsstrom_meldet_zeilen_je_sitzung(self):
+        threading.Timer(0.3, lambda: self.anfrage("/api/gespraech/2/nachricht", {"text": "reset"})).start()
+        req = urllib.request.Request(self.basis + "/api/strom", headers={"Authorization": f"Bearer {TOKEN}"})
+        zeilen, art = [], None
+        with urllib.request.urlopen(req, timeout=8) as a:
+            for zeile in a:
+                z = zeile.decode().rstrip("\n")
+                if z.startswith("event: "):
+                    art = z[7:]
+                elif z.startswith("data: "):
+                    d = json.loads(z[6:])
+                    if art == "hallo":
+                        self.assertEqual(len(d["gespraeche"]), len(self.z.sitzungen))
+                    else:
+                        zeilen.append(d)
+                        if d["typ"] == "fertig":
+                            break
+        self.assertTrue(all(x["gespraech"] == 2 for x in zeilen))
+        self.assertEqual([x["typ"] for x in zeilen][-1], "fertig")
+
+    def test_zwei_nachrichten_einer_sitzung_laufen_nacheinander(self):
+        threading.Timer(0.1, lambda: self.anfrage("/api/gespraech/2/nachricht", {"text": "reset"})).start()
+        threading.Timer(0.15, lambda: self.anfrage("/api/gespraech/2/nachricht", {"text": "streaming"})).start()
+        req = urllib.request.Request(self.basis + "/api/gespraech/2/ereignisse", headers={"Authorization": f"Bearer {TOKEN}"})
+        arten, art, enden = [], None, 0
+        with urllib.request.urlopen(req, timeout=10) as a:
+            for zeile in a:
+                z = zeile.decode().rstrip("\n")
+                if z.startswith("event: "):
+                    art = z[7:]
+                elif z.startswith("data: ") and art == "ereignisse":
+                    for x in json.loads(z[6:]):
+                        arten.append(x["type"])
+                        enden += x["type"] == "run_end"
+                    if enden >= 2:
+                        break
+        # run_start, ..., run_end, run_start, ..., run_end: nie zwei Starts vor dem ersten Ende
+        zug = [t for t in arten if t in ("run_start", "run_end")]
+        self.assertEqual(zug, ["run_start", "run_end", "run_start", "run_end"])
+
     def test_kappen_trennt_offene_stroeme(self):
         res = {}
 

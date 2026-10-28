@@ -112,7 +112,7 @@
       let diff;
       if (status !== 'fehler') {
         const n = String(w.name || '').toLowerCase();
-        diff = n === 'edit' ? diffAusEdit(w.args) : n === 'write' ? diffAusWrite(w.args) : undefined;
+        diff = n === 'edit' || n === 'multiedit' || n === 'str_replace' ? diffAusEdit(w.args) : n === 'write' ? diffAusWrite(w.args) : undefined;
       }
       view.endTool(id, { status, output, diff: diff || undefined, dauerMs: w.ts && ts ? Math.max(0, ts - w.ts) : undefined });
     }

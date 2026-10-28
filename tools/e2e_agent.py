@@ -8,6 +8,8 @@ Die Chat-Seite bedient sich im Prüfmodus selbst (ui/agent/e2e.js, nur mit FYOS_
   A1  Chat-Fenster lädt die lokale Seite und verbindet sich: Gesundheit, Gespräche, Verlauf, Strom, alle mit richtigem Token und Kopf X-FYOS-Agent
   A2  Gespräch mit Streaming (Text erscheint vor dem Ende), Werkzeugkarte, Freigabe (genau zwei Knöpfe, Erlauben wirkt), Reset-Marker,
       Neuverbinden mitten im Strom (Text komplett, nichts doppelt)
+      Arbeitsplatz: Sitzungsliste, Arbeitsordner im Kopf, Terminal-Ansicht (ANSI, Fortschrittszeile), Diff-Ansicht, Wechsel ohne Neuaufbau,
+      laufende Sitzung markiert, neue Sitzung mit Arbeitsordner
   A3  der Beobachter fragt Freigaben und Läufe ab (Tray), auch ohne dass die Seite etwas tut
   A4  Token nirgends in den Einstellungen (nur der Verweis), keine Anfrage ohne Token
   A5  falsches Token: die Anwendung bleibt am Leben und versucht es wieder (Katalogmeldung im Banner, Wiederholen)
@@ -33,7 +35,9 @@ PORT = 18681
 PORT_FALSCH = 18682
 TOKEN = "-".join(["e2e", "probe"] * 4)  # erfundener Testwert
 ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz", "werkzeugkarte", "freigabe-karte",
-            "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt", "ende"]
+            "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt",
+            "sitzungsliste", "ordner-im-kopf", "terminal-ansicht", "terminal-fortschrittszeile", "diff-ansicht", "wechsel-zu-zweiter", "wechsel-eigener-verlauf",
+            "laufende-sitzung-markiert", "markierung-endet", "wechsel-erhaelt-sitzung", "wechsel-nichts-doppelt", "neue-sitzung", "ende"]
 
 
 def bauen(ausgabe):
@@ -101,13 +105,14 @@ def pruefe(app, arbeit):
             sys.exit("Runner-Attrappe startet nicht")
         proc = app_starten(app, daten, tmp, PORT, TOKEN)
         try:
-            ok = e.warten_bis(lambda: any(z.get("ergebnis", {}).get("schritt") in ("ende", "abgebrochen") for z in zeilen(log)), 120)
+            ok = e.warten_bis(lambda: any(z.get("ergebnis", {}).get("schritt") in ("ende", "abgebrochen") for z in zeilen(log)), 240)
             z = zeilen(log)
             ergebnisse = {x["ergebnis"]["schritt"]: x["ergebnis"] for x in z if "ergebnis" in x}
             pfade = [x["pfad"].split("?")[0] for x in z if "pfad" in x]
             print("A1 Fenster und Verbindung")
             e.melde("A1", "die lokale Seite lädt und verbindet sich (Gesundheit, Gespräche, Verlauf, Strom)",
-                    all(p in pfade for p in ("/api/health", "/api/gespraeche", "/api/gespraech/1/ansicht", "/api/gespraech/1/ereignisse")), json.dumps(sorted(set(pfade))))
+                    all(p in pfade for p in ("/api/health", "/api/gespraeche", "/api/gespraech/1/ansicht", "/api/gespraech/1/ereignisse", "/api/konfiguration", "/api/strom")), json.dumps(sorted(set(pfade))))
+            e.melde("A1", "die Seitenleiste fragt den Arbeitsordner der Sitzung und beim Wechsel die zweite Sitzung", "/api/gespraech/1" in pfade and "/api/gespraech/2/ansicht" in pfade and "/api/gespraech/2/ereignisse" in pfade)
             print("A2 Gespräch")
             for schritt in ERWARTET:
                 r = ergebnisse.get(schritt)

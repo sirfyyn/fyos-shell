@@ -57,6 +57,8 @@
     hub_suchen: ['suchen', 'Hub'],
     bash: ['bash', 'Bash'],
     edit: ['edit', 'Bearbeiten'],
+    multiedit: ['edit', 'Bearbeiten'],
+    str_replace: ['edit', 'Bearbeiten'],
     write: ['edit', 'Schreiben'],
   };
   function artVon(name) {
@@ -232,8 +234,13 @@
     const win = doc.defaultView || G;
     const scroller = opts.scroller || spalte.parentElement;
     const now = opts.now || (() => Date.now());
-    const raf = opts.raf || ((f) => win.requestAnimationFrame(f));
-    const caf = opts.caf || ((id) => win.cancelAnimationFrame(id));
+    // Ein verdecktes oder verstecktes Fenster (Tray, hinter anderen) bekommt keine Animationsbilder: dann läuft der Takt über einen Zeitgeber,
+    // damit Antworten weiter ankommen (Negative Nummern = Zeitgeber).
+    const raf = opts.raf || ((f) => {
+      if (doc.hidden) return -win.setTimeout(() => f(win.performance.now()), 50) - 1;
+      return win.requestAnimationFrame(f);
+    });
+    const caf = opts.caf || ((id) => (id < 0 ? win.clearTimeout(-id - 1) : win.cancelAnimationFrame(id)));
     const setIv = opts.setInterval || ((f, ms) => win.setInterval(f, ms));
     const clearIv = opts.clearInterval || ((id) => win.clearInterval(id));
     const setTo = opts.setTimeout || ((f, ms) => win.setTimeout(f, ms));
@@ -529,8 +536,9 @@
     }
 
     // --- Werkzeuge -----------------------------------------------------------
-    function erzeugeAusgabe(maxZeilen) {
-      const wrap = el('div', 'ausgabe');
+    /** `ansi`: Terminal-Ausgabe (Bash): Farbfolgen werden zu Klassen `an-*`, andere Steuerfolgen verschwinden. */
+    function erzeugeAusgabe(maxZeilen, ansi) {
+      const wrap = el('div', ansi ? 'ausgabe terminal-ausgabe' : 'ausgabe');
       const pre = el('pre', 'ausgabe-pre');
       const kopfzeilen = el('span', 'kopfzeilen');
       const rest = el('span', 'rest');
@@ -541,8 +549,32 @@
       mehr.hidden = true;
       wrap.append(pre, mehr);
       let zeile = 0;
+      let ziel = kopfzeilen;
+      const leser = ansi && FP.ansiLeser ? FP.ansiLeser() : null;
       let schwanz = doc.createTextNode('');
+      let zeileHatInhalt = false;
       kopfzeilen.appendChild(schwanz);
+      // Beschriftetes Stück (Terminal-Farbe) an die aktuelle Zeile hängen; ohne Klasse läuft es im gemeinsamen Textknoten weiter
+      const stueck = (t, klasse) => {
+        if (!t) return;
+        zeileHatInhalt = true;
+        if (!klasse) {
+          schwanz.data += t;
+          return;
+        }
+        const s = el('span', klasse, t);
+        ziel.appendChild(s);
+        schwanz = doc.createTextNode('');
+        ziel.appendChild(schwanz);
+      };
+      const neueZeile = () => {
+        schwanz.data += '\n';
+        zeile++;
+        zeileHatInhalt = false;
+        ziel = zeile >= maxZeilen ? rest : kopfzeilen;
+        schwanz = doc.createTextNode('');
+        ziel.appendChild(schwanz);
+      };
       let restZeilen = 0;
       const aktualisiere = () => {
         const offen = !rest.hidden;
@@ -559,21 +591,19 @@
       return {
         el: wrap,
         get leer() {
-          return zeile === 0 && !schwanz.data;
+          return zeile === 0 && !pre.textContent;
         },
         append(text) {
-          const teile = String(text).split('\n');
-          for (let i = 0; i < teile.length; i++) {
-            schwanz.data += teile[i];
-            if (i < teile.length - 1) {
-              schwanz.data += '\n';
-              zeile++;
-              const ziel = zeile >= maxZeilen ? rest : kopfzeilen;
-              schwanz = doc.createTextNode('');
-              ziel.appendChild(schwanz);
+          text = String(text);
+          const teile = leser ? leser.schreibe(FP.wagenruecklauf ? FP.wagenruecklauf(text) : text) : [{ text, klasse: '' }];
+          for (const t of teile) {
+            const zeilen = t.text.split('\n');
+            for (let i = 0; i < zeilen.length; i++) {
+              stueck(zeilen[i], t.klasse);
+              if (i < zeilen.length - 1) neueZeile();
             }
           }
-          restZeilen = Math.max(0, zeile + (schwanz.data ? 1 : 0) - maxZeilen);
+          restZeilen = Math.max(0, zeile + (zeileHatInhalt ? 1 : 0) - maxZeilen);
           aktualisiere();
         },
         setze(text) {
@@ -581,6 +611,9 @@
           kopfzeilen.textContent = '';
           rest.textContent = '';
           zeile = 0;
+          zeileHatInhalt = false;
+          ziel = kopfzeilen;
+          if (leser) leser.zuruecksetzen();
           schwanz = doc.createTextNode('');
           kopfzeilen.appendChild(schwanz);
           this.append(text);
@@ -609,6 +642,7 @@
       const tb = el('tbody');
       const lang = sprachVonDatei(diff.datei);
       let letzteAltEnde = null;
+      let hunkNr = 0;
       for (const h of diff.hunks || []) {
         let a = h.alt;
         let b = h.neu;
@@ -618,7 +652,15 @@
           td.colSpan = 4;
           tr.appendChild(td);
           tb.appendChild(tr);
+        } else if (hunkNr > 0 && a == null) {
+          // Änderungen ohne bekannte Zeilennummern (aus der Werkzeugeingabe abgeleitet): getrennte Stellen sichtbar trennen
+          const tr = el('tr', 'trenn');
+          const td = el('td', null, `Änderung ${hunkNr + 1}`);
+          td.colSpan = 4;
+          tr.appendChild(td);
+          tb.appendChild(tr);
         }
+        hunkNr++;
         for (const [t, text] of h.zeilen) {
           const tr = el('tr', t === '+' ? 'add' : t === '-' ? 'del' : 'ctx');
           const nrA = el('td', 'nr', t === '+' || a == null ? '' : String(a));
@@ -703,12 +745,23 @@
       chev.innerHTML = ICON.chev;
       kopf.append(svg(art), el('span', 'werkzeug', label), kf, meta, sr, chev);
       const body = el('div', 'karte-koerper');
-      const eingabe = el('pre', 'eingabe', eingabeText(m.name, m.args));
+      const eingabe = el('pre', art === 'bash' ? 'eingabe terminal-befehl' : 'eingabe', eingabeText(m.name, m.args));
       eingabe.hidden = !eingabe.textContent.trim() || art === 'edit';
-      body.appendChild(eingabe);
-      const ausgabe = erzeugeAusgabe(art === 'bash' ? 8 : 6);
+      const ausgabe = erzeugeAusgabe(art === 'bash' ? 12 : 6, art === 'bash');
       ausgabe.el.hidden = true;
-      body.appendChild(ausgabe.el);
+      if (art === 'bash') {
+        // Terminal-Ansicht: Titelleiste, Befehl mit Eingabezeichen, Ausgabe in Monospace mit Terminalfarben
+        const term = el('div', 'terminal');
+        term.setAttribute('role', 'group');
+        term.setAttribute('aria-label', 'Terminal');
+        const leiste = el('div', 'terminal-leiste');
+        leiste.append(el('span', 'terminal-titel', 'Terminal'));
+        term.append(leiste, eingabe, ausgabe.el);
+        body.appendChild(term);
+      } else {
+        body.appendChild(eingabe);
+        body.appendChild(ausgabe.el);
+      }
       const diffHalter = el('div', 'diff-halter');
       body.appendChild(diffHalter);
       const auf = aufklapp(body);

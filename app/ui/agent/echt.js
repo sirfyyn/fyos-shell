@@ -180,7 +180,8 @@
     let kette = Promise.resolve();
     let adapter = null;
     let zeitgeber = null;
-    const status = () => opts.onStatus && opts.onStatus({ ...S, busy: view.busy, wartet: view.zustand().wartetAufFreigabe });
+    let abmelden = null;
+    const status =() => opts.onStatus && opts.onStatus({ ...S, busy: view.busy, wartet: view.zustand().wartetAufFreigabe });
     const view = FP.createChatView(opts.spalte, {
       scroller: opts.scroller,
       zumEnde: opts.zumEnde,
@@ -317,7 +318,10 @@
           const liste = Array.isArray(p.daten) ? p.daten : [];
           if (liste.some((e) => e && e.type === 'entry_appended' && e.entry && e.entry.kind === 'fyos.freigabe')) await ladeFreigaben();
           for (const ev of liste) adapter.apply(ev);
-          if (liste.some((e) => e && e.type === 'run_end')) setTimeout(() => ladeGespraeche(), 300);
+          if (liste.some((e) => e && e.type === 'run_end')) {
+            if (opts.beiLaufEnde) opts.beiLaufEnde(S.id);
+            else setTimeout(() => ladeGespraeche(), 300);
+          }
           break;
         }
         default:
@@ -373,8 +377,12 @@
           const r = await transport.api('POST', pfad('zweig'), {});
           view.addNote('Abgezweigt: neues Gespräch angelegt');
           if (r.gespraech && r.gespraech.id !== undefined) {
-            await ladeGespraeche();
-            await oeffne(r.gespraech.id);
+            // mit Seitenleiste: die Sitzung wird dort geöffnet, diese hier bleibt unverändert erhalten
+            if (opts.beiNeueSitzung) opts.beiNeueSitzung(r.gespraech.id);
+            else {
+              await ladeGespraeche();
+              await oeffne(r.gespraech.id);
+            }
           }
         } else return null;
         return { ok: true, befehl: name };
@@ -402,24 +410,41 @@
       }
     }
 
-    async function start() {
-      transport.onStrom(beiStrom);
+    /** `o.id`: genau dieses Gespräch öffnen (Seitenleiste); ohne: das Hauptgespräch. */
+    async function start(o) {
+      o = o || {};
+      abmelden = transport.onStrom(beiStrom);
       await Promise.all([ladeGespraeche(), ladeHealth(), ladeFreigaben()]);
-      const root = S.gespraeche.find((g) => g.art === 'root') || S.gespraeche[0];
-      if (!root) {
+      const ziel = o.id !== undefined && o.id !== null ? { id: o.id } : S.gespraeche.find((g) => g.art === 'root') || S.gespraeche[0];
+      if (!ziel) {
         view.addNote('Der Runner kennt noch kein Gespräch.', 'fehler');
         status();
         return;
       }
-      await oeffne(root.id);
+      await oeffne(ziel.id);
       zeitgeber = setInterval(stilleTakt, 5000);
+    }
+    /** Eine zurückgestellte Sitzung wieder anschließen: Strom öffnen, der Snapshot ergänzt nur, was inzwischen dazukam (nichts wird neu gebaut). */
+    function aktiviere() {
+      if (S.id === null) return Promise.resolve();
+      S.stille = null;
+      return transport.oeffneStrom('gespraech', `/api/gespraech/${encodeURIComponent(S.id)}/ereignisse`).catch((f) => {
+        S.trennung = { fehler: String(f), bis: jetzt() };
+        status();
+      });
+    }
+    /** Zurückstellen: die Anzeige bleibt im Dokument, nur der Strom gehört jetzt der anderen Sitzung. */
+    function ruhen() {
+      S.verbunden = false;
     }
     function ende() {
       if (zeitgeber) clearInterval(zeitgeber);
-      transport.schliesseStrom('gespraech');
+      // tauriTransport.onStrom liefert ein Versprechen auf die Abmeldefunktion, httpTransport die Funktion selbst
+      Promise.resolve(abmelden).then((f) => typeof f === 'function' && f()).catch(() => {});
+      abmelden = null;
     }
 
-    return { start, ende, oeffne, sende, stopp, view, S, entscheide, stilleTakt, beiStrom, get adapter() { return adapter; }, warteAuf: () => kette };
+    return { start, ende, aktiviere, ruhen, oeffne, sende, stopp, view, S, entscheide, stilleTakt, beiStrom, get adapter() { return adapter; }, warteAuf: () => kette };
   }
 
   Object.assign(FP, { tauriTransport, httpTransport, createEchtChat, usageSicht, modellName });

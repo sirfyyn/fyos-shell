@@ -1,6 +1,9 @@
-/* Nativer Chat (agent-chat.html): Verdrahtung von Eingabe, Statuszeile und Menüs mit prototyp/echt.js.
- * Im Tauri-Fenster über die Brücke (runner_anfrage, strom_oeffnen, Ereignis runner-strom); sonst (Prüfstand, Browser) per HTTP
- * am selben Ursprung, wo ein Proxy den Zugangsschlüssel anhängt.
+/* Arbeitsplatz (chat.html): Seitenleiste mit Sitzungen, je geöffneter Sitzung eine eigene Chat-Ansicht (bleibt beim Wechsel im Dokument),
+ * Eingabe, Statuszeile und Menüs. Im Tauri-Fenster über die Brücke (runner_anfrage, strom_oeffnen, Ereignis runner-strom); sonst (Prüfstand,
+ * Browser) per HTTP am selben Ursprung, wo ein Proxy den Zugangsschlüssel anhängt.
+ *
+ * Sitzungswechsel: die Ansicht der Sitzung wird beim ersten Öffnen gebaut und danach nur noch ein- und ausgeblendet. Der Ereignisstrom gehört
+ * immer der sichtbaren Sitzung (ein Kanal der Brücke); beim Zurückkehren schickt der Runner einen Snapshot, der Adapter hängt nur an, was fehlt.
  */
 (function () {
   'use strict';
@@ -15,18 +18,47 @@
     { name: '/abzweigen', hilfe: 'Neues Gespräch ab dieser Stelle' },
     { name: '/abbrechen', hilfe: 'Laufenden Zug stoppen' },
   ];
+  const MAX_ANSICHTEN = 8; // so viele Sitzungen bleiben aufgebaut; die am längsten nicht benutzte wird abgebaut (ihr Verlauf kommt beim Öffnen vom Runner zurück)
+  const MERKE = 'fyos-agent-sitzung';
 
   const transport = window.__TAURI__ ? FP.tauriTransport(window.__TAURI__) : FP.httpTransport('');
   const modus = FP.startModus($('modus'), $('modusMenue'), {});
+  const aktivitaet = FP.sitzungen.createAktivitaet();
 
   let startFehler = '';
-  // Kopfzustand an Rust melden (Tray), nur bei Änderung
+  let gespraeche = [];
+  let bereiche = {};
+  let modelle = [];
+  const ansichten = new Map(); // String(id) → { id, chat, pane, benutzt, entwurf, cwd }
+  let aktiv = null;
+  let wechselKette = Promise.resolve();
+  let stromBesitzer = null; // Id der Sitzung, deren Ereignisstrom offen ist
+
+  // --- Merken (nur Annehmlichkeit, fehlt es, geht alles weiter) ---
+  const merken = {
+    lies() {
+      try {
+        return window.localStorage.getItem(MERKE);
+      } catch (e) {
+        return null;
+      }
+    },
+    schreibe(id) {
+      try {
+        window.localStorage.setItem(MERKE, String(id));
+      } catch (e) {
+        /* ohne Speicher geht es weiter */
+      }
+    },
+  };
+
+  // --- Kopf und Statuszeile (zeigen immer die sichtbare Sitzung) ---
   let gemeldet = '';
   function meldeZustand(art, arbeitet) {
     const schluessel = `${art}|${arbeitet ? 1 : 0}`;
     if (!window.__TAURI__ || schluessel === gemeldet) return;
     gemeldet = schluessel;
-    window.__TAURI__.core.invoke('zustand_melden', { art: art === 'wartet' ? 'wartet' : art, arbeitet: !!arbeitet }).catch(() => {});
+    window.__TAURI__.core.invoke('zustand_melden', { art, arbeitet: !!arbeitet }).catch(() => {});
   }
   const zahl = (n) => FP.zahlK(Math.round(n));
   function zeige(s) {
@@ -62,30 +94,304 @@
     $('kosten').textContent = s.kosten != null ? `≈ ${s.kosten.toFixed(2).replace('.', ',')} €` : '';
     modus.zeichne(s.modus);
   }
+  function zeigeAktiv() {
+    if (!aktiv) return;
+    const c = aktiv.chat;
+    zeige({ ...c.S, busy: c.view.busy, wartet: c.view.zustand().wartetAufFreigabe });
+  }
+  setInterval(zeigeAktiv, 1000);
 
-  const chat = FP.createEchtChat(transport, {
-    spalte: $('spalte'),
-    scroller: $('verlauf'),
-    zumEnde: $('zumEnde'),
-    ansage: $('ansage'),
-    reduceMotion: () => mq.matches,
-    darfFokus: () => !eingabe.value && document.activeElement !== eingabe,
-    onStatus: zeige,
+  /** Arbeitsordner der sichtbaren Sitzung: die Sitzung selbst nennt ihn (GET /api/gespraech/:id → agent.cwd), sonst der Arbeitsbereich. */
+  function zeigeOrdner(rec) {
+    const g = gespraeche.find((x) => String(x.id) === String(rec.id));
+    const a = FP.sitzungen.ordnerAnzeige(rec.cwd, g ? bereiche[g.arbeitsbereich] : null);
+    const o = $('ordner');
+    o.hidden = !a.name;
+    o.textContent = a.name;
+    o.title = a.pfad ? `Arbeitsordner: ${a.pfad}` : '';
+  }
+  async function ladeOrdner(rec) {
+    if (rec.cwd !== undefined) return;
+    try {
+      const r = await transport.api('GET', `/api/gespraech/${encodeURIComponent(rec.id)}`);
+      rec.cwd = (r.agent && r.agent.cwd) || '';
+    } catch (e) {
+      rec.cwd = ''; // der Arbeitsbereich aus der Liste genügt
+    }
+    if (aktiv === rec) zeigeOrdner(rec);
+  }
+
+  // --- Seitenleiste ---
+  const leiste = FP.createLeiste(
+    { liste: $('sitzungsliste'), weitere: $('weitereListe'), weitereKopf: $('weitereKopf'), weitereZahl: $('weitereZahl'), leer: $('sitzungenLeer') },
+    { beiWahl: (id) => wechsle(id) }
+  );
+  let zeichnenGeplant = false;
+  function zeichneListe() {
+    zeichnenGeplant = false;
+    const laufend = new Set();
+    // die sichtbare Sitzung weiß es genau; die übrigen kennt nur der Aktivitätsstrom
+    if (aktiv && aktiv.chat.view.busy) laufend.add(String(aktiv.id));
+    const daten = FP.sitzungen.sitzungsListe(gespraeche, bereiche, aktivitaet, { laufend });
+    if (aktiv) {
+      const z = [...daten.sitzungen, ...daten.weitere].find((x) => String(x.id) === String(aktiv.id));
+      if (z && !aktiv.chat.view.busy) z.laeuft = false;
+    }
+    leiste.zeichne(daten, aktiv ? aktiv.id : null);
+    window.__liste = daten;
+  }
+  function planeZeichnen() {
+    if (zeichnenGeplant) return;
+    zeichnenGeplant = true;
+    setTimeout(zeichneListe, 80);
+  }
+  let listeLaeuft = null;
+  function ladeListe() {
+    if (listeLaeuft) return listeLaeuft;
+    listeLaeuft = transport
+      .api('GET', '/api/gespraeche')
+      .then((r) => {
+        gespraeche = Array.isArray(r.gespraeche) ? r.gespraeche : [];
+        planeZeichnen();
+        if (aktiv) zeigeOrdner(aktiv);
+      })
+      .catch(() => {})
+      .then(() => {
+        listeLaeuft = null;
+      });
+    return listeLaeuft;
+  }
+  setInterval(ladeListe, 30000);
+  setInterval(planeZeichnen, 20000);
+
+  function leisteUmschalten(offen) {
+    const zu = offen === undefined ? !$('app').classList.contains('leiste-zu') : !offen;
+    $('app').classList.toggle('leiste-zu', zu);
+    $('leisteSchalter').setAttribute('aria-expanded', zu ? 'false' : 'true');
+    if ($('leiste').inert !== undefined) $('leiste').inert = zu;
+  }
+  $('leisteSchalter').addEventListener('click', () => leisteUmschalten());
+  if (window.innerWidth < 760) leisteUmschalten(false);
+
+  // --- Ansichten der Sitzungen ---
+  function paneBauen(id) {
+    const pane = document.createElement('div');
+    pane.className = 'pane';
+    pane.dataset.id = String(id);
+    pane.setAttribute('aria-hidden', 'true');
+    pane.inert = true;
+    const verlauf = document.createElement('main');
+    verlauf.className = 'verlauf';
+    verlauf.tabIndex = 0;
+    verlauf.setAttribute('role', 'log');
+    verlauf.setAttribute('aria-live', 'off');
+    verlauf.setAttribute('aria-label', 'Gespräch');
+    const spalte = document.createElement('div');
+    spalte.className = 'spalte';
+    verlauf.appendChild(spalte);
+    const zumEnde = document.createElement('button');
+    zumEnde.type = 'button';
+    zumEnde.className = 'zum-ende';
+    zumEnde.hidden = true;
+    zumEnde.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v9 M4 8.5l4 4 4-4" /></svg>';
+    zumEnde.appendChild(document.createTextNode(' Zum Ende'));
+    pane.append(verlauf, zumEnde);
+    $('panes').appendChild(pane);
+    return { pane, verlauf, spalte, zumEnde };
+  }
+
+  function ansichtErzeugen(id) {
+    const d = paneBauen(id);
+    const rec = { id, pane: d.pane, chat: null, benutzt: Date.now(), entwurf: '', cwd: undefined };
+    rec.chat = FP.createEchtChat(transport, {
+      spalte: d.spalte,
+      scroller: d.verlauf,
+      zumEnde: d.zumEnde,
+      ansage: $('ansage'),
+      reduceMotion: () => mq.matches,
+      darfFokus: () => aktiv === rec && !eingabe.value && document.activeElement !== eingabe,
+      onStatus: (s) => {
+        if (aktiv === rec) zeige(s);
+        planeZeichnen();
+      },
+      beiLaufEnde: () => {
+        setTimeout(ladeListe, 300);
+        planeZeichnen();
+      },
+      // /abzweigen: die neue Sitzung öffnet sich in der Leiste, diese bleibt wie sie ist
+      beiNeueSitzung: (neuId) => {
+        ladeListe().then(() => wechsle(neuId));
+      },
+    });
+    ansichten.set(String(id), rec);
+    return rec;
+  }
+
+  function abbauen() {
+    while (ansichten.size > MAX_ANSICHTEN) {
+      let aelteste = null;
+      for (const r of ansichten.values()) if (r !== aktiv && (!aelteste || r.benutzt < aelteste.benutzt)) aelteste = r;
+      if (!aelteste) return;
+      aelteste.chat.ende();
+      aelteste.pane.remove();
+      ansichten.delete(String(aelteste.id));
+    }
+  }
+
+  function setzeAktiv(rec) {
+    if (aktiv === rec) return;
+    const alt = aktiv;
+    if (alt) {
+      alt.entwurf = eingabe.value;
+      alt.chat.ruhen();
+      alt.pane.classList.remove('aktiv');
+      alt.pane.setAttribute('aria-hidden', 'true');
+      alt.pane.inert = true;
+    }
+    aktiv = rec;
+    rec.benutzt = Date.now();
+    rec.pane.classList.add('aktiv');
+    rec.pane.setAttribute('aria-hidden', 'false');
+    rec.pane.inert = false;
+    eingabe.value = rec.entwurf || '';
+    waechst();
+    merken.schreibe(rec.id);
+    window.__aktuelleId = rec.id;
+    zeigeAktiv();
+    zeigeOrdner(rec);
+    ladeOrdner(rec);
+    zeichneListe();
+    abbauen();
+  }
+
+  /** Eine Sitzung sichtbar machen. Aufrufe laufen nacheinander, damit der eine Ereignisstrom immer zur sichtbaren Sitzung gehört. */
+  function wechsle(id) {
+    wechselKette = wechselKette.then(() => wechsleJetzt(id)).catch((f) => {
+      if (aktiv) aktiv.chat.view.addNote(`Sitzung nicht geöffnet: ${(f && f.message) || f}`, 'fehler');
+    });
+    return wechselKette;
+  }
+  async function wechsleJetzt(id) {
+    const schluessel = String(id);
+    if (aktiv && String(aktiv.id) === schluessel) {
+      eingabe.focus();
+      return;
+    }
+    let rec = ansichten.get(schluessel);
+    if (!rec) {
+      rec = ansichtErzeugen(id);
+      stromBesitzer = id; // start() öffnet den Strom selbst (und schließt den bisherigen)
+      await rec.chat.start({ id });
+      setzeAktiv(rec);
+    } else {
+      setzeAktiv(rec);
+      if (String(stromBesitzer) !== schluessel) {
+        stromBesitzer = id;
+        await rec.chat.aktiviere();
+      }
+    }
+    stromBesitzer = id;
+    // kurz warten, bis die Ansicht steht, dann Fokus in die Eingabe (nicht, solange die Leiste per Tastatur bedient wird)
+    if (!document.activeElement || document.activeElement === document.body || !$('leiste').contains(document.activeElement)) eingabe.focus();
+  }
+
+  function naechste(richtung) {
+    const ids = [...$('sitzungsliste').querySelectorAll('.sitzung')].map((b) => b.dataset.id);
+    const ziel = FP.sitzungen.nachbar(ids, aktiv ? aktiv.id : null, richtung);
+    if (ziel !== null) wechsle(ziel);
+  }
+
+  // --- Neue Sitzung ---
+  const neuForm = $('neuForm');
+  function neuOeffnen() {
+    leisteUmschalten(true);
+    const ordnerWahl = $('neuOrdner');
+    ordnerWahl.textContent = '';
+    for (const [name, b] of Object.entries(bereiche)) {
+      const o = document.createElement('option');
+      o.value = name;
+      o.textContent = b.titel || name;
+      ordnerWahl.appendChild(o);
+    }
+    // vorgewählt: der Arbeitsbereich der sichtbaren Sitzung
+    const g = aktiv && gespraeche.find((x) => String(x.id) === String(aktiv.id));
+    if (g && bereiche[g.arbeitsbereich]) ordnerWahl.value = g.arbeitsbereich;
+    const mw = $('neuModell');
+    mw.textContent = '';
+    const std = document.createElement('option');
+    std.value = '';
+    std.textContent = 'Standard des Runners';
+    mw.appendChild(std);
+    for (const m of modelle) {
+      if (!m || !m.id) continue;
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.name || m.id;
+      mw.appendChild(o);
+    }
+    $('neuModell').hidden = $('neuModellLabel').hidden = modelle.length === 0;
+    $('neuOrdner').disabled = Object.keys(bereiche).length === 0;
+    pfadZeigen();
+    $('neuFehler').hidden = true;
+    $('neuTitel').value = '';
+    neuForm.hidden = false;
+    $('neuTitel').focus();
+  }
+  function pfadZeigen() {
+    const b = bereiche[$('neuOrdner').value];
+    $('neuPfad').textContent = b && b.pfad ? b.pfad : '';
+  }
+  function neuSchliessen() {
+    neuForm.hidden = true;
+    $('neueSitzung').focus();
+  }
+  $('neuOrdner').addEventListener('change', pfadZeigen);
+  $('neueSitzung').addEventListener('click', () => (neuForm.hidden ? neuOeffnen() : neuSchliessen()));
+  $('neuAbbrechen').addEventListener('click', neuSchliessen);
+  neuForm.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      neuSchliessen();
+    }
   });
-  setInterval(() => zeige({ ...chat.S, busy: chat.view.busy, wartet: chat.view.zustand().wartetAufFreigabe }), 1000);
+  neuForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('neuAnlegen').disabled = true;
+    $('neuFehler').hidden = true;
+    try {
+      const koerper = { titel: $('neuTitel').value.trim() || undefined };
+      if ($('neuOrdner').value) koerper.arbeitsbereich = $('neuOrdner').value;
+      if ($('neuModell').value) koerper.modell = $('neuModell').value;
+      const r = await transport.api('POST', '/api/gespraeche', koerper);
+      const neu = r.gespraech || r;
+      if (neu.id === undefined) throw new Error('Der Runner hat keine Sitzung zurückgegeben.');
+      neuForm.hidden = true;
+      await ladeListe();
+      await wechsle(neu.id);
+    } catch (f) {
+      $('neuFehler').textContent = `Nicht angelegt: ${(f && f.message) || f}`;
+      $('neuFehler').hidden = false;
+    } finally {
+      $('neuAnlegen').disabled = false;
+    }
+  });
 
+  // --- Eingabe ---
   function waechst() {
     eingabe.style.height = 'auto';
     eingabe.style.height = `${Math.min(200, eingabe.scrollHeight)}px`;
   }
   async function senden(sofort) {
     const t = eingabe.value.trim();
-    if (!t) return;
+    if (!t || !aktiv) return;
+    const rec = aktiv;
     eingabe.value = '';
+    rec.entwurf = '';
     waechst();
     schliesse();
-    const r = await chat.sende(t, sofort);
-    if (r && r.ok === false && !r.befehl) eingabe.value = t;
+    const r = await rec.chat.sende(t, sofort);
+    if (r && r.ok === false && !r.befehl && aktiv === rec) eingabe.value = t;
   }
 
   // Schnellbefehle als Menü
@@ -167,15 +473,43 @@
     e.preventDefault();
     senden(false);
   });
-  $('stopp').addEventListener('click', () => chat.stopp());
+  $('stopp').addEventListener('click', () => aktiv && aktiv.chat.stopp());
+
+  // Tastatur: Sitzungen wechseln (Cmd/Strg+Alt+Pfeil, Cmd/Strg+1..9), neue Sitzung (Cmd/Strg+Umschalt+O), Leiste (Cmd/Strg+B)
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
-    const a = document.activeElement;
-    const tippt = (a === eingabe && eingabe.value.length > 0) || (a && a.tagName === 'INPUT');
-    if (!tippt && chat.view.handleKey(e)) return;
-    if (e.key === 'Escape' && chat.view.busy) {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
       e.preventDefault();
-      chat.stopp();
+      neuForm.hidden ? neuOeffnen() : neuSchliessen();
+      return;
+    }
+    if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      leisteUmschalten();
+      return;
+    }
+    if (mod && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      naechste(e.key === 'ArrowUp' ? -1 : 1);
+      return;
+    }
+    if (mod && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
+      const ziele = [...$('sitzungsliste').querySelectorAll('.sitzung')];
+      const z = ziele[Number(e.key) - 1];
+      if (z) {
+        e.preventDefault();
+        wechsle(z.dataset.id);
+      }
+      return;
+    }
+    if (!aktiv) return;
+    const a = document.activeElement;
+    const tippt = (a === eingabe && eingabe.value.length > 0) || (a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA' && a !== eingabe));
+    if (!tippt && aktiv.chat.view.handleKey(e)) return;
+    if (e.key === 'Escape' && aktiv.chat.view.busy) {
+      e.preventDefault();
+      aktiv.chat.stopp();
     }
   });
 
@@ -184,9 +518,9 @@
     if (!window.__TAURI__) return;
     try {
       const pfad = await window.__TAURI__.core.invoke('bericht_speichern', { meldung: null });
-      chat.view.addNote(`Bericht gespeichert: ${pfad} (ohne Passwörter; es wurde nichts hochgeladen).`);
-    } catch (m) {
-      chat.view.addNote(`Bericht nicht gespeichert: ${(m && m.ursache) || (m && m.message) || m}`, 'fehler');
+      aktiv.chat.view.addNote(`Bericht gespeichert: ${pfad} (ohne Passwörter; es wurde nichts hochgeladen).`);
+    } catch (f) {
+      if (aktiv) aktiv.chat.view.addNote(`Bericht nicht gespeichert: ${(f && f.ursache) || (f && f.message) || f}`, 'fehler');
     }
   });
 
@@ -199,6 +533,7 @@
     document.title = FP.anzeigename;
     eingabe.setAttribute('aria-label', `Nachricht an ${FP.anzeigename}`);
     eingabe.placeholder = `Nachricht an ${FP.anzeigename} …  /  für Befehle`;
+    $('leisteFuss').textContent = h.geraet && h.geraet.name ? `${FP.anzeigename} auf ${h.geraet.name}` : '';
   }
 
   // Anderer Runner eingestellt (Einstellungen): neu starten, damit Verlauf und Ströme zum neuen Ziel gehören
@@ -206,8 +541,21 @@
     window.__TAURI__.event.listen('ziel-gewechselt', () => window.location.reload());
   }
 
-  window.__chat = chat;
-  // Prüfskript (tools/e2e_agent.py): nur wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung), nie im Betrieb
+  // Aktivitätsstrom (alle Sitzungen): markiert, wo gerade gearbeitet wird, und meldet neue Sitzungen
+  transport.onStrom((p) => {
+    if (!p || p.kanal !== 'strom') return;
+    if (p.art === 'verbunden') aktivitaet.loesche();
+    else if (p.art === 'zeile' && p.daten) {
+      const bekannt = gespraeche.some((g) => String(g.id) === String(p.daten.gespraech));
+      aktivitaet.zeile(p.daten);
+      if (!bekannt && p.daten.art !== 'lauf') ladeListe();
+      planeZeichnen();
+    }
+  });
+
+  // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
+  Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       if (i && i.e2e) {
@@ -217,14 +565,40 @@
       }
     }).catch(() => {});
   }
+
   transport.api('GET', '/api/health').then(nameSetzen).catch((f) => {
     // Runner nicht erreichbar oder Token abgelehnt: die Katalogmeldung (Ursache und Abhilfe) bleibt im Banner, die Seite versucht es alle 8 s neu
     startFehler = `${(f && f.message) || f}${f && f.code ? ` (${f.code})` : ''}`;
     $('verbindung').textContent = 'kein Runner';
+    zeigeAktiv();
+    $('banner').hidden = false;
+    $('banner').textContent = `Kein Runner erreichbar: ${startFehler}`;
     setTimeout(() => window.location.reload(), 8000);
   });
-  chat.start().catch((f) => {
+
+  async function start() {
+    transport.oeffneStrom('strom', '/api/strom').catch(() => {});
+    const [konfig, mod] = await Promise.all([
+      transport.api('GET', '/api/konfiguration').catch(() => null),
+      transport.api('GET', '/api/modelle').catch(() => null),
+      ladeListe(),
+    ]).then((r) => [r[0], r[1]]);
+    if (konfig && konfig.arbeitsbereiche && typeof konfig.arbeitsbereiche === 'object') bereiche = konfig.arbeitsbereiche;
+    modelle = (mod && Array.isArray(mod.modelle) && mod.modelle) || (konfig && Array.isArray(konfig.modelle) && konfig.modelle) || [];
+    planeZeichnen();
+    const gemerkt = merken.lies();
+    const root = gespraeche.find((g) => g.art === 'root') || gespraeche[0];
+    const ziel = gemerkt && gespraeche.some((g) => String(g.id) === gemerkt) ? gemerkt : root && root.id;
+    if (ziel === undefined || ziel === null || ziel === false) {
+      $('banner').hidden = false;
+      $('banner').textContent = 'Der Runner kennt noch keine Sitzung. Mit „Neue Sitzung“ beginnt eine.';
+      return;
+    }
+    await wechsle(ziel);
+  }
+  start().catch((f) => {
     $('verbindung').textContent = 'kein Runner';
-    chat.view.addNote(`Start fehlgeschlagen: ${(f && f.message) || f}`, 'fehler');
+    $('banner').hidden = false;
+    $('banner').textContent = `Start fehlgeschlagen: ${(f && f.message) || f}`;
   });
 })();

@@ -4,8 +4,11 @@
 (function () {
   'use strict';
   const tauri = window.__TAURI__;
-  const chat = window.__chat;
+  // Die sichtbare Sitzung wechselt; __chat liefert immer die aktuelle
+  const chat = { get S() { return window.__chat.S; }, sende: (t, s) => window.__chat.sende(t, s) };
   const $ = (id) => document.getElementById(id);
+  const spalteAktiv = () => document.querySelector('.pane.aktiv .spalte');
+  const reihe = (id) => document.querySelector(`.sitzung[data-id="${id}"]`);
   const api = (methode, pfad, koerper) => tauri.core.invoke('runner_anfrage', { methode, pfad, koerper: koerper === undefined ? null : koerper });
   const melde = (schritt, ok, detail) => api('POST', '/api/e2e/ergebnis', { schritt, ok: !!ok, detail: String(detail || '').slice(0, 300) }).catch(() => {});
   const warte = async (f, ms) => {
@@ -20,7 +23,12 @@
     }
     return false;
   };
-  const text = () => $('spalte').innerText.replace(/[\u00a0\s]+/g, ' ');
+  const text = () => {
+    const s = spalteAktiv();
+    return s ? s.innerText.replace(/[\u00a0\s]+/g, ' ') : '';
+  };
+  // Zustand der Seite f\u00fcr Fehlermeldungen (hilft, wenn ein Schritt nicht ankommt)
+  const lage = () => `hidden=${document.hidden} aktiv=${window.__arbeitsplatz && window.__arbeitsplatz.aktiv ? window.__arbeitsplatz.aktiv.id : '-'} busy=${window.__chat && window.__chat.view.busy} verbunden=${window.__chat && window.__chat.S.verbunden} text=\u2026${text().slice(-120)}`;
   const zaehle = (haystack, nadel) => haystack.split(nadel).length - 1;
   const knoepfe = (titel) => [...document.querySelectorAll('.fz-knoepfe button')].filter((b) => b.textContent.trim().startsWith(titel));
 
@@ -28,6 +36,9 @@
     await melde('seite-geladen', true, document.title);
     const verbunden = await warte(() => chat.S.verbunden && chat.S.id !== null, 20000);
     await melde('verbunden', verbunden, chat.S.verbunden ? 'ja' : 'nein');
+    // Die Seite öffnet die zuletzt benutzte Sitzung (im WebView gemerkt, bleibt von Lauf zu Lauf): der Prüflauf beginnt immer in Sitzung 1
+    await window.__arbeitsplatz.wechsle(1);
+    await warte(() => String(window.__arbeitsplatz.aktiv && window.__arbeitsplatz.aktiv.id) === '1' && window.__chat.S.verbunden, 20000);
 
     await chat.sende('streaming');
     const teilweise = await warte(() => text().includes('Antwort Teil 1') && !text().includes('Antwort Ende'), 15000);
@@ -52,8 +63,55 @@
     await warte(() => text().includes('Lang 3 '), 15000);
     await api('POST', '/api/e2e/kappen', {}).catch(() => {});
     const ganz = await warte(() => text().includes('Lang 12'), 30000);
-    await melde('neuverbunden-vollstaendig', ganz, 'Text nach dem Abbruch komplett');
-    await melde('neuverbunden-nichts-doppelt', zaehle(text(), 'Lang 3 Lang 4') === 1 && zaehle(text(), 'Lang 12') === 1, `Lang 3/4: ${zaehle(text(), 'Lang 3 Lang 4')}x, Lang 12: ${zaehle(text(), 'Lang 12')}x`);
+    await melde('neuverbunden-vollstaendig', ganz, ganz ? 'Text nach dem Abbruch komplett' : lage());
+    await melde('neuverbunden-nichts-doppelt', zaehle(text(), 'Lang 3 Lang 4') === 1 && zaehle(text(), 'Lang 12') === 1, `Lang 3/4: ${zaehle(text(), 'Lang 3 Lang 4')}x, Lang 12: ${zaehle(text(), 'Lang 12')}x ${JSON.stringify(text().slice(-150))}`);
+
+    // --- Arbeitsplatz: Seitenleiste, Ordner, Terminal, Diff, Wechsel ---
+    const liste = await warte(() => document.querySelectorAll('.sitzung').length >= 2 && reihe(2) && reihe(2).textContent.includes('Zweite Sitzung'), 15000);
+    await melde('sitzungsliste', liste, [...document.querySelectorAll('.sitzung-titel')].map((x) => x.textContent).join('|'));
+    await melde('ordner-im-kopf', $('ordner').textContent === 'standard' && $('ordner').title.includes('/probe/standard'), `${$('ordner').textContent} / ${$('ordner').title}`);
+
+    await chat.sende('terminal');
+    const term = await warte(() => spalteAktiv().querySelector('.terminal .an-gruen') && spalteAktiv().querySelector('.terminal .an-rot') && text().includes('Terminal fertig.'), 15000);
+    const termEl = spalteAktiv() && spalteAktiv().querySelector('.terminal');
+    const roh = termEl ? termEl.innerText : '';
+    await melde('terminal-ansicht', term &&!roh.includes('[32m') && !roh.includes('\u001b') && roh.includes('rot Fehler') && roh.includes('./bauen.sh'), roh.slice(0, 120));
+    await melde('terminal-fortschrittszeile', roh.includes('Fortschritt 100%') && !roh.includes('Fortschritt 10%'), roh.slice(-60));
+
+    await chat.sende('diff');
+    const diff = await warte(() => spalteAktiv().querySelectorAll('.diff').length >= 2 && text().includes('Diff fertig.'), 15000);
+    const d = spalteAktiv().querySelector('.diff');
+    await melde('diff-ansicht', diff && d.querySelector('tr.add') && d.querySelector('tr.del') && d.textContent.includes('src/probe.txt') && d.querySelector('.diff-tabelle[aria-label*="hinzugefügt"]'), d ? d.textContent.slice(0, 120) : 'kein Diff');
+
+    // Wechsel: Sitzung 1 bleibt als dasselbe Element erhalten (kein Neuaufbau), Sitzung 2 hat einen eigenen Verlauf
+    const pane1 = spalteAktiv();
+    pane1.dataset.marke = 'bleibt';
+    const karten1 = pane1.querySelectorAll('.karte').length;
+    await chat.sende('lang');
+    await warte(() => text().split('Lang 3 ').length >= 3, 15000); // zweiter Lauf hat begonnen
+    reihe(2).click();
+    const zwei = await warte(() => window.__arbeitsplatz.aktiv && String(window.__arbeitsplatz.aktiv.id) === '2' && $('ordner').textContent === 'alpha', 15000);
+    await melde('wechsel-zu-zweiter', zwei, `Ordner ${$('ordner').textContent}`);
+    await melde('wechsel-eigener-verlauf', zwei && !text().includes('Terminal fertig.') && !text().includes('Lang 3 '), text().slice(0, 80));
+    const markiert = await warte(() => reihe(1) && reihe(1).dataset.laeuft === '1', 15000);
+    await melde('laufende-sitzung-markiert', markiert, 'Sitzung 1 arbeitet im Hintergrund');
+    await chat.sende('streaming');
+    await warte(() => text().includes('Antwort Ende'), 15000);
+    const frei = await warte(() => reihe(1) && reihe(1).dataset.laeuft === '0', 20000);
+    await melde('markierung-endet', frei, 'Sitzung 1 nicht mehr als laufend markiert');
+    reihe(1).click();
+    const zurueck = await warte(() => window.__arbeitsplatz.aktiv && String(window.__arbeitsplatz.aktiv.id) === '1', 15000);
+    const vollstaendig = await warte(() => text().split('Lang 12').length >= 3 && text().includes('Terminal fertig.'), 15000);
+    await melde('wechsel-erhaelt-sitzung', zurueck && spalteAktiv() === pane1 && pane1.dataset.marke === 'bleibt' && pane1.querySelectorAll('.karte').length === karten1, `Karten ${pane1.querySelectorAll('.karte').length} von ${karten1}`);
+    await melde('wechsel-nichts-doppelt', vollstaendig && text().split('Lang 12').length === 3 && text().split('Terminal fertig.').length === 2, `Lang 12: ${text().split('Lang 12').length - 1}x (erwartet 2: zwei Läufe)`);
+
+    // Neue Sitzung mit Arbeitsordner
+    $('neueSitzung').click();
+    $('neuTitel').value = 'Neu E2E';
+    $('neuOrdner').value = 'projekt';
+    $('neuForm').requestSubmit();
+    const neu = await warte(() => window.__arbeitsplatz.aktiv && String(window.__arbeitsplatz.aktiv.id) !== '1' && String(window.__arbeitsplatz.aktiv.id) !== '2' && $('titel').textContent === 'Neu E2E' && $('ordner').textContent === 'alpha', 15000);
+    await melde('neue-sitzung', neu, `${$('titel').textContent} / ${$('ordner').textContent}`);
     await melde('ende', true, '');
   }
   lauf().catch((f) => melde('abgebrochen', false, (f && f.message) || f));
