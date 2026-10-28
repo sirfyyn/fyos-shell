@@ -390,7 +390,7 @@ mod tests {
         let vorher = baum(&alt);
         assert_eq!(angebot(&alt, &daten), Angebot::Moeglich);
         let plan = planen(&alt, &ziel).unwrap();
-        let rel: Vec<String> = plan.kopieren.iter().map(|x| x.rel.display().to_string()).collect();
+        let rel: Vec<String> = plan.kopieren.iter().map(|x| x.rel.display().to_string().replace('\\', "/")).collect();
         assert_eq!(rel, ["chats/c1.json", "chats/files/a.txt", "hosts.json", "plugins/beispiel/settings.json", "plugins.json", "settings.json"]);
         let aus: Vec<String> = plan.ausgelassen.iter().map(|(p, _)| p.display().to_string()).collect();
         assert_eq!(aus, ["logs", "update-check.json", "update.log"]);
