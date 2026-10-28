@@ -28,7 +28,7 @@ serde.workspace = true
 serde_json.workspace = true
 semver.workspace = true
 url.workspace = true
-ureq = "2"
+ureq = "3"
 ctrlc = { version = "3", features = ["termination"] }
 shell-tresor = { path = "../crates/shell-tresor" }
 
