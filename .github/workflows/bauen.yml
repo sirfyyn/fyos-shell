@@ -90,9 +90,11 @@ jobs:
       - run: npm ci
       - name: Bau (Release, ungesignierte Installationspakete)
         env:
-          # Nur gesetzt, wenn das Repo das Geheimnis dieses Profils kennt; leer = Pakete ohne Update-Fähigkeit.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Je Profil ein eigenes Geheimnispaar: TAURI_SIGNING_PRIVATE_KEY_STUDIO / _AGENT / _OS und je ein _PASSWORD.
+          # Nur das Geheimnis des gebauten Profils wird gelesen (Namen sind bei GitHub nicht von Gross-/Kleinschreibung abhängig).
+          # Fehlt es, entstehen Pakete ohne Update-Fähigkeit.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets[format('TAURI_SIGNING_PRIVATE_KEY_{0}', inputs.profil || 'studio')] }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets[format('TAURI_SIGNING_PRIVATE_KEY_PASSWORD_{0}', inputs.profil || 'studio')] }}
         run: python tools/bauen.py "${{ inputs.profil || 'studio' }}" --bundles "${{ matrix.buendel }}"
       - name: Prüfsummen
         run: |
