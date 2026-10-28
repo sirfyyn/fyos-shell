@@ -100,7 +100,7 @@ jobs:
           find target/release/bundle -type f \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' -o -name '*.app.tar.gz' -o -name '*.sig' \) -exec cp {} ausgabe/ \;
           python tools/pruefsummen.py ausgabe/* > ausgabe/SHA256SUMS
           cat ausgabe/SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fyos-shell-${{ matrix.os }}
           path: ausgabe/*
