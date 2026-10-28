@@ -81,6 +81,14 @@ pub enum Fehler {
     UebernahmeSchonErfolgt { wann: String },
     /// Einzelne Dateien ließen sich nicht übernehmen.
     UebernahmeTeilweise { anzahl: usize, beispiel: String },
+    /// Der Name des Servers lässt sich nicht auflösen (kein Netz, falsche Adresse, DNS gestört).
+    DnsFehler { host: String },
+    /// Das Zertifikat des Servers wird nicht anerkannt (abgelaufen, falscher Name, unbekannte Stelle, falsche Uhrzeit am Gerät).
+    ZertifikatFehler { host: String, grund: String },
+    /// Der Anmeldeserver (Anmeldeserver) antwortet mit einem Serverfehler.
+    AnmeldeserverFehler { status: u16, url: String },
+    /// Der Server antwortet mit einem Fehlerstatus (5xx oder 404).
+    ServerFehler { status: u16, url: String },
 }
 
 fn kurz(s: &str) -> String {
@@ -123,6 +131,10 @@ impl Fehler {
             Fehler::TresorNameUnzulaessig { .. } => "TRESOR_NAME_UNZULAESSIG",
             Fehler::AutostartFehlgeschlagen { .. } => "AUTOSTART_FEHLGESCHLAGEN",
             Fehler::BuendelUnvollstaendig { .. } => "BUENDEL_UNVOLLSTAENDIG",
+            Fehler::DnsFehler { .. } => "DNS_FEHLER",
+            Fehler::ZertifikatFehler { .. } => "ZERTIFIKAT_FEHLER",
+            Fehler::AnmeldeserverFehler { .. } => "ANMELDESERVER_FEHLER",
+            Fehler::ServerFehler { .. } => "SERVER_FEHLER",
             Fehler::UebernahmeQuelleFehlt { .. } => "UEBERNAHME_QUELLE_FEHLT",
             Fehler::UebernahmeFehlgeschlagen { .. } => "UEBERNAHME_FEHLGESCHLAGEN",
             Fehler::UebernahmeSchonErfolgt { .. } => "UEBERNAHME_SCHON_ERFOLGT",
@@ -287,6 +299,26 @@ impl Fehler {
                 "Die Rechte der genannten Dateien im alten Verzeichnis prüfen (Lesen für den eigenen Benutzer) und die Übernahme erneut starten: Bereits kopiertes wird übersprungen, nie überschrieben.".into(),
                 Some(kurz(beispiel)),
             ),
+            Fehler::DnsFehler { host } => (
+                format!("Der Name „{host}“ lässt sich nicht auflösen: Das Gerät findet den Server nicht."),
+                "Prüfen, ob das Gerät mit dem Netz verbunden ist (Webseite im Browser öffnen), ein VPN oder eine DNS-Einstellung die Adresse blockiert und der Servername stimmt. Die Anwendung versucht es automatisch erneut, sobald das Netz wieder da ist.".into(),
+                Some(host.clone()),
+            ),
+            Fehler::ZertifikatFehler { host, grund } => (
+                format!("Dem Zertifikat von „{host}“ wird nicht vertraut. Aus Sicherheitsgründen lädt die Anwendung die Seite deshalb nicht."),
+                "Datum und Uhrzeit des Geräts prüfen (ein falsches Datum macht Zertifikate ungültig). In einem Firmen- oder Schulnetz fängt manchmal ein Filter die Verbindung ab: dann ein anderes Netz probieren. Besteht der Fehler weiter, dem Betreiber des Servers melden; ein Zertifikat lässt sich hier nicht übergehen.".into(),
+                Some(format!("{host}: {}", kurz(grund))),
+            ),
+            Fehler::AnmeldeserverFehler { status, url } => (
+                format!("Der Anmeldeserver antwortet mit einem Fehler (Status {status}). Ohne ihn ist keine Anmeldung möglich."),
+                "Meist ist der Dienst kurz überlastet oder wird gewartet. Die Anwendung versucht es automatisch erneut; bleibt es, den Betreiber informieren. Bereits angemeldete Sitzungen sind nicht betroffen, sobald der Server wieder antwortet.".into(),
+                Some(url.clone()),
+            ),
+            Fehler::ServerFehler { status, url } => (
+                format!("Der Server antwortet mit einem Fehler (Status {status})."),
+                "Meist ein Neustart oder eine Wartung auf Seiten des Servers. Die Anwendung versucht es automatisch erneut; bleibt es, den Betreiber informieren.".into(),
+                Some(url.clone()),
+            ),
         };
         Meldung { code: self.code().to_string(), ursache, abhilfe, details }
     }
@@ -350,6 +382,10 @@ mod tests {
             Fehler::TresorNameUnzulaessig { name: s("n") },
             Fehler::AutostartFehlgeschlagen { ort: s("o"), grund: s("g") },
             Fehler::BuendelUnvollstaendig { grund: s("g") },
+            Fehler::DnsFehler { host: s("h") },
+            Fehler::ZertifikatFehler { host: s("h"), grund: s("g") },
+            Fehler::AnmeldeserverFehler { status: 502, url: s("u") },
+            Fehler::ServerFehler { status: 503, url: s("u") },
             Fehler::UebernahmeQuelleFehlt { ort: s("o") },
             Fehler::UebernahmeFehlgeschlagen { ort: s("o"), grund: s("g") },
             Fehler::UebernahmeSchonErfolgt { wann: s("w") },

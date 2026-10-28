@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FYOS</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1 id="titel">Verbinde …</h1>
+      <p id="adresse" class="leise"></p>
+    </header>
+
+    <section id="meldung" class="meldung" role="alert" aria-live="polite" hidden>
+      <strong id="meldung-kopf">Die Verbindung zum Server klappt gerade nicht</strong>
+      <p id="meldung-ursache"></p>
+      <p id="meldung-abhilfe"></p>
+      <small id="meldung-code" class="leise"></small>
+    </section>
+
+    <section>
+      <p id="status" class="leise" aria-live="polite">Prüfe die Verbindung …</p>
+      <div class="zeile">
+        <button id="wieder" type="button" class="haupt">Jetzt erneut versuchen</button>
+        <button id="bericht" type="button">Bericht speichern</button>
+      </div>
+      <p id="erfolg" class="leise" hidden></p>
+    </section>
+  </main>
+  <script src="fehler.js"></script>
+</body>
+</html>

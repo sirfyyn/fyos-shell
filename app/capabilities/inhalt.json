@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "inhalt",
+  "description": "Das Inhaltsfenster zeigt fremden Code (Studio, FYOS OS). Nur wenn es eine EIGENE Seite der Hülle zeigt (Fehlerseite fehler.html), darf es die drei Befehle der Fehlerseite aufrufen; `local: true` ohne `remote` heißt: Seiten von außen bekommen nie Zugriff.",
+  "windows": ["inhalt"],
+  "local": true,
+  "permissions": [
+    "allow-os-stand",
+    "allow-os-wiederholen",
+    "allow-bericht-speichern"
+  ]
+}

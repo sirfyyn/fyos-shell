@@ -9,6 +9,7 @@ mod befehle;
 mod cli;
 mod fenster;
 mod headless;
+mod os;
 mod studio_http;
 mod tray;
 mod uebernahme;
@@ -91,6 +92,8 @@ pub fn run() {
             befehle::geheimnis_loeschen,
             befehle::geheimnis_vorhanden,
             befehle::studio_uebernehmen,
+            os::os_stand,
+            os::os_wiederholen,
         ])
         .on_window_event(|fenster, ereignis| {
             // Mit Tray: Schließen des Hauptfensters versteckt nur (die Hülle lebt im Tray weiter). Ohne Tray beendet es.
@@ -98,6 +101,17 @@ pub fn run() {
                 if fenster.label() == fenster::HAUPT && tray::vorhanden() {
                     api.prevent_close();
                     let _ = fenster.hide();
+                }
+                if fenster.label() == fenster::INHALT {
+                    fenster::lage_merken(fenster.app_handle());
+                }
+                // Profil OS ohne Tray: das Fenster zum Server ist die Anwendung, Schließen beendet sie (das versteckte Hauptfenster hielte sie sonst am Leben)
+                if fenster.label() == fenster::INHALT && !tray::vorhanden() {
+                    if let Some(h) = fenster.app_handle().try_state::<Arc<Huelle>>() {
+                        if h.profil == Profil::Os {
+                            befehle::beenden(fenster.app_handle());
+                        }
+                    }
                 }
             }
         })
@@ -125,6 +139,7 @@ pub fn run() {
                 zustand::sperre(&huelle.warnungen).push(f.meldung());
             }
             app.manage(huelle.clone());
+            app.manage(os::Fluss::default());
             aktualisieren::plugin_einrichten(&handle, &huelle);
 
             // SIGINT/SIGTERM: sauber beenden, damit der Begleiter nicht als Waise weiterläuft
@@ -174,7 +189,13 @@ pub fn run() {
                     std::thread::sleep(Duration::from_secs(2));
                     h4.begleiter_pruefen();
                 });
-                if !versteckt || !tray::vorhanden() {
+                if profil == Profil::Os {
+                    // Reines Fenster zum Server: kein Hauptfenster beim Start (ein verborgenes kostete einen eigenen WebContent-Prozess, gemessen);
+                    // Einstellungen und Update öffnet das Tray-Menü bei Bedarf. Die Anwendung bleibt über das Tray-Symbol am Leben (siehe `ExitRequested`).
+                    if !versteckt || !tray::vorhanden() {
+                        os::oeffnen(&handle, &huelle);
+                    }
+                } else if !versteckt || !tray::vorhanden() {
                     fenster::haupt(&handle, true)?;
                 }
                 for link in deeplinks_aus(&std::env::args().collect::<Vec<_>>(), profil.schema()) {
@@ -189,6 +210,12 @@ pub fn run() {
         .expect("Die Hülle konnte nicht gebaut werden (Konfiguration prüfen)");
 
     app.run(|app, ereignis| {
+        // Profil OS lebt im Tray weiter, wenn das letzte Fenster geschlossen wird (der WebView ist dann freigegeben); „Beenden“ ruft app.exit(0) mit Code
+        if let RunEvent::ExitRequested { api, code, .. } = &ereignis {
+            if code.is_none() && tray::vorhanden() && app.try_state::<Arc<Huelle>>().is_some_and(|h| h.profil == Profil::Os) {
+                api.prevent_exit();
+            }
+        }
         if let RunEvent::Exit = ereignis {
             if let Some(h) = app.try_state::<Arc<Huelle>>() {
                 h.begleiter_beenden();

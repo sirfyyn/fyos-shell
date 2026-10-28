@@ -225,14 +225,28 @@ class PlattformTest(unittest.TestCase):
         enkel = int(kind.stdout.readline())
         os.kill(enkel, 0)
         self.shim_modul.baum_beenden(kind, windows=False, sanft_s=5)
+        def tot(pid):
+            # Ein getöteter Prozess bleibt als Zombie, bis sein Parent (hier: init) ihn einsammelt.
+            # os.kill(pid, 0) meldet für Zombies noch „existiert“ — der Zustand Z in /proc/<pid>/stat
+            # ist der echte Tod (im Container räumt PID 1 langsamer auf als systemd lokal).
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            try:
+                with open(f"/proc/{pid}/stat", "rb") as f:
+                    state = f.read().decode("latin-1").split(")")[-1].split()[0]
+                return state == "Z"
+            except (OSError, IndexError, ValueError):
+                return False
+
         ende = time.time() + 3
         lebt = True
         while lebt and time.time() < ende:
-            try:
-                os.kill(enkel, 0)
-                time.sleep(0.05)
-            except ProcessLookupError:
+            if tot(enkel):
                 lebt = False
+            else:
+                time.sleep(0.05)
         self.assertFalse(lebt)
 
     def test_abbruchsignale_binden_sigterm(self):

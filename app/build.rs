@@ -17,6 +17,8 @@ const BEFEHLE: &[&str] = &[
     "geheimnis_loeschen",
     "geheimnis_vorhanden",
     "studio_uebernehmen",
+    "os_stand",
+    "os_wiederholen",
 ];
 
 fn main() {

@@ -11,7 +11,14 @@
       Port und Kennung gibt die Hülle vor (Umgebung FYOS_SHELL_PORT / FYOS_SHELL_KENNUNG); die Kennung bestätigt er im Kopf
       X-FYOS-Kennung, daran erkennt die Hülle, dass er und kein fremder Server auf dem Port antwortet.
 
-Beide binden nur an 127.0.0.1 und beenden sich sauber bei SIGTERM.
+  testserver.py os [--port N] [--log DATEI] [--ausfall N] 
+      Bildet den Ablauf von FYOS OS hinter Anmeldeserver nach, OHNE echte Anmeldung: derselbe Port antwortet unter dem Namen 127.0.0.1 als „Server“ und
+      unter localhost als „Anmeldeserver“ (zwei Hosts, zwei Cookie-Töpfe). GET /os ohne Sitzungs-Cookie leitet auf localhost/auth/login, das
+      selbsttätig anmeldet (kein Formular, keine Zugangsdaten) und zurück auf 127.0.0.1/os/rueck leitet; dort setzt der „Server“ ein dauerhaftes
+      Cookie (fyos_dauer, 1 Tag) und ein Sitzungs-Cookie (fyos_sitzung, ohne Ablauf). Mit Cookie liefert /os eine Seite (mit Links, auch zu
+      example.com). --ausfall N: die ersten N Anfragen an /os bekommen 503. Jede Anfrage steht samt Host und Cookie als JSON-Zeile im Protokoll.
+
+Alle binden nur an 127.0.0.1 und beenden sich sauber bei SIGTERM.
 """
 import argparse
 import functools
@@ -76,6 +83,77 @@ class Studio(http.server.BaseHTTPRequestHandler):
             self._senden(404, "text/plain", "nicht gefunden")
 
 
+class OsServer(http.server.BaseHTTPRequestHandler):
+    """Nachbildung von FYOS OS + Anmeldeserver (siehe Kopf). Nur zum Prüfen von Weiterleitungen, Cookies und Navigationssperre."""
+    protocol_version = "HTTP/1.1"
+    port = 0
+    logdatei = None
+    ausfall = 0
+    praefix = ""
+    zaehler = 0
+    sperre = threading.Lock()
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _log(self):
+        if self.logdatei:
+            with self.sperre, open(self.logdatei, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"t": time.time(), "pfad": self.path, "host": self.headers.get("Host", ""), "cookie": self.headers.get("Cookie", ""), "ua": self.headers.get("User-Agent", "")[:40]}) + "\n")
+
+    def _antwort(self, code, typ="text/html; charset=utf-8", rumpf="", kopf=()):
+        b = rumpf.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", typ)
+        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Connection", "close")
+        for k, v in kopf:
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(b)
+
+    def do_GET(self):
+        self._log()
+        host = self.headers.get("Host", "").split(":")[0]
+        pfad = self.path.split("?")[0]
+        server = f"http://127.0.0.1:{self.port}"
+        auth = f"http://localhost:{self.port}"
+        if pfad == "/ruhig":
+            # Leerlaufseite für Messungen (Speicher/CPU): ein kleines, lebendiges Dokument, ohne Navigation und ohne Anmeldung
+            seite = ("<!doctype html><title>Leerlauf</title><h1>Leerlauf</h1><div id='z'></div><ul id='l'></ul>"
+                     "<script>var n=0,l=document.getElementById('l');for(var i=0;i<200;i++){var e=document.createElement('li');e.textContent='Eintrag '+i;l.appendChild(e);}"
+                     "setInterval(function(){n++;document.getElementById('z').textContent='Takt '+n;fetch('/os/herz-ruhig').catch(function(){});},1000);</script>")
+            return self._antwort(200, rumpf=seite)
+        if pfad == "/os/herz-ruhig":
+            return self._antwort(204)
+        if host == "127.0.0.1" and pfad == "/os":
+            with self.sperre:
+                OsServer.zaehler += 1
+                aus = OsServer.zaehler <= OsServer.ausfall
+            if aus:
+                return self._antwort(503, rumpf="Wartung")
+            if f"{self.praefix}fyos_dauer=1" in self.headers.get("Cookie", ""):
+                seite = ("<!doctype html><title>FYOS OS (angemeldet)</title><h1>FYOS OS</h1>"
+                         '<p><a id="extern" href="https://example.com/">Fremder Link</a> <a id="oeffnen" target="_blank" href="https://example.org/neu">Neues Fenster</a></p>'
+                         '<p id="inner">angemeldet</p>'
+                         '<script>setTimeout(function(){window.open("https://example.org/neu");},700);'
+                         'setTimeout(function(){location.href="https://example.com/blockiert";},1400);'
+                         'setInterval(function(){fetch("/os/herz");},1000);</script>')
+                return self._antwort(200, rumpf=seite)
+            return self._antwort(302, kopf=[("Location", f"{auth}/auth/login?next={server}/os")])
+        if host == "localhost" and pfad == "/auth/login":
+            # Anmeldeseite (200, wie die von Anmeldeserver); ein Browser folgt der Weiterleitung im Kopf selbsttätig, ein einfacher Client bleibt hier stehen
+            return self._antwort(200, rumpf='<!doctype html><title>Anmeldung (Test)</title><meta http-equiv="refresh" content="0;url=/auth/fertig"><p>Anmeldung …</p>')
+        if host == "localhost" and pfad == "/auth/fertig":
+            # „Anmeldung“ ohne Zugangsdaten: Sitzung beim Anmeldeserver setzen und zurück zum Server
+            return self._antwort(302, kopf=[("Set-Cookie", "anmelde_session=1; Path=/; Expires=Fri, 01 Jan 2100 00:00:00 GMT; HttpOnly"), ("Location", f"{server}/os/rueck")])
+        if host == "127.0.0.1" and pfad == "/os/herz":
+            return self._antwort(204)
+        if host == "127.0.0.1" and pfad == "/os/rueck":
+            return self._antwort(302, kopf=[("Set-Cookie", f"{self.praefix}fyos_dauer=1; Path=/; Expires=Fri, 01 Jan 2100 00:00:00 GMT; HttpOnly"), ("Set-Cookie", f"{self.praefix}fyos_sitzung=1; Path=/; HttpOnly"), ("Location", f"{server}/os")])
+        return self._antwort(404, "text/plain", "nicht gefunden")
+
+
 def dienen(server):
     # SIGTERM wie ein Dienst behandeln: shutdown() blockiert im Signalthread, also in einem Thread auslösen
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown).start())
@@ -99,9 +177,17 @@ def main():
     s.add_argument("--kennung", default=os.environ.get("FYOS_SHELL_KENNUNG"), help="wird in /api/state als Kopf X-FYOS-Kennung bestätigt")
     s.add_argument("--version", default="0.0.0-test")
     s.add_argument("--bereit-nach", type=float, default=0.0, help="Sekunden, in denen /api/state noch 503 liefert")
+    o = sub.add_parser("os")
+    o.add_argument("--port", type=int, default=18660)
+    o.add_argument("--log")
+    o.add_argument("--ausfall", type=int, default=0)
+    o.add_argument("--praefix", default="", help="Vorsatz der Cookie-Namen (Tests: je Lauf neu, damit Cookies früherer Läufe im WebView nichts verfälschen)")
     a = p.parse_args()
 
-    if a.art == "update":
+    if a.art == "os":
+        OsServer.port, OsServer.logdatei, OsServer.ausfall, OsServer.praefix = a.port, a.log, a.ausfall, a.praefix
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), OsServer)
+    elif a.art == "update":
         Statisch.logdatei = a.log
         handler = functools.partial(Statisch, directory=a.wurzel)
         server = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler)

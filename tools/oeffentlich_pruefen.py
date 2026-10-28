@@ -57,6 +57,8 @@ AUSNAHMEN = [
      "Testwerte für das Schwärzen (erfunden)"),
     (r"^crates/shell-core/src/(bericht|autostart)\.rs$", "persoenlicher-pfad", r"/Users/(anna|maxm)|/home/(x|anna)|C:\\\\Users\\\\Bob",
      "erfundene Pfade für Tests der Pfadlogik und des Schwärzens"),
+    (r"^crates/shell-core/src/(navigation|netz)\.rs$|^app/src/os\.rs$", "interne-adresse", r"(fyos|auth)\.sirfyyn\.de",
+     "Standard-Hosts des Profils os (Konfiguration: der Server und sein Anmeldeserver) und Tests der Navigationssperre und Fehlerklassen gegen diese Namen"),
     (r"^tools/bauen\.py$", "interne-adresse", r"https://fyos\.sirfyyn\.de/update/<profil>/latest\.json",
      "Dokumentation der Update-Adresse je Profil (siehe app/profile/*.conf.json)"),
 ]

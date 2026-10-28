@@ -27,6 +27,8 @@ pub struct Einstellungen {
     pub autostart: bool,
     /// Profil mit Begleiter (Studio): beim Start das Inhaltsfenster mit dem Studio öffnen, sobald der Begleiter gesund ist (Vorgabe an).
     pub inhalt_automatisch: bool,
+    /// Zusätzliche Hosts, die das Inhaltsfenster laden darf (`*.beispiel.de` = alle Unterdomänen). Zu den Standards des Profils und dem Host der Start-URL.
+    pub erlaubte_hosts: Vec<String>,
     #[serde(flatten)]
     pub weitere: Map<String, Value>,
 }
@@ -40,6 +42,7 @@ impl Default for Einstellungen {
             begleiter: None,
             autostart: false,
             inhalt_automatisch: true,
+            erlaubte_hosts: Vec::new(),
             weitere: Map::new(),
         }
     }

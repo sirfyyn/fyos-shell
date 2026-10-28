@@ -143,11 +143,45 @@ def kind_starten(befehl, windows=None, popen=subprocess.Popen, **ein_aus):
     return popen(befehl, start_new_session=True, **ein_aus)
 
 
+def _nachfahren(pid):
+    """Liefert die PIDs aller Nachfahren von `pid` (über /proc/…/stat), leer wenn /proc fehlt.
+
+    Der Gruppen-Kill erreicht nur Prozesse in der Prozessgruppe des Studios. In Containern kann ein
+    Nachfahre aus dieser Gruppe fallen und überleben; der Baum wird deshalb VOR dem Töten erfasst,
+    damit Überlebende danach gezielt beendet werden können."""
+    vater_von = {}
+    try:
+        eintraege = os.listdir("/proc")
+    except OSError:
+        return []
+    for eintrag in eintraege:
+        if not eintrag.isdigit():
+            continue
+        try:
+            with open(f"/proc/{eintrag}/stat", "rb") as f:
+                feld = f.read().decode("latin-1").split(")")[-1].split()
+            vater_von[int(eintrag)] = int(feld[1])
+        except (OSError, IndexError, ValueError):
+            continue
+    kinder = {}
+    for kind_pid, vater in vater_von.items():
+        kinder.setdefault(vater, []).append(kind_pid)
+    nachfahren = []
+    stapel = [pid]
+    while stapel:
+        vater = stapel.pop()
+        for k in kinder.get(vater, []):
+            nachfahren.append(k)
+            stapel.append(k)
+    return nachfahren
+
+
 def baum_beenden(kind, windows=None, ausfuehren=subprocess.run, sanft_s=SANFT_S):
     """Beendet das Studio samt Nachkommen: erst höflich, nach `sanft_s` Sekunden hart. Ein schon beendetes Studio ist kein Fehler.
 
-    Unix: SIGTERM/SIGKILL an die Prozessgruppe. Windows: CTRL_BREAK an die Prozessgruppe, danach `taskkill /T /F` auf den Baum
-    (fängt auch Enkel ab, die sich vom Elternprozess gelöst haben, solange der Baum zusammenhängt)."""
+    Unix: SIGTERM/SIGKILL an die Prozessgruppe, danach Überlebende aus dem erfassten Baum hart beenden
+    (fängt Enkel ab, die aus der Gruppe gefallen sind). Windows: CTRL_BREAK an die Prozessgruppe, danach
+    `taskkill /T /F` auf den Baum."""
     win = ist_windows() if windows is None else windows
     if win:
         if kind.poll() is None:
@@ -158,6 +192,7 @@ def baum_beenden(kind, windows=None, ausfuehren=subprocess.run, sanft_s=SANFT_S)
                 pass
         ausfuehren(["taskkill", "/PID", str(kind.pid), "/T", "/F"], capture_output=True)
         return
+    baum = _nachfahren(kind.pid)
     try:
         os.killpg(kind.pid, signal.SIGTERM)
         kind.wait(timeout=sanft_s)
@@ -166,6 +201,16 @@ def baum_beenden(kind, windows=None, ausfuehren=subprocess.run, sanft_s=SANFT_S)
             os.killpg(kind.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+    ueberlebende = []
+    for nachkomme in baum:
+        try:
+            os.kill(nachkomme, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            ueberlebende.append(nachkomme)
+    # Diagnose ins Protokoll (begleiter.log): war der Baum leer, weil /proc fehlte, oder wurden Nachfahren getötet?
+    print(f"[shim] baum_beenden: erfasst={baum} ueberlebend={ueberlebende}", file=sys.stderr, flush=True)
 
 
 def abbruchsignale(funktion):

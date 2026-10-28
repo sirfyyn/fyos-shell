@@ -291,6 +291,7 @@ pub fn geheimnis_vorhanden(h: H<'_>, name: String) -> Result<bool, Meldung> {
 /// Sauber beenden: erst den Begleiter, dann die Anwendung.
 pub fn beenden(app: &AppHandle) {
     use tauri::Manager;
+    fenster::lage_merken(app);
     if let Some(h) = app.try_state::<Arc<Huelle>>() {
         h.begleiter_beenden();
     }

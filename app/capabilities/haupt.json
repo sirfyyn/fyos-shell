@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "haupt",
-  "description": "Nur das Hauptfenster (lokale Seite ui/index.html) darf die Befehle der Hülle aufrufen. Das Inhaltsfenster (Studio, FYOS OS, fremde Seiten) hat keine Capability.",
+  "description": "Nur das Hauptfenster (lokale Seite ui/index.html) darf die Befehle der Hülle aufrufen. Das Inhaltsfenster (Studio, FYOS OS, fremde Seiten) hat nur die kleine Capability inhalt.json für die eigene Fehlerseite.",
   "windows": ["haupt"],
   "local": true,
   "permissions": [
