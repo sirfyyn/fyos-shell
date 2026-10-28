@@ -3,10 +3,28 @@
   "identifier": "de.sirfyyn.fyos-agent",
   "bundle": {
     "shortDescription": "FYOS Agent",
-    "longDescription": "FYOS Agent als Desktop-Anwendung."
+    "longDescription": "FYOS Agent als Desktop-Anwendung.",
+    "icon": [
+      "profile/icons/agent/32x32.png",
+      "profile/icons/agent/128x128.png",
+      "profile/icons/agent/128x128@2x.png",
+      "profile/icons/agent/icon.icns",
+      "profile/icons/agent/icon.ico"
+    ]
   },
   "plugins": {
-    "updater": { "endpoints": ["https://fyos.sirfyyn.de/update/agent/latest.json"], "requireSignedVersion": true },
-    "deep-link": { "desktop": { "schemes": ["fyos"] } }
+    "updater": {
+      "endpoints": [
+        "https://fyos.sirfyyn.de/update/agent/latest.json"
+      ],
+      "requireSignedVersion": true
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "fyos"
+        ]
+      }
+    }
   }
 }

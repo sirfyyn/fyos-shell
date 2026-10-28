@@ -3,10 +3,28 @@
   "identifier": "de.sirfyyn.fyos-os",
   "bundle": {
     "shortDescription": "FYOS OS",
-    "longDescription": "FYOS OS als Desktop-Anwendung."
+    "longDescription": "FYOS OS als Desktop-Anwendung.",
+    "icon": [
+      "profile/icons/os/32x32.png",
+      "profile/icons/os/128x128.png",
+      "profile/icons/os/128x128@2x.png",
+      "profile/icons/os/icon.icns",
+      "profile/icons/os/icon.ico"
+    ]
   },
   "plugins": {
-    "updater": { "endpoints": ["https://fyos.sirfyyn.de/update/os/latest.json"], "requireSignedVersion": true },
-    "deep-link": { "desktop": { "schemes": ["fyos"] } }
+    "updater": {
+      "endpoints": [
+        "https://fyos.sirfyyn.de/update/os/latest.json"
+      ],
+      "requireSignedVersion": true
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "fyos"
+        ]
+      }
+    }
   }
 }
