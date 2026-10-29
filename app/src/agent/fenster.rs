@@ -7,6 +7,8 @@
 use crate::fenster as huelle_fenster;
 use crate::zustand::{sperre, Huelle};
 use shell_core::agent::chat_navigation;
+use shell_core::einstellungen;
+use shell_core::fensterlage::{Bildschirm, Lage};
 use shell_core::navigation::Entscheidung;
 use std::sync::Arc;
 use tauri::webview::NewWindowResponse;
@@ -35,7 +37,7 @@ pub fn chat_oeffnen(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
     let titel = app.config().product_name.clone().unwrap_or_else(|| "FYOS Agent".into());
-    WebviewWindowBuilder::new(app, CHAT, WebviewUrl::App("agent/chat.html".into()))
+    let mut b = WebviewWindowBuilder::new(app, CHAT, WebviewUrl::App("agent/chat.html".into()))
         .title(titel)
         .inner_size(1100.0, 820.0)
         .min_inner_size(640.0, 480.0)
@@ -43,9 +45,47 @@ pub fn chat_oeffnen(app: &AppHandle) -> tauri::Result<()> {
         .on_new_window(|url, _| {
             sperre_chat(&url);
             NewWindowResponse::Deny
-        })
-        .build()?;
+        });
+    // Letzte Lage, wenn sie noch auf einem angeschlossenen Bildschirm liegt (sonst Standardlage)
+    let lage = lage_gemerkt(app);
+    if let Some(l) = lage {
+        let (x, y, br, ho) = l.logisch();
+        b = b.inner_size(br, ho).position(x, y);
+    }
+    let fenster = b.build()?;
+    if lage.is_some_and(|l| l.maximiert) {
+        let _ = fenster.maximize();
+    }
     Ok(())
+}
+
+fn bildschirme(app: &AppHandle) -> Vec<Bildschirm> {
+    app.available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| Bildschirm { x: m.position().x, y: m.position().y, breite: m.size().width, hoehe: m.size().height })
+        .collect()
+}
+
+fn lage_gemerkt(app: &AppHandle) -> Option<Lage> {
+    let h = app.try_state::<Arc<Huelle>>()?;
+    let l = sperre(&h.einstellungen).agent.chat_lage_wiederherstellen(&bildschirme(app));
+    l
+}
+
+/// Merkt Position und Größe des Chat-Fensters in den Einstellungen (beim Schließen und Beenden; nicht bei jeder Mausbewegung).
+/// Minimiert oder außerhalb aller Bildschirme: die letzte gute Lage bleibt.
+pub fn lage_merken(app: &AppHandle) {
+    let (Some(f), Some(h)) = (app.get_webview_window(CHAT), app.try_state::<Arc<Huelle>>()) else { return };
+    if f.is_minimized().unwrap_or(false) || f.is_fullscreen().unwrap_or(false) {
+        return;
+    }
+    let (Ok(p), Ok(g), Ok(skal)) = (f.outer_position(), f.inner_size(), f.scale_factor()) else { return };
+    let lage = Lage { x: p.x, y: p.y, breite: g.width, hoehe: g.height, skalierung: skal, maximiert: f.is_maximized().unwrap_or(false) };
+    let mut e = sperre(&h.einstellungen);
+    if e.agent.chat_lage_merken(lage, &bildschirme(app)) {
+        let _ = einstellungen::speichern(&h.pfade, &e);
+    }
 }
 
 /// Was beim Start zuerst zu sehen ist: das Chat-Fenster, sobald ein Runner eingetragen ist; sonst die Einstellungen mit der Runner-Verbindung.

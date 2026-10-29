@@ -148,6 +148,9 @@ pub fn run() {
                 if fenster.label() == fenster::INHALT {
                     fenster::lage_merken(fenster.app_handle());
                 }
+                if fenster.label() == agent::fenster::CHAT {
+                    agent::fenster::lage_merken(fenster.app_handle());
+                }
                 // Profil OS ohne Tray: das Fenster zum Server ist die Anwendung, Schließen beendet sie (das versteckte Hauptfenster hielte sie sonst am Leben)
                 if fenster.label() == fenster::INHALT && !tray::vorhanden() {
                     if let Some(h) = fenster.app_handle().try_state::<Arc<Huelle>>() {
@@ -292,6 +295,7 @@ pub fn run() {
     app.run(|app, ereignis| {
         // Profil OS lebt im Tray weiter, wenn das letzte Fenster geschlossen wird (der WebView ist dann freigegeben); „Beenden“ ruft app.exit(0) mit Code
         if let RunEvent::ExitRequested { api, code, .. } = &ereignis {
+            agent::fenster::lage_merken(app); // auch beim Beenden über das Programmmenü (Cmd+Q)
             if code.is_none() && tray::vorhanden() && app.try_state::<Arc<Huelle>>().is_some_and(|h| h.profil == Profil::Os) {
                 api.prevent_exit();
             }

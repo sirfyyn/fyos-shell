@@ -292,6 +292,7 @@ pub fn geheimnis_vorhanden(h: H<'_>, name: String) -> Result<bool, Meldung> {
 pub fn beenden(app: &AppHandle) {
     use tauri::Manager;
     fenster::lage_merken(app);
+    crate::agent::fenster::lage_merken(app);
     if let Some(h) = app.try_state::<Arc<Huelle>>() {
         h.begleiter_beenden();
     }

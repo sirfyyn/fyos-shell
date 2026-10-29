@@ -33,6 +33,63 @@ pub fn text_freigaben(n: usize) -> String {
     }
 }
 
+/// Titel des Untermenüs zum Wechseln des Runners.
+pub const RUNNER_WAHL_TITEL: &str = "Runner wechseln";
+/// Eintrag im Untermenü, wenn die Liste leer ist (nicht anklickbar).
+pub const RUNNER_WAHL_LEER: &str = "Keine Runner in den Einstellungen";
+/// Vorsatz der Menü-Kennungen der Runner (`runner:<id>`); alles andere im Tray-Menü hat feste Kennungen ohne Doppelpunkt.
+const WAHL_VORSATZ: &str = "runner:";
+const NAME_MAX: usize = 40;
+
+/// Erste Zeile des Tray-Menüs: der aktive Runner (nicht anklickbar) oder, dass keiner eingerichtet ist.
+pub fn runner_zeile(name: Option<&str>) -> String {
+    match name.map(anzeige_name).filter(|n| !n.is_empty()) {
+        Some(n) => format!("Runner: {n}"),
+        None => "Kein Runner".to_string(),
+    }
+}
+
+/// Name für Menü und Tooltip: Steuerzeichen und Zeilenumbrüche werden zu Leerzeichen, an den Rändern gekürzt, höchstens 40 Zeichen.
+pub fn anzeige_name(roh: &str) -> String {
+    let sauber: String = roh.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
+    if sauber.chars().count() <= NAME_MAX {
+        return sauber;
+    }
+    let kurz: String = sauber.chars().take(NAME_MAX - 1).collect();
+    format!("{}…", kurz.trim_end())
+}
+
+/// Ein Eintrag des Untermenüs „Runner wechseln“.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WahlEintrag {
+    /// Kennung im Tray-Menü (`runner:<id>`)
+    pub menue_id: String,
+    pub text: String,
+    /// Der aktive Runner bekommt den Haken.
+    pub aktiv: bool,
+}
+
+/// Die Einträge des Untermenüs aus der Runner-Liste `(id, name)` und der Kennung des aktiven Runners. Ein leerer Name zeigt die Kennung.
+pub fn runner_wahl(runner: &[(String, String)], aktiv: Option<&str>) -> Vec<WahlEintrag> {
+    runner
+        .iter()
+        .map(|(id, name)| {
+            let text = Some(anzeige_name(name)).filter(|n| !n.is_empty()).unwrap_or_else(|| anzeige_name(id));
+            WahlEintrag { menue_id: format!("{WAHL_VORSATZ}{id}"), text, aktiv: aktiv == Some(id.as_str()) }
+        })
+        .collect()
+}
+
+/// Die Runner-Kennung hinter einer Menü-Kennung; `None` für alle anderen Einträge des Menüs.
+pub fn runner_id_aus_menue(menue_id: &str) -> Option<&str> {
+    menue_id.strip_prefix(WAHL_VORSATZ).filter(|i| !i.is_empty())
+}
+
+/// Tooltip: Runner, Zustand und Freigaben, je eine Zeile.
+pub fn tooltip_text(runner: &str, status: &str, freigaben: &str) -> String {
+    format!("{runner}\n{status}\n{freigaben}")
+}
+
 /// Neben dem Symbol (macOS): Zahl der offenen Freigaben; ohne offene nichts.
 pub fn titel_text(offene: usize) -> Option<String> {
     (offene > 0).then(|| offene.to_string())
@@ -83,5 +140,47 @@ mod tests {
     fn unbekannter_kopfzustand_ist_bereit() {
         assert_eq!(kopf_art("arbeitet"), "arbeitet");
         assert_eq!(kopf_art("unfug"), "bereit");
+    }
+
+    #[test]
+    fn runner_zeile_nennt_den_namen_oder_keinen() {
+        assert_eq!(runner_zeile(Some("Heimrechner")), "Runner: Heimrechner");
+        assert_eq!(runner_zeile(None), "Kein Runner");
+        assert_eq!(runner_zeile(Some("   ")), "Kein Runner");
+        assert_eq!(runner_zeile(Some("a\nb\t c")), "Runner: a b c");
+    }
+
+    #[test]
+    fn lange_namen_werden_gekuerzt() {
+        let lang = "x".repeat(100);
+        let k = anzeige_name(&lang);
+        assert_eq!(k.chars().count(), 40);
+        assert!(k.ends_with('…'));
+        assert_eq!(anzeige_name("ä".repeat(40).as_str()).chars().count(), 40);
+    }
+
+    #[test]
+    fn wahl_markiert_den_aktiven_und_ersetzt_leere_namen() {
+        let liste = vec![("a".to_string(), "Eins".to_string()), ("b".to_string(), " ".to_string())];
+        let w = runner_wahl(&liste, Some("b"));
+        assert_eq!(w.len(), 2);
+        assert_eq!((w[0].menue_id.as_str(), w[0].text.as_str(), w[0].aktiv), ("runner:a", "Eins", false));
+        assert_eq!((w[1].menue_id.as_str(), w[1].text.as_str(), w[1].aktiv), ("runner:b", "b", true));
+        assert!(runner_wahl(&liste, None).iter().all(|e| !e.aktiv));
+        assert!(runner_wahl(&[], Some("a")).is_empty());
+    }
+
+    #[test]
+    fn menue_kennung_fuehrt_zur_runner_id() {
+        assert_eq!(runner_id_aus_menue("runner:lokal"), Some("lokal"));
+        assert_eq!(runner_id_aus_menue("runner:"), None);
+        for fest in ["status", "freigaben", "ruhe", "oeffnen", "einstellungen", "update", "beenden", "runner_kopf"] {
+            assert_eq!(runner_id_aus_menue(fest), None, "{fest}");
+        }
+    }
+
+    #[test]
+    fn tooltip_hat_drei_zeilen() {
+        assert_eq!(tooltip_text("Runner: X", "FYOS Agent: bereit", "Keine offenen Freigaben"), "Runner: X\nFYOS Agent: bereit\nKeine offenen Freigaben");
     }
 }

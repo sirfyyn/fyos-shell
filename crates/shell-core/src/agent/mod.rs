@@ -8,12 +8,14 @@
 //! - [`freigaben`]: offene Freigaben lesen, „neu“ erkennen, Meldungstext
 //! - [`runner`]: Liste der Runner (entfernt/lokal), aktiver Runner, zuletzt benutzte Ordner, Übernahme des bisherigen Runners
 //! - [`lokal`]: Vertrag und Startwerte des lokalen Runners (optionales Fremdprogramm, von der Hülle als Kindprozess gestartet)
-//! - [`anzeige`]: Texte für Tray und Tooltip (Zustand, Zahl offener Freigaben)
+//! - [`anzeige`]: Texte für Tray und Tooltip (Zustand, Zahl offener Freigaben, Runner-Name, Untermenü zum Wechseln)
+//! - [`lage`]: Lage (Position, Größe) des Chat-Fensters in den Einstellungen, Prüfung gegen die vorhandenen Bildschirme
 
 pub mod adresse;
 pub mod anzeige;
 pub mod bruecke;
 pub mod freigaben;
+pub mod lage;
 pub mod lokal;
 pub mod runner;
 
@@ -47,6 +49,8 @@ pub struct AgentEinst {
     pub lokal: runner::LokalKonfig,
     /// Zuletzt benutzte Arbeitsordner je Runner-Kennung (nur Pfade, keine Geheimnisse; nur in dieser Datei, nie auf dem Runner).
     pub zuletzt: std::collections::BTreeMap<String, Vec<String>>,
+    /// Letzte Lage des Chat-Fensters (nur Zahlen, physische Pixel). `None` = Standardlage.
+    pub chat_lage: Option<crate::fensterlage::Lage>,
 }
 
 impl Default for AgentEinst {
@@ -60,6 +64,7 @@ impl Default for AgentEinst {
             aktiv_runner: None,
             lokal: runner::LokalKonfig::default(),
             zuletzt: std::collections::BTreeMap::new(),
+            chat_lage: None,
         }
     }
 }

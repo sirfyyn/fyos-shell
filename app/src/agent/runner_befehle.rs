@@ -126,7 +126,11 @@ pub fn runner_entfernen(app: AppHandle, h: H<'_>, a: A<'_>, id: String) -> Resul
 /// Macht einen Runner zum aktiven. Der lokale Runner wird dabei gestartet (bis zu 30 s); scheitert der Start, bleibt der bisherige aktiv.
 #[tauri::command]
 pub async fn runner_wechseln(app: AppHandle, h: H<'_>, a: A<'_>, id: String) -> Result<Value, Meldung> {
-    let (h, a): (Arc<Huelle>, Arc<AgentZustand>) = (h.inner().clone(), a.inner().clone());
+    wechseln_intern(app, h.inner().clone(), a.inner().clone(), id).await
+}
+
+/// Der eine Weg zum Wechseln des Runners: der Befehl `runner_wechseln` (Chat, Einstellungen) und das Tray-Menü rufen beide diese Funktion.
+pub(super) async fn wechseln_intern(app: AppHandle, h: Arc<Huelle>, a: Arc<AgentZustand>, id: String) -> Result<Value, Meldung> {
     let (h2, a2, id2) = (h.clone(), a.clone(), id.clone());
     blockierend(move || {
         let art = {
