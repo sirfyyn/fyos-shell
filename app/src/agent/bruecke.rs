@@ -7,7 +7,7 @@ use super::{http, merke_fehler, vergiss_fehler, AgentZustand};
 use crate::zustand::Huelle;
 use serde_json::{json, Value};
 use shell_core::agent::adresse::api_url;
-use shell_core::agent::bruecke::{methode_erlaubt, pfad_erlaubt, strom_pfad_ok, wartezeit_ms, SseLeser};
+use shell_core::agent::bruecke::{methode_erlaubt, pfad_erlaubt, pfad_reserviert, strom_pfad_ok, wartezeit_ms, SseLeser};
 use shell_core::{Fehler, Meldung};
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,7 +31,7 @@ fn nicht_freigegeben(pfad: &str) -> Meldung {
 #[tauri::command]
 pub async fn runner_anfrage(h: H<'_>, a: A<'_>, methode: String, pfad: String, koerper: Option<Value>) -> Result<Value, Meldung> {
     let m = methode_erlaubt(&methode).ok_or_else(|| nicht_freigegeben(&methode))?;
-    if !pfad_erlaubt(&pfad) {
+    if !pfad_erlaubt(&pfad) || pfad_reserviert(&pfad) {
         return Err(nicht_freigegeben(&pfad));
     }
     let (h, a): (Arc<Huelle>, Arc<AgentZustand>) = (h.inner().clone(), a.inner().clone());

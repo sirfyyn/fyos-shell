@@ -6,12 +6,16 @@
 //! - [`adresse`]: Runner-Adresse prüfen (http nur im eigenen Netz), `api_url`
 //! - [`bruecke`]: welche Wege und Ströme die Seite öffnen darf, SSE lesen, Wartetreppe, Fehler aus HTTP-Status
 //! - [`freigaben`]: offene Freigaben lesen, „neu“ erkennen, Meldungstext
+//! - [`runner`]: Liste der Runner (entfernt/lokal), aktiver Runner, zuletzt benutzte Ordner, Übernahme des bisherigen Runners
+//! - [`lokal`]: Vertrag und Startwerte des lokalen Runners (optionales Fremdprogramm, von der Hülle als Kindprozess gestartet)
 //! - [`anzeige`]: Texte für Tray und Tooltip (Zustand, Zahl offener Freigaben)
 
 pub mod adresse;
 pub mod anzeige;
 pub mod bruecke;
 pub mod freigaben;
+pub mod lokal;
+pub mod runner;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -34,11 +38,29 @@ pub struct AgentEinst {
     pub ruhe: bool,
     /// Schon gemeldete Freigaben (`<id>@<erstellt>`), damit ein Neustart nichts doppelt meldet.
     pub gemeldet: BTreeSet<String>,
+    /// Liste der Runner (entfernte und der lokale). Leer, solange nur der bisherige einzelne Runner (`runner_adresse`) eingetragen ist;
+    /// die Hülle übernimmt ihn beim Start als ersten Eintrag ([`AgentEinst::runner_uebernehmen`]).
+    pub runner: Vec<runner::RunnerEintrag>,
+    /// Kennung des Runners, mit dem die Hülle spricht.
+    pub aktiv_runner: Option<String>,
+    /// Programm des lokalen Runners (optionales Fremdprogramm, die Hülle bringt keines mit).
+    pub lokal: runner::LokalKonfig,
+    /// Zuletzt benutzte Arbeitsordner je Runner-Kennung (nur Pfade, keine Geheimnisse; nur in dieser Datei, nie auf dem Runner).
+    pub zuletzt: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for AgentEinst {
     fn default() -> Self {
-        AgentEinst { runner_adresse: None, runner_token: TOKEN_VERWEIS.to_string(), ruhe: false, gemeldet: BTreeSet::new() }
+        AgentEinst {
+            runner_adresse: None,
+            runner_token: TOKEN_VERWEIS.to_string(),
+            ruhe: false,
+            gemeldet: BTreeSet::new(),
+            runner: Vec::new(),
+            aktiv_runner: None,
+            lokal: runner::LokalKonfig::default(),
+            zuletzt: std::collections::BTreeMap::new(),
+        }
     }
 }
 

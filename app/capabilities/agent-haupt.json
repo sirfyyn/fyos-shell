@@ -1,14 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "agent-haupt",
-  "description": "Profil agent: das Hauptfenster (Einstellungen, lokale Seite ui/index.html) darf zusätzlich die Runner-Verbindung lesen, speichern, prüfen und aus der bisherigen Agent-App übernehmen sowie das Chat-Fenster öffnen.",
+  "description": "Profil agent: das Hauptfenster (Einstellungen, lokale Seite ui/index.html) darf zusätzlich die Runner-Liste lesen und ändern, Verbindungen prüfen, aus der bisherigen Agent-App übernehmen, den lokalen Runner einstellen, starten und stoppen sowie das Chat-Fenster öffnen.",
   "windows": ["haupt"],
   "local": true,
   "permissions": [
-    "allow-agent-verbindung",
-    "allow-agent-verbindung-speichern",
     "allow-agent-verbindung-pruefen",
     "allow-agent-alt-uebernehmen",
-    "allow-agent-chat-oeffnen"
+    "allow-agent-chat-oeffnen",
+    "allow-runner-liste",
+    "allow-runner-speichern",
+    "allow-runner-entfernen",
+    "allow-lokaler-runner-einstellen",
+    "allow-lokaler-runner-status",
+    "allow-lokaler-runner-starten",
+    "allow-lokaler-runner-stoppen"
   ]
 }

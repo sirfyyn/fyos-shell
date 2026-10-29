@@ -295,5 +295,8 @@ pub fn beenden(app: &AppHandle) {
     if let Some(h) = app.try_state::<Arc<Huelle>>() {
         h.begleiter_beenden();
     }
+    if let Some(a) = app.try_state::<Arc<crate::agent::AgentZustand>>() {
+        a.lokal.stoppen();
+    }
     app.exit(0);
 }

@@ -95,6 +95,8 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // Systemmitteilungen: nur Rust ruft das Plugin (mitteilung.rs); das Plugin bekommt in keiner Capability Rechte für Seiten
         .plugin(tauri_plugin_notification::init())
+        // Systemdialog „Ordner wählen“: nur Rust ruft ihn (agent/runner_befehle.rs, `ordner_waehlen`); keine Capability gibt einer Seite Rechte des Plugins
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             befehle::info,
             befehle::update_pruefen,
@@ -117,9 +119,18 @@ pub fn run() {
             agent::bruecke::runner_anfrage,
             agent::bruecke::strom_oeffnen,
             agent::bruecke::strom_schliessen,
-            agent::befehle::agent_verbindung,
-            agent::befehle::agent_verbindung_speichern,
             agent::befehle::agent_verbindung_pruefen,
+            agent::runner_befehle::runner_liste,
+            agent::runner_befehle::runner_speichern,
+            agent::runner_befehle::runner_entfernen,
+            agent::runner_befehle::runner_wechseln,
+            agent::runner_befehle::lokaler_runner_einstellen,
+            agent::runner_befehle::lokaler_runner_status,
+            agent::runner_befehle::lokaler_runner_starten,
+            agent::runner_befehle::lokaler_runner_stoppen,
+            agent::runner_befehle::ordner_waehlen,
+            agent::runner_befehle::ordner_zuletzt,
+            agent::runner_befehle::ordner_merken,
             agent::befehle::agent_alt_uebernehmen,
             agent::befehle::agent_chat_oeffnen,
             agent::befehle::ziel_info,
@@ -170,6 +181,13 @@ pub fn run() {
             if let Some(f) = buendel_fehler {
                 zustand::sperre(&huelle.warnungen).push(f.meldung());
             }
+            if profil == Profil::Agent {
+                // bisheriger einzelner Runner → erster Eintrag der Liste (gleicher Tresor-Eintrag, nichts muss neu eingerichtet werden)
+                let mut e = zustand::sperre(&huelle.einstellungen);
+                if e.agent.runner_uebernehmen() {
+                    let _ = shell_core::einstellungen::speichern(&huelle.pfade, &e);
+                }
+            }
             app.manage(huelle.clone());
             // Prüfbau (nur Debug, nur mit FYOS_SHELL_AGENT_E2E=1): kein Dock-Symbol, kein Fokusraub während der Prüfläufe
             #[cfg(all(debug_assertions, target_os = "macos"))]
@@ -205,6 +223,17 @@ pub fn run() {
                     eprintln!("Tray nicht verfügbar ({e}); Schließen des Fensters beendet die Anwendung.");
                 }
                 if profil == Profil::Agent {
+                    // Ist der lokale Runner der aktive, startet ihn die Hülle im Hintergrund (das Fenster zeigt „startet …“ und lädt neu)
+                    let (hl, al, apl) = (huelle.clone(), agent_zustand.clone(), handle.clone());
+                    std::thread::spawn(move || {
+                        let lokal = zustand::sperre(&hl.einstellungen).agent.aktiver().is_some_and(|r| r.art == shell_core::agent::runner::Art::Lokal);
+                        if lokal {
+                            match al.lokal.starten(&hl, agent::lokal::start_wurzeln(&hl)) {
+                                Ok(()) => agent::befehle::nach_aenderung(&apl, &al),
+                                Err(f) => zustand::sperre(&hl.warnungen).push(f.meldung()),
+                            }
+                        }
+                    });
                     // Beobachter für offene Freigaben und laufende Läufe (Tray, auch bei geschlossenem Fenster)
                     agent::beobachter::starte(handle.clone(), huelle.clone(), agent_zustand.clone());
                     agent::tray::aktualisieren(&handle);
@@ -270,6 +299,9 @@ pub fn run() {
         if let RunEvent::Exit = ereignis {
             if let Some(h) = app.try_state::<Arc<Huelle>>() {
                 h.begleiter_beenden();
+            }
+            if let Some(a) = app.try_state::<Arc<agent::AgentZustand>>() {
+                a.lokal.stoppen();
             }
         }
     });

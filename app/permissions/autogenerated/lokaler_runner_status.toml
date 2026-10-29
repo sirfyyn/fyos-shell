@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lokaler-runner-status"
+description = "Enables the lokaler_runner_status command without any pre-configured scope."
+commands.allow = ["lokaler_runner_status"]
+
+[[permission]]
+identifier = "deny-lokaler-runner-status"
+description = "Denies the lokaler_runner_status command without any pre-configured scope."
+commands.deny = ["lokaler_runner_status"]

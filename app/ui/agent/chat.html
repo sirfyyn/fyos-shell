@@ -10,13 +10,26 @@
 <body>
   <div class="app" id="app">
     <aside id="leiste" class="leiste" aria-label="Sitzungen">
+      <div class="runner-wahl" id="runnerKasten">
+        <label for="runnerWahl" class="leise">Runner</label>
+        <select id="runnerWahl" aria-label="Aktiver Runner"></select>
+        <p id="runnerHinweis" class="leise runner-hinweis" role="status" hidden></p>
+      </div>
       <div class="leiste-kopf">
         <button id="neueSitzung" type="button" class="primaer neu-knopf" aria-keyshortcuts="Meta+Shift+O Control+Shift+O">Neue Sitzung</button>
       </div>
       <form id="neuForm" class="neu-form" autocomplete="off" hidden>
         <label for="neuTitel">Titel (optional)</label>
         <input id="neuTitel" type="text" maxlength="120" placeholder="Neue Sitzung">
-        <label for="neuOrdner">Arbeitsordner</label>
+        <fieldset id="ordnerKasten" class="ordner-kasten" hidden>
+          <legend>Arbeitsordner</legend>
+          <p id="ordnerGewaehlt" class="leise ordner-gewaehlt">Noch kein Ordner gewählt.</p>
+          <div id="ordnerZuletzt" class="ordner-zuletzt" role="group" aria-label="Zuletzt benutzte Ordner" hidden></div>
+          <button id="ordnerDialog" type="button" hidden>Ordner wählen …</button>
+          <ul id="ordnerBaum" class="ordner-baum" role="tree" aria-label="Ordner auf dem Runner"></ul>
+          <p id="ordnerFehler" class="neu-fehler" role="alert" hidden></p>
+        </fieldset>
+        <label for="neuOrdner" id="neuOrdnerLabel">Arbeitsordner</label>
         <select id="neuOrdner"></select>
         <p id="neuPfad" class="leise neu-pfad"></p>
         <label for="neuModell" id="neuModellLabel">Modell</label>
@@ -99,6 +112,7 @@
   <script src="modus.js"></script>
   <script src="sitzungen.js"></script>
   <script src="leiste.js"></script>
+  <script src="ordner.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

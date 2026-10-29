@@ -9,6 +9,8 @@ pub mod beobachter;
 pub mod bruecke;
 pub mod fenster;
 pub mod http;
+pub mod lokal;
+pub mod runner_befehle;
 pub mod tray;
 
 use crate::zustand::{sperre, Huelle};
@@ -38,6 +40,8 @@ pub struct AgentZustand {
     pub laeufe: AtomicUsize,
     /// Was die Chat-Seite zuletzt gemeldet hat: Kopfzustand (`bereit`, `arbeitet`, …) und ob ein Zug läuft.
     pub kopf: Mutex<(String, bool)>,
+    /// Der lokale Runner (Fremdprogramm als Kindprozess), falls eingerichtet und gestartet.
+    pub lokal: lokal::Lokal,
 }
 
 impl AgentZustand {
@@ -50,7 +54,7 @@ impl AgentZustand {
         if let Some(z) = sperre(&self.ziel).clone() {
             return Ok(z);
         }
-        let z = ziel_aufloesen(h)?;
+        let z = ziel_aufloesen(h, self)?;
         *sperre(&self.ziel) = Some(z.clone());
         Ok(z)
     }
@@ -65,12 +69,23 @@ impl AgentZustand {
     }
 }
 
-/// Löst Runner-Adresse und Token aus den Einstellungen auf. Fehlende Adresse und fehlendes Token sind Katalogfehler.
-pub fn ziel_aufloesen(h: &Huelle) -> Result<Ziel, Fehler> {
-    let e = sperre(&h.einstellungen).agent.clone();
-    let roh = e.runner_adresse.as_deref().unwrap_or("");
-    let a = adresse::normalisiere(roh)?;
-    Ok(Ziel { basis: a.basis, token: token_aufloesen(h, &e.runner_token)? })
+/// Löst den aktiven Runner auf: bei einem entfernten Adresse und Token aus Einstellungen und Tresor, beim lokalen Adresse und Token des
+/// laufenden Kindprozesses (nur im Arbeitsspeicher). Fehlende Adresse, fehlendes Token, nicht laufender lokaler Runner sind Katalogfehler.
+/// Steht in den Einstellungen nur der bisherige einzelne Runner, gilt er als erster Eintrag der Liste.
+pub fn ziel_aufloesen(h: &Huelle, a: &AgentZustand) -> Result<Ziel, Fehler> {
+    let mut e = sperre(&h.einstellungen).agent.clone();
+    e.runner_uebernehmen();
+    let r = e.aktiver().ok_or(Fehler::RunnerNichtEingerichtet)?.clone();
+    match r.art {
+        shell_core::agent::runner::Art::Lokal => {
+            let (basis, token) = a.lokal.ziel().ok_or_else(|| Fehler::LokalerRunnerStartetNicht { grund: "der lokale Runner läuft nicht".into() })?;
+            Ok(Ziel { basis, token })
+        }
+        shell_core::agent::runner::Art::Entfernt => {
+            let n = adresse::normalisiere(r.adresse.as_deref().unwrap_or(""))?;
+            Ok(Ziel { basis: n.basis, token: token_aufloesen(h, &r.token)? })
+        }
+    }
 }
 
 /// Token aus dem Verweis `{tresor:NAME}`; ein leerer Verweis heißt „kein Token“ (Runner auf dem eigenen Rechner ohne Schutz).
@@ -109,10 +124,44 @@ mod tests {
         (d, h)
     }
 
+    fn z(h: &Huelle) -> Result<Ziel, Fehler> {
+        ziel_aufloesen(h, &AgentZustand::neu())
+    }
+
     #[test]
     fn ohne_adresse_ist_der_runner_nicht_eingerichtet() {
         let (_d, h) = huelle(Arc::new(SpeicherTresor::default()));
-        assert_eq!(ziel_aufloesen(&h).unwrap_err().code(), "RUNNER_NICHT_EINGERICHTET");
+        assert_eq!(z(&h).unwrap_err().code(), "RUNNER_NICHT_EINGERICHTET");
+    }
+
+    #[test]
+    fn mehrere_runner_der_aktive_gilt_und_jeder_hat_sein_eigenes_token() {
+        use shell_core::agent::runner::{token_verweis, RunnerEintrag};
+        let t = Arc::new(SpeicherTresor::default());
+        let (_d, h) = huelle(t.clone());
+        t.schreiben("runner-token", "erstes-token-0123456789").unwrap();
+        t.schreiben("runner-zweiter", "zweites-token-0123456789").unwrap();
+        {
+            let mut e = sperre(&h.einstellungen);
+            e.agent.runner_adresse = Some("http://127.0.0.1:1".into());
+            e.agent.runner_uebernehmen();
+            e.agent.runner_setzen(RunnerEintrag { id: "zweiter".into(), name: "Zweiter".into(), adresse: Some("http://127.0.0.1:2".into()), token: token_verweis("zweiter"), ..Default::default() });
+        }
+        let ziel = |h: &Huelle| z(h).map(|z| (z.basis, z.token)).unwrap();
+        assert_eq!(ziel(&h), ("http://127.0.0.1:1".to_string(), "erstes-token-0123456789".to_string()), "der übernommene erste Runner behält sein Token");
+        sperre(&h.einstellungen).agent.aktiv_setzen("zweiter").unwrap();
+        assert_eq!(ziel(&h), ("http://127.0.0.1:2".to_string(), "zweites-token-0123456789".to_string()));
+    }
+
+    #[test]
+    fn lokaler_runner_ohne_laufendes_programm_ist_ein_katalogfehler() {
+        use shell_core::agent::runner::RunnerEintrag;
+        let (_d, h) = huelle(Arc::new(SpeicherTresor::default()));
+        {
+            let mut e = sperre(&h.einstellungen);
+            e.agent.runner_setzen(RunnerEintrag::lokal());
+        }
+        assert_eq!(z(&h).unwrap_err().code(), "LOKALER_RUNNER_STARTET_NICHT");
     }
 
     #[test]
@@ -120,9 +169,9 @@ mod tests {
         let t = Arc::new(SpeicherTresor::default());
         let (_d, h) = huelle(t.clone());
         sperre(&h.einstellungen).agent.runner_adresse = Some("http://127.0.0.1:18438".into());
-        assert_eq!(ziel_aufloesen(&h).unwrap_err().code(), "TOKEN_FEHLT");
+        assert_eq!(ziel_aufloesen(&h, &AgentZustand::neu()).unwrap_err().code(), "TOKEN_FEHLT");
         t.schreiben("runner-token", "test-token-0123456789").unwrap();
-        let z = ziel_aufloesen(&h).unwrap();
+        let z = ziel_aufloesen(&h, &AgentZustand::neu()).unwrap();
         assert_eq!((z.basis.as_str(), z.token.as_str()), ("http://127.0.0.1:18438", "test-token-0123456789"));
     }
 
@@ -134,7 +183,7 @@ mod tests {
             e.agent.runner_adresse = Some("localhost:18438".into());
             e.agent.runner_token = String::new();
         }
-        let z = ziel_aufloesen(&h).unwrap(); // der Tresor wird gar nicht berührt
+        let z = ziel_aufloesen(&h, &AgentZustand::neu()).unwrap(); // der Tresor wird gar nicht berührt
         assert_eq!((z.basis.as_str(), z.token.as_str()), ("http://localhost:18438", ""));
     }
 
@@ -142,7 +191,7 @@ mod tests {
     fn tresor_ausfall_bleibt_ein_tresorfehler() {
         let (_d, h) = huelle(Arc::new(KeinTresor("Dienst läuft nicht".into())));
         sperre(&h.einstellungen).agent.runner_adresse = Some("http://127.0.0.1:1".into());
-        assert_eq!(ziel_aufloesen(&h).unwrap_err().code(), "TRESOR_NICHT_VERFUEGBAR");
+        assert_eq!(ziel_aufloesen(&h, &AgentZustand::neu()).unwrap_err().code(), "TRESOR_NICHT_VERFUEGBAR");
     }
 
     #[test]

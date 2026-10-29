@@ -24,8 +24,13 @@
     <section id="erfolg" class="erfolg" hidden aria-live="polite"></section>
 
     <section id="agent" hidden>
-      <h2>Runner-Verbindung</h2>
-      <p class="leise">Der Runner läuft auf einem anderen Rechner (eigenes Netz oder Tunnel). Die Anwendung bringt keinen mit. Das Token liegt im Tresor des Systems, nie in einer Datei.</p>
+      <h2>Runner</h2>
+      <p class="leise">Ein entfernter Runner läuft auf einem anderen Rechner (eigenes Netz oder Tunnel). Die Anwendung bringt keinen mit. Das Token liegt im Tresor des Systems, nie in einer Datei. Umschalten geht im Chat-Fenster oben in der Seitenleiste.</p>
+      <ul id="r-liste" class="r-liste" aria-label="Runner"></ul>
+      <h3 id="r-form-titel">Runner hinzufügen</h3>
+      <div class="zeile">
+        <input id="r-name" type="text" aria-label="Name des Runners" placeholder="Name (leer = Rechnername)" maxlength="60" autocomplete="off">
+      </div>
       <div class="zeile">
         <input id="a-adresse" type="text" aria-label="Adresse des Runners" placeholder="Adresse, z. B. rechner:18438 oder https://runner.example.org" autocomplete="off">
       </div>
@@ -36,10 +41,26 @@
       <div class="zeile">
         <button id="a-speichern" type="button" class="haupt">Speichern</button>
         <button id="a-pruefen" type="button">Verbindung prüfen</button>
+        <button id="a-neu" type="button" hidden>Neuer Runner</button>
         <button id="a-chat" type="button">Chat öffnen</button>
         <button id="a-alt" type="button" hidden>Aus der bisherigen Agent-App übernehmen</button>
       </div>
       <p id="a-text" class="leise"></p>
+
+      <h3>Lokaler Runner (optional)</h3>
+      <p class="leise">Auf diesem Rechner kann die Anwendung ein Programm als Runner starten und beaufsichtigen. Sie bringt keines mit: hier steht der absolute Pfad eines Programms, das den Vertrag in der README erfüllt. Port und Token vergibt die Anwendung bei jedem Start neu.</p>
+      <div class="zeile">
+        <input id="l-programm" type="text" aria-label="Programm des lokalen Runners" placeholder="Absoluter Pfad des Programms (leer = kein lokaler Runner)" autocomplete="off">
+      </div>
+      <div class="zeile">
+        <input id="l-args" type="text" aria-label="Argumente des lokalen Runners" placeholder="Argumente, durch Leerzeichen getrennt; {port} und {ordner} werden eingesetzt" autocomplete="off">
+      </div>
+      <div class="zeile">
+        <button id="l-speichern" type="button" class="haupt">Speichern</button>
+        <button id="l-starten" type="button">Starten</button>
+        <button id="l-stoppen" type="button">Stoppen</button>
+      </div>
+      <p id="l-text" class="leise"></p>
     </section>
 
     <section id="seite">
@@ -111,6 +132,7 @@
       <span id="fuss"></span>
     </footer>
   </main>
+  <script src="agent-einstellungen.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

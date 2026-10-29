@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ordner-merken"
+description = "Enables the ordner_merken command without any pre-configured scope."
+commands.allow = ["ordner_merken"]
+
+[[permission]]
+identifier = "deny-ordner-merken"
+description = "Denies the ordner_merken command without any pre-configured scope."
+commands.deny = ["ordner_merken"]

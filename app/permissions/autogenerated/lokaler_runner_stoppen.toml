@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lokaler-runner-stoppen"
+description = "Enables the lokaler_runner_stoppen command without any pre-configured scope."
+commands.allow = ["lokaler_runner_stoppen"]
+
+[[permission]]
+identifier = "deny-lokaler-runner-stoppen"
+description = "Denies the lokaler_runner_stoppen command without any pre-configured scope."
+commands.deny = ["lokaler_runner_stoppen"]

@@ -50,7 +50,7 @@ pub fn chat_oeffnen(app: &AppHandle) -> tauri::Result<()> {
 
 /// Was beim Start zuerst zu sehen ist: das Chat-Fenster, sobald ein Runner eingetragen ist; sonst die Einstellungen mit der Runner-Verbindung.
 pub fn start_fenster(app: &AppHandle, h: &Arc<Huelle>) {
-    let eingerichtet = sperre(&h.einstellungen).agent.runner_adresse.as_deref().is_some_and(|a| !a.trim().is_empty());
+    let eingerichtet = sperre(&h.einstellungen).agent.eingerichtet();
     let ergebnis = if eingerichtet { chat_oeffnen(app) } else { huelle_fenster::haupt(app, true) };
     if let Err(e) = ergebnis {
         eprintln!("Fenster lässt sich nicht öffnen: {e}");

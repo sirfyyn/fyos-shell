@@ -249,3 +249,127 @@ dom('Write-Karte: nur hinzugefügte Zeilen; fehlgeschlagene Edit-Aufrufe zeigen 
   assert.equal(diffs[0].querySelectorAll('tr.add').length, 2);
   assert.equal(w.document.querySelectorAll('.karte')[1].dataset.zustand, 'fehler');
 });
+
+// --- Ordner je Sitzung und Ordnerwahl ---
+test('Sitzungsliste: der gewählte Ordner (agent.cwd) geht vor dem Arbeitsbereich', () => {
+  const S = sitzungen();
+  const l = S.sitzungsListe(
+    [{ id: 1, titel: 'A', art: 'mensch', erstellt: 5, arbeitsbereich: 'standard', agent: { cwd: '/probe/gewaehlt/projekt-x' } }, { id: 2, titel: 'B', art: 'mensch', erstellt: 4, arbeitsbereich: 'standard' }],
+    { standard: { titel: 'Standard', pfad: '/probe/standard' } },
+    S.createAktivitaet(),
+    {}
+  );
+  assert.equal(l.sitzungen[0].ordner, 'projekt-x');
+  assert.equal(l.sitzungen[0].pfad, '/probe/gewaehlt/projekt-x');
+  assert.equal(l.sitzungen[1].ordner, 'standard');
+});
+
+const ORDNER_HTML = '<!doctype html><body><fieldset id="k" hidden><p id="g"></p><div id="z" hidden></div><button id="d" hidden></button><ul id="b"></ul><p id="f" hidden></p></fieldset></body>';
+
+function ordnerWahl(w, transport, extra) {
+  const d = w.document;
+  const gemeldet = [];
+  const wahl = w.FyosPrototyp.createOrdnerWahl(
+    { kasten: d.getElementById('k'), gewaehlt: d.getElementById('g'), zuletzt: d.getElementById('z'), dialog: d.getElementById('d'), baum: d.getElementById('b'), fehler: d.getElementById('f') },
+    { transport, beiAenderung: (p) => gemeldet.push(p), ...extra }
+  );
+  return { wahl, gemeldet, d };
+}
+
+const warte = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+
+dom('Ordnerwahl entfernt: Wurzeln, Aufklappen, Wählen, Pfad mit dem Trenner des Runners', async () => {
+  const w = fenster(['ordner.js'], ORDNER_HTML);
+  const aufrufe = [];
+  const transport = {
+    api: async (m, p) => {
+      aufrufe.push(p);
+      if (p === '/api/ordner') return { wurzeln: ['/probe/w1', '/probe/w2'], eintraege: [], erlaubt: false };
+      if (p === '/api/ordner?pfad=' + encodeURIComponent('/probe/w1')) return { pfad: '/probe/w1', eintraege: [{ name: 'a', ordner: true }, { name: 'b', ordner: true }], erlaubt: true, abgeschnitten: true };
+      throw new Error('unerwartet ' + p);
+    },
+  };
+  const { wahl, gemeldet, d } = ordnerWahl(w, transport);
+  assert.equal(await wahl.starte('entfernt'), true);
+  assert.equal(d.getElementById('k').hidden, false);
+  assert.equal(d.getElementById('d').hidden, true, 'kein Systemdialog bei entfernten Runnern');
+  const wurzeln = [...d.querySelectorAll('#b > li > .baum-zeile .baum-name')].map((b) => b.textContent);
+  assert.deepEqual(wurzeln, ['/probe/w1', '/probe/w2']);
+  d.querySelector('#b > li .baum-auf').click();
+  await warte();
+  const kinder = [...d.querySelectorAll('#b > li:first-child ul .baum-name')].map((b) => b.dataset.pfad);
+  assert.deepEqual(kinder, ['/probe/w1/a', '/probe/w1/b']);
+  assert.match(d.querySelector('#b > li:first-child ul .baum-leer').textContent, /gekürzt/);
+  assert.equal(d.querySelector('#b > li').getAttribute('aria-expanded'), 'true');
+  d.querySelector('#b > li:first-child ul .baum-name').click();
+  assert.equal(wahl.wert(), '/probe/w1/a');
+  assert.equal(d.querySelector('.baum-name[data-pfad="/probe/w1/a"]').getAttribute('aria-selected'), 'true');
+  assert.match(d.getElementById('g').textContent, /\/probe\/w1\/a/);
+  assert.equal(gemeldet.at(-1), '/probe/w1/a');
+  // zuklappen lädt nicht neu
+  d.querySelector('#b > li .baum-auf').click();
+  assert.equal(d.querySelector('#b > li').getAttribute('aria-expanded'), 'false');
+  assert.equal(aufrufe.filter((p) => p.includes('w1')).length, 1);
+  assert.equal(w.FyosPrototyp.ordnerUnter('C:\\Probe', 'x'), 'C:\\Probe\\x');
+  assert.equal(w.FyosPrototyp.ordnerUnter('/', 'x'), '/x');
+});
+
+dom('Ordnerwahl entfernt: 403 und 404 erscheinen als klare Meldung, Namen nur als Text', async () => {
+  const w = fenster(['ordner.js'], ORDNER_HTML);
+  const transport = {
+    api: async (m, p) => {
+      if (p === '/api/ordner') return { wurzeln: ['/probe/w'] };
+      throw Object.assign(new Error('Dieser Ordner liegt außerhalb der Ordner, die der Runner freigibt. Einen Ordner unterhalb wählen.'), { code: 'ORDNER_AUSSERHALB' });
+    },
+  };
+  const { wahl, d } = ordnerWahl(w, transport);
+  await wahl.starte('entfernt');
+  d.querySelector('.baum-auf').click();
+  await warte();
+  assert.equal(d.getElementById('f').hidden, false);
+  assert.match(d.getElementById('f').textContent, /außerhalb/);
+  assert.equal(d.querySelector('#b > li').getAttribute('aria-expanded'), 'false', 'nach dem Fehler bleibt der Knoten zu');
+  assert.equal(wahl.wert(), '');
+});
+
+dom('Ordnerwahl: ein Runner ohne Ordnerliste lässt die Arbeitsbereiche gelten', async () => {
+  const w = fenster(['ordner.js'], ORDNER_HTML);
+  const transport = { api: async () => { throw new Error('HTTP 404'); } };
+  const { wahl, d } = ordnerWahl(w, transport);
+  assert.equal(await wahl.starte('entfernt'), false);
+  assert.equal(d.getElementById('k').hidden, true);
+});
+
+dom('Ordnerwahl lokal: Systemdialog, Abbruch ändert nichts, zuletzt benutzte Ordner', async () => {
+  const w = fenster(['ordner.js'], ORDNER_HTML);
+  let antwort = { pfad: '/probe/gewaehlt', name: 'gewaehlt' };
+  const { wahl, d } = ordnerWahl(w, { api: async () => { throw new Error('nicht für lokal'); } }, {
+    waehleLokal: async () => antwort,
+    zuletztLaden: async () => [{ pfad: '/probe/a', name: 'a' }, { pfad: '/probe/b', name: 'b' }],
+  });
+  assert.equal(await wahl.starte('lokal'), true);
+  assert.equal(d.getElementById('d').hidden, false);
+  assert.equal(d.getElementById('b').hidden, true);
+  assert.deepEqual([...d.querySelectorAll('.zuletzt-knopf')].map((b) => b.title), ['/probe/a', '/probe/b']);
+  d.getElementById('d').click();
+  await warte();
+  assert.equal(wahl.wert(), '/probe/gewaehlt');
+  antwort = null; // Nutzer bricht ab
+  d.getElementById('d').click();
+  await warte();
+  assert.equal(wahl.wert(), '/probe/gewaehlt');
+  d.querySelectorAll('.zuletzt-knopf')[1].click();
+  assert.equal(wahl.wert(), '/probe/b');
+  // Fehler des Dialogs werden angezeigt
+  const f = ordnerWahl(fenster(['ordner.js'], ORDNER_HTML), {}, { waehleLokal: async () => { throw new Error('Der lokale Runner läuft nicht.'); } });
+  await f.wahl.starte('lokal');
+  f.d.getElementById('d').click();
+  await warte();
+  assert.match(f.d.getElementById('f').textContent, /läuft nicht/);
+});
+
+test('Brücke: die Seite öffnet weder fremde Wege noch den reservierten Weg zum Erlauben von Ordnern (Quelltext-Prüfung der Seite)', () => {
+  const quelle = lies('chat.js') + lies('ordner.js') + lies('echt.js');
+  assert.ok(!quelle.includes('ordner/erlauben'), 'nur Rust meldet dem lokalen Runner einen gewählten Ordner');
+  assert.ok(!/plugin:dialog|plugin-dialog|__TAURI_PLUGIN/.test(quelle), 'die Seite hat keinen Zugriff auf das Dialog-Plugin');
+});

@@ -107,6 +107,18 @@ pub enum Fehler {
     RunnerFehler { status: u16, text: Option<String> },
     /// Profil Agent: das eingegebene Token ist zu kurz oder enthält Leerraum.
     TokenUnbrauchbar,
+    /// Profil Agent: ein Runner mit dieser Kennung steht nicht in der Liste.
+    RunnerUnbekannt { id: String },
+    /// Profil Agent: der Ordner liegt außerhalb der Wurzeln, die der Runner freigibt (403 `ausserhalb`).
+    OrdnerAusserhalb,
+    /// Profil Agent: der Ordner ist auf dem Runner nicht vorhanden (404 bei `/api/ordner`).
+    OrdnerNichtGefunden,
+    /// Profil Agent: der Ordner ist als Arbeitsordner unbrauchbar (leer, Steuerzeichen, zu lang, kein absoluter Pfad).
+    OrdnerUnbrauchbar { grund: String },
+    /// Profil Agent: für den lokalen Runner ist noch kein Programm eingestellt.
+    LokalerRunnerNichtEingerichtet,
+    /// Profil Agent: der lokale Runner startet nicht oder wird nicht gesund.
+    LokalerRunnerStartetNicht { grund: String },
     /// Das System lässt Mitteilungen dieser Anwendung nicht zu (Berechtigung verweigert oder nicht erteilt).
     MitteilungenNichtErlaubt { grund: String },
     /// Eine Mitteilung der Seite hat die Prüfung nicht bestanden (Absender, Länge, leerer Titel).
@@ -172,6 +184,12 @@ impl Fehler {
             Fehler::RunnerAntwortUnlesbar { .. } => "RUNNER_ANTWORT_UNLESBAR",
             Fehler::RunnerFehler { .. } => "RUNNER_FEHLER",
             Fehler::TokenUnbrauchbar => "TOKEN_UNBRAUCHBAR",
+            Fehler::RunnerUnbekannt { .. } => "RUNNER_UNBEKANNT",
+            Fehler::OrdnerAusserhalb => "ORDNER_AUSSERHALB",
+            Fehler::OrdnerNichtGefunden => "ORDNER_NICHT_GEFUNDEN",
+            Fehler::OrdnerUnbrauchbar { .. } => "ORDNER_UNBRAUCHBAR",
+            Fehler::LokalerRunnerNichtEingerichtet => "LOKALER_RUNNER_NICHT_EINGERICHTET",
+            Fehler::LokalerRunnerStartetNicht { .. } => "LOKALER_RUNNER_STARTET_NICHT",
             Fehler::MitteilungenNichtErlaubt { .. } => "MITTEILUNGEN_NICHT_ERLAUBT",
             Fehler::MitteilungAbgelehnt { .. } => "MITTEILUNG_ABGELEHNT",
             Fehler::MitteilungFehlgeschlagen { .. } => "MITTEILUNG_FEHLGESCHLAGEN",
@@ -403,6 +421,36 @@ impl Fehler {
                     None => format!("HTTP {status}"),
                 }),
             ),
+            Fehler::RunnerUnbekannt { id } => (
+                "Dieser Runner steht nicht in der Liste (vielleicht wurde er gerade entfernt).".into(),
+                "Einen Runner aus der Liste wählen oder in den Einstellungen einen neuen eintragen.".into(),
+                Some(kurz(id)),
+            ),
+            Fehler::OrdnerAusserhalb => (
+                "Dieser Ordner liegt außerhalb der Ordner, die der Runner freigibt.".into(),
+                "Einen Ordner unterhalb der angezeigten Wurzeln wählen. Wer weitere Wurzeln braucht, trägt sie in der Konfiguration des Runners ein.".into(),
+                None,
+            ),
+            Fehler::OrdnerNichtGefunden => (
+                "Dieser Ordner ist auf dem Runner nicht vorhanden.".into(),
+                "Den Ordner in der Liste neu wählen; vielleicht wurde er umbenannt oder gelöscht.".into(),
+                None,
+            ),
+            Fehler::OrdnerUnbrauchbar { grund } => (
+                "Dieser Ordner kann nicht als Arbeitsordner dienen.".into(),
+                "Einen vorhandenen Ordner mit absolutem Pfad wählen.".into(),
+                Some(kurz(grund)),
+            ),
+            Fehler::LokalerRunnerNichtEingerichtet => (
+                "Für den lokalen Runner ist kein Programm eingestellt. Die Anwendung bringt keinen Runner mit.".into(),
+                "In den Einstellungen unter „Lokaler Runner“ den absoluten Pfad des Programms eintragen (es muss den dokumentierten Vertrag erfüllen) und speichern.".into(),
+                None,
+            ),
+            Fehler::LokalerRunnerStartetNicht { grund } => (
+                "Der lokale Runner startet nicht oder antwortet nicht auf /api/health.".into(),
+                "Pfad und Argumente in den Einstellungen unter „Lokaler Runner“ prüfen und das Programm in einem Terminal einmal von Hand starten. „Bericht speichern“ enthält die letzten Zeilen seiner Ausgabe.".into(),
+                Some(kurz(grund)),
+            ),
             Fehler::MitteilungenNichtErlaubt { grund } => (
                 "Das System zeigt keine Mitteilungen dieser Anwendung an: Die Berechtigung fehlt oder wurde verweigert. Im Fenster der Anwendung erscheinen Meldungen weiterhin.".into(),
                 "macOS: Systemeinstellungen > Mitteilungen > FYOS OS > Mitteilungen erlauben. Windows: Einstellungen > System > Benachrichtigungen > FYOS OS. Linux: den Mitteilungsdienst der Oberfläche prüfen und „Nicht stören“ ausschalten. Danach in FYOS OS unter Einstellungen > Meldungen > Systemmitteilungen erneut einschalten.".into(),
@@ -498,6 +546,12 @@ mod tests {
             Fehler::RunnerAntwortUnlesbar { grund: s("g") },
             Fehler::RunnerFehler { status: 500, text: None },
             Fehler::TokenUnbrauchbar,
+            Fehler::RunnerUnbekannt { id: s("i") },
+            Fehler::OrdnerAusserhalb,
+            Fehler::OrdnerNichtGefunden,
+            Fehler::OrdnerUnbrauchbar { grund: s("g") },
+            Fehler::LokalerRunnerNichtEingerichtet,
+            Fehler::LokalerRunnerStartetNicht { grund: s("g") },
             Fehler::MitteilungenNichtErlaubt { grund: s("g") },
             Fehler::MitteilungAbgelehnt { grund: s("g") },
             Fehler::MitteilungFehlgeschlagen { grund: s("g") },

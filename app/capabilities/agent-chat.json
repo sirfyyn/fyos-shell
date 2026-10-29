@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "agent-chat",
-  "description": "Profil agent: Das Chat-Fenster (lokale Seite ui/agent/chat.html) darf nur die Brücke zum Runner (Anfrage, Strom), Ruhe, Zustand und den Fehlerbericht. Adresse und Token des Runners bleiben in Rust; die Seite bekommt beides nie.",
+  "description": "Profil agent: Das Chat-Fenster (lokale Seite ui/agent/chat.html) darf nur die Brücke zum Runner (Anfrage, Strom), Ruhe, Zustand, den Fehlerbericht, die Runner-Liste samt Wechsel und die Ordnerwahl (Systemdialog nur über den eigenen Befehl). Adresse und Token des Runners bleiben in Rust; die Seite bekommt beides nie.",
   "windows": ["chat"],
   "local": true,
   "permissions": [
@@ -12,6 +12,11 @@
     "allow-ziel-info",
     "allow-ruhe-setzen",
     "allow-zustand-melden",
-    "allow-bericht-speichern"
+    "allow-bericht-speichern",
+    "allow-runner-liste",
+    "allow-runner-wechseln",
+    "allow-ordner-waehlen",
+    "allow-ordner-zuletzt",
+    "allow-ordner-merken"
   ]
 }

@@ -4,7 +4,7 @@
 //! anderen Host lenken. Das Ziel ist immer genau die eingestellte Adresse.
 
 use serde_json::{json, Value};
-use shell_core::agent::bruecke::{fehler_aus_status, fehler_aus_transport};
+use shell_core::agent::bruecke::{fehler_aus_status, fehler_aus_status_fuer, fehler_aus_transport};
 use shell_core::Fehler;
 use std::io::Read;
 use std::time::Duration;
@@ -51,7 +51,8 @@ pub fn anfrage(methode: &str, url: &str, token: &str, koerper: Option<&Value>, f
                 return Err(weiterleitung(url, code));
             }
             let text = a.into_string().unwrap_or_default();
-            Err(fehler_aus_status(code, meldung_aus(&text).as_deref()))
+            let pfad = url.find("/api/").map(|i| &url[i..]).unwrap_or("");
+            Err(fehler_aus_status_fuer(pfad, code, meldung_aus(&text).as_deref()))
         }
         Err(ureq::Error::Transport(t)) => Err(fehler_aus_transport(url, &t.to_string())),
     }

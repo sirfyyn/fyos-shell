@@ -94,36 +94,12 @@ $("uebernahme-los").addEventListener("click", async () => {
   if (e.meldung) zeigeMeldung(e.meldung);
 });
 
-// Profil Agent: Runner-Adresse und Token. Das Token geht nur in den Tresor hinein; der Wert kommt nie zurück.
+// Profil Agent: Runner-Liste, entfernte Runner (Token nur in den Tresor) und lokaler Runner: ui/agent-einstellungen.js
+const leise = (befehl, args) => invoke(befehl, args).catch(() => undefined);
 async function agentLaden() {
-  const v = await aufruf("agent_verbindung");
-  if (!v) return;
-  if (document.activeElement !== $("a-adresse")) $("a-adresse").value = v.adresse || "";
-  $("a-hinweis").textContent = v.unsicher ? "Hinweis: http im Heimnetz sendet das Token unverschlüsselt. Für fremde Netze ist https nötig." : "";
-  $("a-alt").hidden = !(v.alt && !v.adresse);
-  if (v.alt) $("a-alt").textContent = `Aus der bisherigen Agent-App übernehmen (${v.alt.name})`;
-  if (!v.adresse) $("a-text").textContent = "Noch kein Runner eingetragen.";
+  await window.FyosAgentEinstellungen.laden(aufruf, letzteInfo);
 }
-
-$("a-speichern").addEventListener("click", async () => {
-  const v = await aufruf("agent_verbindung_speichern", { adresse: $("a-adresse").value, token: $("a-token").value || null });
-  if (!v) return;
-  $("a-token").value = "";
-  $("a-text").textContent = "Gespeichert. Das Token liegt im Tresor.";
-  await agentLaden();
-});
-$("a-pruefen").addEventListener("click", async () => {
-  $("a-text").textContent = "Prüfe …";
-  const r = await aufruf("agent_verbindung_pruefen", { adresse: $("a-adresse").value || null, token: $("a-token").value || null });
-  $("a-text").textContent = r ? `Verbindung steht${r.agent ? " (" + r.agent + ")" : ""}${r.geraet ? " auf " + r.geraet : ""}.` : "Keine Verbindung (siehe oben).";
-});
-$("a-chat").addEventListener("click", () => aufruf("agent_chat_oeffnen"));
-$("a-alt").addEventListener("click", async () => {
-  const r = await aufruf("agent_alt_uebernehmen");
-  if (!r) return;
-  $("a-text").textContent = r.token_uebernommen ? `Übernommen: ${r.name}. Adresse und Token der bisherigen App sind jetzt eingetragen (die alten Einträge bleiben).` : `Adresse von ${r.name} übernommen, aber in der bisherigen App war kein Token gespeichert: bitte das Token eintragen.`;
-  await agentLaden();
-});
+window.FyosAgentEinstellungen.start(aufruf, () => letzteInfo, leise);
 
 async function laden() {
   const i = await aufruf("info");

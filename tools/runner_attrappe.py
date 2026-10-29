@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Runner-Attrappe für die Prüfung des Profils agent (nur Standardbibliothek, nur Loopback, kein echter Runner, keine Daten).
 
-  runner_attrappe.py [--port N] [--log DATEI] [--token T] [--tempo S]
+  runner_attrappe.py [--port N] [--log DATEI] [--token T] [--tempo S] [--ohne-ordner]
 
 Spricht den Teil der Runner-Schnittstelle, den die Chat-Seite und die Seitenleiste brauchen:
   GET  /api/health, /api/konfiguration, /api/modelle, /api/freigaben, /api/laeufe
   GET  /api/gespraeche                    Sitzungsliste (Sitzung 1 Hauptgespräch, Sitzung 2 in einem anderen Arbeitsbereich)
   POST /api/gespraeche                    neue Sitzung {titel, arbeitsbereich, modell} → 201 {gespraech: {id, meta, agent}}
+  GET  /api/ordner?pfad=…                 Ordnerwahl: ohne pfad die Wurzeln, mit pfad die Unterordner (erfundener Baum unter /probe/ordner-a und -b)
+                                          POST /api/gespraeche nimmt zusätzlich `ordner`; Gesprächsliste und Gespräch tragen ihn in `ordner` und `agent.cwd`
   GET  /api/gespraech/<id>                Meta und Arbeitsordner der Sitzung (agent.cwd)
   GET  /api/gespraech/<id>/ansicht?voll=1 Verlauf der Sitzung
   GET  /api/gespraech/<id>/ereignisse     Ereignisstrom (SSE) der Sitzung: erst ein Snapshot, dann Ereignisse, alle 5 s ein Herzschlag-Kommentar
@@ -21,6 +23,7 @@ mit `auth: true/false` (kam das richtige Token an?), aber nie mit dem Token selb
 """
 import argparse
 import json
+import posixpath
 import queue
 import re
 import signal
@@ -28,7 +31,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 SZENARIEN = {
     "streaming": "Antwort in Teilen (Streaming)",
@@ -47,14 +50,77 @@ BEREICHE = {
 }
 MODELLE = [{"id": "probe-modell", "name": "Probe-Modell", "provider": "probe", "max": False}]
 
+# "Ordner je Sitzung": ein erfundener Ordnerbaum im Speicher (kein Dateisystem). Wörterbuch = Ordner, None = Datei.
+# Dieselben zwei Wege wie der echte Runner (GET /api/ordner, POST /api/gespraeche mit `ordner`), gleiche Fehlerbilder.
+ORDNER_WURZELN = ["/probe/ordner-a", "/probe/ordner-b"]
+ORDNER_BAUM = {
+    "probe": {
+        "ordner-a": {
+            "projekt-eins": {"src": {}, "docs": {}, "README.md": None},
+            "projekt-zwei": {},
+            "Notizen": {},
+            ".versteckt": {},
+            "liesmich.txt": None,
+        },
+        "ordner-b": {"viele": {f"d{i:04d}": {} for i in range(510)}},
+        "draussen": {"geheim": {}},
+    }
+}
+ORDNER_MAX = 500
+
+
+class OrdnerFehler(Exception):
+    def __init__(self, status, code, meldung):
+        super().__init__(meldung)
+        self.status, self.code, self.meldung = status, code, meldung
+
+
+def ordner_pruefen(wurzeln, roh):
+    """Wie src/ordner.js des Runners: gibt den normalisierten Pfad zurück oder wirft OrdnerFehler (400/403/404)."""
+    if not isinstance(roh, str) or roh == "":
+        raise OrdnerFehler(400, "ungueltig", "Pfad fehlt oder ist kein Text")
+    if "\0" in roh:
+        raise OrdnerFehler(400, "ungueltig", "Pfad enthält ein Nullbyte")
+    if not roh.startswith("/"):
+        raise OrdnerFehler(400, "ungueltig", "Pfad muss absolut sein")
+    if not wurzeln:
+        raise OrdnerFehler(403, "ausserhalb", "Ordnerwahl nicht freigegeben (keine erlaubten Wurzeln eingerichtet)")
+    if ".." in roh.split("/"):
+        raise OrdnerFehler(403, "ausserhalb", "Pfade mit „..“ sind nicht erlaubt")
+    n = posixpath.normpath(roh)
+    if n.startswith("//"):
+        n = "/" + n.lstrip("/")
+    if not any(n == w or n.startswith(w + "/") for w in wurzeln):
+        raise OrdnerFehler(403, "ausserhalb", "Pfad liegt außerhalb der erlaubten Wurzeln")
+    knoten = ORDNER_BAUM
+    for teil in [t for t in n.split("/") if t]:
+        if not isinstance(knoten, dict) or teil not in knoten:
+            raise OrdnerFehler(404, "nicht_gefunden", "Ordner nicht gefunden")
+        knoten = knoten[teil]
+    if not isinstance(knoten, dict):
+        raise OrdnerFehler(400, "kein_ordner", "Das ist kein Ordner")
+    return n, knoten
+
+
+def ordner_auflisten(wurzeln, pfad):
+    if not pfad:
+        return {"wurzeln": wurzeln, "pfad": None, "eintraege": [], "erlaubt": bool(wurzeln)}
+    n, knoten = ordner_pruefen(wurzeln, pfad)
+    namen = sorted((k for k, v in knoten.items() if isinstance(v, dict) and not k.startswith(".")), key=lambda s: (s.lower(), s))
+    antwort = {"wurzeln": wurzeln, "pfad": n, "eintraege": [{"name": k, "ordner": True} for k in namen[:ORDNER_MAX]], "erlaubt": True}
+    if len(namen) > ORDNER_MAX:
+        antwort["abgeschnitten"] = True
+    return antwort
+
 ANSI_TEXT = "\x1b[1mBau\x1b[0m gestartet\n\x1b[32mgruen ok\x1b[0m und \x1b[31mrot Fehler\x1b[0m\nFortschritt 10%\rFortschritt 100%\n"
 
 
 class Sitzung:
     """Eine Sitzung der Attrappe: eigener Verlauf, eigener Strom, eigene Szenarien."""
 
-    def __init__(self, z, sid, titel, art, bereich, erstellt):
+    def __init__(self, z, sid, titel, art, bereich, erstellt, ordner=None):
         self.z = z
+        self.ordner = ordner
         self.id = sid
         self.titel = titel
         self.art = art
@@ -67,11 +133,14 @@ class Sitzung:
         self.abbruch = threading.Event()
         self.zug_sperre = threading.Lock()
 
+    def cwd(self):
+        return self.ordner or BEREICHE[self.bereich]["pfad"]
+
     def liste(self):
-        return {"id": self.id, "art": self.art, "titel": self.titel, "arbeitsbereich": self.bereich, "erstellt": self.erstellt, "modell": None, "archiviert": False}
+        return {"id": self.id, "art": self.art, "titel": self.titel, "arbeitsbereich": self.bereich, "ordner": self.ordner, "agent": {"cwd": self.cwd()}, "erstellt": self.erstellt, "modell": None, "archiviert": False}
 
     def meta(self):
-        return {"id": self.id, "titel": self.titel, "modell": "probe-modell", "arbeitsbereich": self.bereich, "erstellt": self.erstellt, "art": self.art}
+        return {"id": self.id, "titel": self.titel, "modell": "probe-modell", "arbeitsbereich": self.bereich, "ordner": self.ordner, "erstellt": self.erstellt, "art": self.art}
 
     def senden(self, ereignisse):
         with self.z.sperre:
@@ -210,8 +279,9 @@ class Sitzung:
 
 
 class Zustand:
-    def __init__(self, token, tempo, log):
+    def __init__(self, token, tempo, log, ordner_an=True):
         self.token = token
+        self.wurzeln = list(ORDNER_WURZELN) if ordner_an else []
         self.tempo = tempo
         self.log = log
         self.sperre = threading.RLock()
@@ -253,11 +323,11 @@ class Zustand:
             for q, _ in list(self.strom_abonnenten):
                 q.put((art, daten))
 
-    def neue_sitzung(self, titel, bereich):
+    def neue_sitzung(self, titel, bereich, ordner=None):
         with self.sperre:
             sid = self.naechste_id
             self.naechste_id += 1
-            s = Sitzung(self, sid, (titel or "").strip()[:120] or "Neuer Agent", "mensch", bereich if bereich in BEREICHE else "standard", int(time.time() * 1000))
+            s = Sitzung(self, sid, (titel or "").strip()[:120] or "Neuer Agent", "mensch", bereich if bereich in BEREICHE else "standard", int(time.time() * 1000), ordner)
             self.sitzungen[sid] = s
         return s
 
@@ -319,6 +389,12 @@ def handler(z):
                 return self._json(200, {"ok": True, "arbeitsbereiche": BEREICHE, "modelle": MODELLE, "version": 1})
             if p == "/api/modelle":
                 return self._json(200, {"ok": True, "modelle": MODELLE})
+            if p == "/api/ordner":
+                pfad = parse_qs(urlparse(self.path).query).get("pfad", [None])[0]
+                try:
+                    return self._json(200, {"ok": True, **ordner_auflisten(z.wurzeln, pfad)})
+                except OrdnerFehler as f:
+                    return self._json(f.status, {"ok": False, "fehler": f.code, "meldung": f.meldung, "wurzeln": z.wurzeln, "erlaubt": bool(z.wurzeln)})
             if p == "/api/gespraeche":
                 return self._json(200, {"ok": True, "gespraeche": [s.liste() for s in z.sitzungen.values()]})
             if p == "/api/freigaben":
@@ -336,7 +412,7 @@ def handler(z):
                     return self._json(200, {"entries": list(s.eintraege), "meta": s.meta(), "usage": s.snapshot()["usage"]})
                 if m.group(2) == "ereignisse":
                     return self._strom(s)
-                return self._json(200, {"ok": True, "id": s.id, "meta": s.meta(), "agent": {"model": "probe-modell", "cwd": BEREICHE[s.bereich]["pfad"], "tools": ["read", "bash", "edit", "write"]}})
+                return self._json(200, {"ok": True, "id": s.id, "meta": s.meta(), "agent": {"model": "probe-modell", "cwd": s.cwd(), "tools": ["read", "bash", "edit", "write"]}})
             self._json(404, {"fehler": "unbekannt"})
 
         def _sse_kopf(self):
@@ -397,8 +473,16 @@ def handler(z):
             if p == "/api/gespraeche":
                 if k.get("arbeitsbereich") and k["arbeitsbereich"] not in BEREICHE:
                     return self._json(400, {"fehler": f"Unbekannter Arbeitsbereich: {k['arbeitsbereich']}"})
-                s = z.neue_sitzung(k.get("titel"), k.get("arbeitsbereich", "standard"))
-                return self._json(201, {"ok": True, "gespraech": {"id": s.id, "meta": s.meta(), "agent": {"model": "probe-modell", "cwd": BEREICHE[s.bereich]["pfad"], "tools": []}, "usage": None}})
+                ordner = k.get("ordner")
+                if ordner not in (None, ""):
+                    try:
+                        ordner, _ = ordner_pruefen(z.wurzeln, ordner)
+                    except OrdnerFehler as f:
+                        return self._json(400, {"ok": False, "fehler": f"Ordner abgelehnt ({f.code}): {f.meldung}"})
+                else:
+                    ordner = None
+                s = z.neue_sitzung(k.get("titel"), k.get("arbeitsbereich", "standard"), ordner)
+                return self._json(201, {"ok": True, "gespraech": {"id": s.id, "meta": s.meta(), "agent": {"model": "probe-modell", "cwd": s.cwd(), "tools": []}, "usage": None}})
             m = re.fullmatch(r"/api/gespraech/(\d+)/(nachricht|abbrechen)", p)
             if m:
                 s = z.sitzung(m.group(1))
@@ -435,8 +519,9 @@ def main(argv):
     p.add_argument("--log")
     p.add_argument("--token")
     p.add_argument("--tempo", type=float, default=1.0, help="Faktor für die Pausen der Szenarien (Tests: kleiner)")
+    p.add_argument("--ohne-ordner", action="store_true", help="Ordnerwahl aus (keine Wurzeln), wie ein Runner ohne FYOS_RUNNER_ORDNER_ERLAUBT")
     a = p.parse_args(argv)
-    z = Zustand(a.token, a.tempo, a.log)
+    z = Zustand(a.token, a.tempo, a.log, ordner_an=not a.ohne_ordner)
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), handler(z))
     srv.daemon_threads = True
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=srv.shutdown, daemon=True).start())

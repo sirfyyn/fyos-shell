@@ -47,9 +47,29 @@ pub fn wartezeit_ms(versuch: u32) -> u64 {
 /// Katalogfehler zu einem Fehlerstatus des Runners. 401/403: das Token passt nicht; sonst `RUNNER_FEHLER` mit dem Text aus dem Feld `fehler` der Antwort.
 pub fn fehler_aus_status(code: u16, meldung: Option<&str>) -> Fehler {
     match code {
+        // Ordnerliste: „außerhalb der Wurzeln“ ist kein Tokenfehler
+        403 if meldung.map(str::trim) == Some("ausserhalb") => Fehler::OrdnerAusserhalb,
         401 | 403 => Fehler::TokenAbgelehnt { status: code },
         _ => Fehler::RunnerFehler { status: code, text: meldung.map(str::trim).filter(|m| !m.is_empty()).map(str::to_string) },
     }
+}
+
+/// Wie [`fehler_aus_status`], aber mit dem angefragten Weg: ein 404 auf `/api/ordner?pfad=…` heißt „Ordner nicht vorhanden“
+/// (ein 404 auf `/api/ordner` ohne Pfad heißt: der Runner kennt die Ordnerliste nicht und bleibt ein `RUNNER_FEHLER`).
+pub fn fehler_aus_status_fuer(pfad: &str, code: u16, meldung: Option<&str>) -> Fehler {
+    if code == 404 && (pfad.starts_with("/api/ordner?") && pfad.contains("pfad=")) {
+        return Fehler::OrdnerNichtGefunden;
+    }
+    fehler_aus_status(code, meldung)
+}
+
+/// Wege, die nur Rust selbst aufruft (nie die Seite): der Runner erfährt so nur von Ordnern, die der Nutzer im Systemdialog gewählt hat.
+pub fn pfad_reserviert(pfad: &str) -> bool {
+    let ohne_query = pfad.split('?').next().unwrap_or("");
+    let teile: Vec<String> = ohne_query.split('/').filter(|t| !t.is_empty() && *t != ".").map(str::to_ascii_lowercase).collect();
+    let ordner_zweig = teile.len() >= 2 && teile[0] == "api" && teile[1].starts_with("ordner");
+    // auch verschleierte Schreibweisen (doppelte Schrägstriche, Prozentcodes) gelten als reserviert
+    (ordner_zweig && teile.get(2).is_some_and(|t| t == "erlauben")) || (ordner_zweig && ohne_query.contains('%'))
 }
 
 /// Katalogfehler zu einem Netzfehler (Verbindung abgelehnt, Zeitüberschreitung, DNS, TLS).
@@ -126,6 +146,18 @@ mod tests {
         }
         assert!(!strom_pfad_ok("strom", "/api/strom?x=1"));
         assert!(!strom_pfad_ok("sitzung", "/api/gespraech/1/ereignisse"));
+    }
+
+    #[test]
+    fn ordnerliste_fehler_und_reservierte_wege() {
+        assert_eq!(fehler_aus_status(403, Some("ausserhalb")).code(), "ORDNER_AUSSERHALB");
+        assert_eq!(fehler_aus_status(403, Some("Nicht erlaubt")).code(), "TOKEN_ABGELEHNT");
+        assert_eq!(fehler_aus_status_fuer("/api/ordner?pfad=%2Fx", 404, None).code(), "ORDNER_NICHT_GEFUNDEN");
+        assert_eq!(fehler_aus_status_fuer("/api/ordner", 404, None).code(), "RUNNER_FEHLER");
+        assert_eq!(fehler_aus_status_fuer("/api/gespraech/9", 404, None).code(), "RUNNER_FEHLER");
+        assert!(pfad_erlaubt("/api/ordner?pfad=%2Fx") && pfad_erlaubt("/api/ordner/erlauben"));
+        assert!(pfad_reserviert("/api/ordner/erlauben") && pfad_reserviert("/api/ordner/erlauben/?x=1"));
+        assert!(!pfad_reserviert("/api/ordner") && !pfad_reserviert("/api/ordner?pfad=/api/ordner/erlauben"));
     }
 
     #[test]

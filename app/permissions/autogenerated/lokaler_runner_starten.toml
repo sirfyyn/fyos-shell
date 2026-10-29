@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lokaler-runner-starten"
+description = "Enables the lokaler_runner_starten command without any pre-configured scope."
+commands.allow = ["lokaler_runner_starten"]
+
+[[permission]]
+identifier = "deny-lokaler-runner-starten"
+description = "Denies the lokaler_runner_starten command without any pre-configured scope."
+commands.deny = ["lokaler_runner_starten"]

@@ -77,6 +77,8 @@
       .map((g) => {
         const b = (bereiche && bereiche[g.arbeitsbereich]) || null;
         const zeit = Math.max(Number(g.erstellt) || 0, aktiv ? aktiv.zuletzt(g.id) : 0);
+        // Der gewählte Ordner steht in der Liste unter agent.cwd (Runner mit „Ordner je Sitzung“); sonst gilt der Arbeitsbereich
+        const cwd = g.agent && typeof g.agent.cwd === 'string' ? g.agent.cwd : '';
         return {
           id: g.id,
           titel: String(g.titel || '').trim() || 'Ohne Titel',
@@ -84,8 +86,8 @@
           zeit,
           zeitText: relativ(zeit, jetzt),
           bereich: b ? b.titel || g.arbeitsbereich : g.arbeitsbereich || '',
-          ordner: b && b.pfad ? letzterOrdner(b.pfad) : '',
-          pfad: b && b.pfad ? b.pfad : '',
+          ordner: cwd ? letzterOrdner(cwd) : b && b.pfad ? letzterOrdner(b.pfad) : '',
+          pfad: cwd || (b && b.pfad ? b.pfad : ''),
           laeuft: sicher.has(String(g.id)) || !!(aktiv && aktiv.laeuft(g.id)),
         };
       })

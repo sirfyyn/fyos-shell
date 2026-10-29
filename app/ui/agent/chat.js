@@ -22,6 +22,10 @@
   const MERKE = 'fyos-agent-sitzung';
 
   const transport = window.__TAURI__ ? FP.tauriTransport(window.__TAURI__) : FP.httpTransport('');
+  const tauriInvoke = window.__TAURI__ ? (b, a) => window.__TAURI__.core.invoke(b, a || {}) : null;
+  // Rust meldet Fehler als Katalogmeldung { code, ursache, abhilfe }: für die Anzeige ein Error mit beidem im Text
+  const alsFehler = (m) => (m && m.ursache ? Object.assign(new Error(`${m.ursache} ${m.abhilfe || ''}`.trim()), { code: m.code }) : m);
+  let runnerArt = 'entfernt';
   const modus = FP.startModus($('modus'), $('modusMenue'), {});
   const aktivitaet = FP.sitzungen.createAktivitaet();
 
@@ -301,6 +305,66 @@
     if (ziel !== null) wechsle(ziel);
   }
 
+  // --- Runner wählen (Liste aus den Einstellungen; Umschalten lädt die Seite neu, die App läuft weiter) ---
+  let runnerGewaehlt = '';
+  function runnerHinweis(text) {
+    $('runnerHinweis').hidden = !text;
+    $('runnerHinweis').textContent = text || '';
+  }
+  async function ladeRunner() {
+    if (!tauriInvoke) {
+      $('runnerKasten').hidden = true;
+      return;
+    }
+    try {
+      const v = await tauriInvoke('runner_liste');
+      const wahl = $('runnerWahl');
+      wahl.textContent = '';
+      for (const r of v.runner || []) {
+        const o = document.createElement('option');
+        o.value = r.id;
+        o.textContent = r.art === 'lokal' ? `${r.name} (lokal)` : r.name;
+        wahl.appendChild(o);
+        if (r.aktiv) {
+          runnerArt = r.art;
+          runnerGewaehlt = r.id;
+        }
+      }
+      wahl.value = runnerGewaehlt;
+      $('runnerKasten').hidden = !(v.runner || []).length;
+    } catch (f) {
+      $('runnerKasten').hidden = true;
+    }
+  }
+  $('runnerWahl').addEventListener('change', async () => {
+    const id = $('runnerWahl').value;
+    runnerHinweis(id === 'lokal' ? 'Starte den lokalen Runner …' : 'Wechsle …');
+    $('runnerWahl').disabled = true;
+    try {
+      await tauriInvoke('runner_wechseln', { id });
+      // Rust meldet „ziel-gewechselt“, die Seite lädt neu
+      runnerGewaehlt = id;
+    } catch (f) {
+      const e = alsFehler(f);
+      runnerHinweis(`Nicht gewechselt: ${(e && e.message) || e}`);
+      $('runnerWahl').value = runnerGewaehlt;
+    } finally {
+      $('runnerWahl').disabled = false;
+    }
+  });
+  ladeRunner();
+
+  // --- Ordnerwahl ---
+  let ordnerNutzbar = false;
+  const ordnerAuswahl = FP.createOrdnerWahl(
+    { kasten: $('ordnerKasten'), gewaehlt: $('ordnerGewaehlt'), zuletzt: $('ordnerZuletzt'), dialog: $('ordnerDialog'), baum: $('ordnerBaum'), fehler: $('ordnerFehler') },
+    {
+      transport,
+      waehleLokal: () => (tauriInvoke ? tauriInvoke('ordner_waehlen').catch((m) => { throw alsFehler(m); }) : Promise.reject(new Error('Der Systemdialog gibt es nur in der Anwendung.'))),
+      zuletztLaden: async () => (tauriInvoke ? ((await tauriInvoke('ordner_zuletzt')).ordner || []) : []),
+    }
+  );
+
   // --- Neue Sitzung ---
   const neuForm = $('neuForm');
   function neuOeffnen() {
@@ -336,6 +400,16 @@
     $('neuTitel').value = '';
     neuForm.hidden = false;
     $('neuTitel').focus();
+    // Ordnerwahl: Baum (entfernt) oder Systemdialog (lokal); ohne Ordnerliste auf dem Runner bleibt die Auswahl der Arbeitsbereiche
+    ordnerNutzbar = false;
+    const legacy = (aus) => {
+      $('neuOrdner').hidden = $('neuOrdnerLabel').hidden = $('neuPfad').hidden = aus;
+    };
+    legacy(false);
+    ordnerAuswahl.starte(runnerArt).then((ok) => {
+      ordnerNutzbar = ok;
+      legacy(ok);
+    });
   }
   function pfadZeigen() {
     const b = bereiche[$('neuOrdner').value];
@@ -361,11 +435,14 @@
     $('neuFehler').hidden = true;
     try {
       const koerper = { titel: $('neuTitel').value.trim() || undefined };
-      if ($('neuOrdner').value) koerper.arbeitsbereich = $('neuOrdner').value;
+      const ordner = ordnerNutzbar ? ordnerAuswahl.wert() : '';
+      if (ordner) koerper.ordner = ordner;
+      else if ($('neuOrdner').value && !ordnerNutzbar) koerper.arbeitsbereich = $('neuOrdner').value;
       if ($('neuModell').value) koerper.modell = $('neuModell').value;
       const r = await transport.api('POST', '/api/gespraeche', koerper);
       const neu = r.gespraech || r;
       if (neu.id === undefined) throw new Error('Der Runner hat keine Sitzung zurückgegeben.');
+      if (ordner && tauriInvoke) tauriInvoke('ordner_merken', { pfad: ordner }).catch(() => {});
       neuForm.hidden = true;
       await ladeListe();
       await wechsle(neu.id);
@@ -560,7 +637,7 @@
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       if (i && i.e2e) {
         const s = document.createElement('script');
-        s.src = 'e2e.js';
+        s.src = `${i.e2e_skript || 'e2e'}.js`;
         document.body.appendChild(s);
       }
     }).catch(() => {});

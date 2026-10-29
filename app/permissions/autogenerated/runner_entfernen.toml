@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-runner-entfernen"
+description = "Enables the runner_entfernen command without any pre-configured scope."
+commands.allow = ["runner_entfernen"]
+
+[[permission]]
+identifier = "deny-runner-entfernen"
+description = "Denies the runner_entfernen command without any pre-configured scope."
+commands.deny = ["runner_entfernen"]

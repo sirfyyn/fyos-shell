@@ -14,6 +14,11 @@ Die Chat-Seite bedient sich im Prüfmodus selbst (ui/agent/e2e.js, nur mit FYOS_
   A4  Token nirgends in den Einstellungen (nur der Verweis), keine Anfrage ohne Token
   A5  falsches Token: die Anwendung bleibt am Leben und versucht es wieder (Katalogmeldung im Banner, Wiederholen)
   A6  SIGTERM beendet die Hülle
+  A7  bisheriger einzelner Runner steht danach als erster Eintrag der Runner-Liste (gleicher Tresor-Verweis, nichts neu einzurichten)
+  B1  lokaler Runner: die Hülle startet das Test-Programm (tools/lokaler_runner_test.py) mit freiem Port und zufälligem Token, Ordnerwahl über
+      den Prüfbau-Ersatz des Systemdialogs, Sitzung mit Ordner, zuletzt benutzte Ordner, reservierter Weg bleibt der Seite verwehrt
+  B2  Umschalten auf einen entfernten Runner ohne Neustart: Ordnerbaum (Wurzeln, Aufklappen, Wählen), 403 und 404 klar, zuletzt je Runner
+  B3  SIGTERM der Hülle beendet auch das lokale Programm (kein Zombie, kein Waise); das Token steht nicht in den Einstellungen
 
 Aufruf (aus apps/fyos-shell):  python3 tools/e2e_agent.py [--ohne-bau]
 """
@@ -33,6 +38,11 @@ import e2e_update as e  # noqa: E402
 NAME = "FYOS Agent D0-Test"
 PORT = 18681
 PORT_FALSCH = 18682
+PORT_FERNE = 18683
+PROGRAMM = e.TOOLS / "lokaler_runner_test.py"
+ERWARTET_B = ["runner-liste", "lokaler-runner-laeuft", "lokal-dialog-statt-baum", "lokal-ordner-gewaehlt", "lokal-sitzung-mit-ordner", "ordner-in-liste",
+              "zuletzt-benutzt", "erlauben-nicht-fuer-die-seite", "wechsel-entfernt", "baum-wurzeln", "baum-aufklappen", "baum-auswahl",
+              "baum-sitzung-mit-ordner", "ausserhalb-403-klar", "nicht-gefunden-404-klar", "zuletzt-je-runner", "ende"]
 TOKEN = "-".join(["e2e", "probe"] * 4)  # erfundener Testwert
 ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz", "werkzeugkarte", "freigabe-karte",
             "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt",
@@ -127,6 +137,9 @@ def pruefe(app, arbeit):
             e.melde("A4", "das Token steht nicht in den Einstellungen, nur der Verweis", TOKEN not in datei and "{tresor:runner-token}" in datei)
         finally:
             e.melde("A6", "SIGTERM beendet die Hülle", beenden(proc))
+        liste = json.loads((daten / "einstellungen.json").read_text(encoding="utf-8")).get("agent", {}).get("runner", [])
+        e.melde("A7", "der bisherige Runner steht als erster Eintrag der Liste, mit demselben Tresor-Verweis",
+                len(liste) == 1 and liste[0].get("adresse") == f"http://127.0.0.1:{PORT}" and liste[0].get("token") == "{tresor:runner-token}" and liste[0].get("art") == "entfernt", json.dumps(liste))
     finally:
         server.terminate()
         server.wait(timeout=10)
@@ -151,6 +164,90 @@ def pruefe(app, arbeit):
         server5.terminate()
 
 
+def lebt(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def ergebnisse_aus(*logs):
+    aus = {}
+    for log in logs:
+        for x in zeilen(log):
+            k = x.get("koerper")
+            if x.get("pfad") == "/api/e2e/ergebnis" and isinstance(k, dict) and "schritt" in k:
+                aus[k["schritt"]] = k
+    return aus
+
+
+def pruefe_ordner(app, arbeit):
+    """B1 bis B3: lokaler Runner (Test-Programm als Kindprozess der Hülle), Ordnerwahl, Umschalten auf einen entfernten Runner (Ordnerbaum)."""
+    import re
+    PROGRAMM.chmod(0o755)
+    tmp = arbeit / "tmp"
+    tmp.mkdir(exist_ok=True)
+    daten = arbeit / "daten" / "ordner"
+    if daten.exists():
+        shutil.rmtree(daten)
+    daten.mkdir(parents=True)
+    baum = arbeit / "ordnerbaum"
+    if baum.exists():
+        shutil.rmtree(baum)
+    (baum / "wurzel" / "a" / "tief").mkdir(parents=True)
+    (baum / "wurzel" / "b").mkdir()
+    lokal_ordner = arbeit / "projekt-lokal"
+    lokal_ordner.mkdir(exist_ok=True)
+    lokal_log, ferne_log = arbeit / "lokal-runner.log", arbeit / "ferne-runner.log"
+    lokal_log.unlink(missing_ok=True)
+    ferne_log.unlink(missing_ok=True)
+    if e.port_offen(PORT_FERNE):
+        sys.exit(f"Port {PORT_FERNE} ist belegt (ein anderer Prüfstand läuft noch).")
+    ferne = subprocess.Popen([sys.executable, str(PROGRAMM), "--log", str(ferne_log)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             env=dict(os.environ, FYOS_RUNNER_PORT=str(PORT_FERNE), FYOS_RUNNER_TOKEN=TOKEN, FYOS_RUNNER_ORDNER_ERLAUBT=str((baum / "wurzel").resolve())))
+    try:
+        if not e.warten_bis(lambda: e.port_offen(PORT_FERNE), 10):
+            sys.exit("Test-Programm (entfernter Runner) startet nicht")
+        (daten / "einstellungen.json").write_text(json.dumps({"schema": 1, "agent": {
+            "runner": [{"id": "lokal", "name": "Dieser Rechner", "art": "lokal", "adresse": None, "token": ""},
+                       {"id": "ferne", "name": "Ferne", "art": "entfernt", "adresse": f"http://127.0.0.1:{PORT_FERNE}", "token": "{tresor:runner-ferne}"}],
+            "aktiv_runner": "lokal", "lokal": {"programm": str(PROGRAMM), "args": ["--log", str(lokal_log)]}, "ruhe": False, "gemeldet": []}}), encoding="utf-8")
+        env = dict(os.environ, FYOS_SHELL_DATEN=str(daten), TMPDIR=str(tmp), FYOS_SHELL_TRESOR_SAAT=f"runner-ferne={TOKEN}", FYOS_SHELL_AGENT_E2E="1",
+                   FYOS_SHELL_AGENT_E2E_SKRIPT="e2e-ordner", FYOS_SHELL_E2E_ORDNER=str(lokal_ordner))
+        starts = []
+        proc = subprocess.Popen([str(app / "Contents" / "MacOS" / "fyos-shell")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            ok = e.warten_bis(lambda: any(x in ergebnisse_aus(ferne_log) for x in ("ende", "abgebrochen")), 180)
+            erg = ergebnisse_aus(lokal_log, ferne_log)
+            print("B1 lokaler Runner und Ordnerwahl, B2 Umschalten und Ordnerbaum")
+            for schritt in ERWARTET_B:
+                r = erg.get(schritt)
+                e.melde("B1" if schritt in ERWARTET_B[:8] else "B2", f"Schritt {schritt}", bool(r and r["ok"]), json.dumps(r) if r else "kein Ergebnis (Zeitüberschreitung oder Seite nicht gestartet)")
+            e.melde("B2", "der Prüflauf ist bis zum Ende gekommen", ok and "ende" in erg)
+            z = zeilen(lokal_log)
+            starts = [x["start"]["pid"] for x in z if "start" in x]
+            anfragen = [x for x in z if "pfad" in x]
+            e.melde("B1", "das Test-Programm wurde von der Hülle gestartet (genau einmal) und jede Anfrage kam mit dem zufälligen Token", len(starts) == 1 and bool(anfragen) and all(x["auth"] for x in anfragen), f"{len(starts)} Starts, {len(anfragen)} Anfragen")
+            posts = [x["koerper"] for x in anfragen if x.get("methode") == "POST" and x["pfad"] == "/api/gespraeche"]
+            e.melde("B1", "die neue Sitzung ging mit dem gewählten Ordner an den lokalen Runner", any(isinstance(k, dict) and str(k.get("ordner", "")).endswith("projekt-lokal") for k in posts), json.dumps(posts))
+            erlaubt = [x for x in anfragen if x["pfad"] == "/api/ordner/erlauben"]
+            e.melde("B1", "die Hülle (nicht die Seite) meldete den Ordner als erlaubte Wurzel, und zwar nur diesen", len(erlaubt) == 1 and str(erlaubt[0]["koerper"].get("pfad", "")).endswith("projekt-lokal"), json.dumps([x["koerper"] for x in erlaubt]))
+            datei = (daten / "einstellungen.json").read_text(encoding="utf-8")
+            e.melde("B3", "kein 64-stelliges Token in den Einstellungen; gemerkt ist der Ordner, nicht mehr", re.search(r"[0-9a-f]{64}", datei) is None and TOKEN not in datei and "projekt-lokal" in datei)
+        finally:
+            e.melde("B3", "SIGTERM beendet die Hülle", beenden(proc))
+            if starts:
+                e.warten_bis(lambda: not lebt(starts[0]), 12)
+                e.melde("B3", "das lokale Programm ist mit der Hülle beendet (kein Zombie, kein Waise)", not lebt(starts[0]))
+            e.melde("B3", "der entfernte Test-Runner läuft unberührt weiter", ferne.poll() is None)
+    finally:
+        ferne.terminate()
+        ferne.wait(timeout=10)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--arbeit", default="/private/tmp/fyos-shell-d0-e2e/lauf-agent")
@@ -162,6 +259,7 @@ def main():
     arbeit.mkdir(parents=True, exist_ok=True)
     app = arbeit / "bau" / f"{NAME}.app" if a.ohne_bau else bauen(arbeit)
     pruefe(app, arbeit)
+    pruefe_ordner(app, arbeit)
     schlecht = [x for x in e.ERGEBNISSE if not x[2]]
     print(f"\n{len(e.ERGEBNISSE) - len(schlecht)} von {len(e.ERGEBNISSE)} Prüfungen bestanden.")
     for tor, name, _, detail in schlecht:

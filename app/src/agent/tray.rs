@@ -65,7 +65,7 @@ pub fn aktualisieren(app: &AppHandle) {
     let produkt = app.config().product_name.clone().unwrap_or_else(|| "FYOS Agent".into());
     let (eingerichtet, ruhe) = {
         let e = sperre(&h.einstellungen);
-        (e.agent.runner_adresse.as_deref().is_some_and(|x| !x.trim().is_empty()), e.agent.ruhe)
+        (e.agent.eingerichtet(), e.agent.ruhe)
     };
     let (verbunden, offene, laeufe) = (a.verbunden.load(Ordering::SeqCst), a.offene.load(Ordering::SeqCst), a.laeufe.load(Ordering::SeqCst));
     let (kopf_art, kopf_busy) = sperre(&a.kopf).clone();

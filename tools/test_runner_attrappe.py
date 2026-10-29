@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -202,6 +203,121 @@ class Tests(Basis):
         self.assertEqual(self.anfrage("/api/e2e/kappen", {})["gekappt"], 1)
         t.join(6)
         self.assertFalse(t.is_alive())
+
+
+class OrdnerTests(Basis):
+    """Ordner je Sitzung: GET /api/ordner und `ordner` in POST /api/gespraeche (Vertrag des Runners)."""
+
+    ohne_ordner = False
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if cls.ohne_ordner:
+            cls.z.wurzeln = []
+
+    def roh(self, pfad, daten=None, token=TOKEN):
+        """Wie anfrage, aber mit Statuscode auch bei Fehlern: (status, json)."""
+        req = urllib.request.Request(self.basis + pfad, data=None if daten is None else json.dumps(daten).encode(), method="GET" if daten is None else "POST")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as a:
+                return a.status, json.loads(a.read())
+        except urllib.error.HTTPError as f:
+            return f.code, json.loads(f.read())
+
+    def liste(self, pfad):
+        return self.roh("/api/ordner?pfad=" + urllib.parse.quote(pfad, safe=""))
+
+    def test_ohne_pfad_nur_die_wurzeln(self):
+        status, d = self.roh("/api/ordner")
+        self.assertEqual(status, 200)
+        self.assertEqual(d["wurzeln"], r.ORDNER_WURZELN)
+        self.assertIsNone(d["pfad"])
+        self.assertEqual(d["eintraege"], [])
+        self.assertTrue(d["erlaubt"])
+
+    def test_auflisten_nur_ordner_alphabetisch_ohne_versteckte(self):
+        status, d = self.liste("/probe/ordner-a")
+        self.assertEqual(status, 200)
+        self.assertEqual(d["pfad"], "/probe/ordner-a")
+        self.assertEqual([e["name"] for e in d["eintraege"]], ["Notizen", "projekt-eins", "projekt-zwei"])
+        self.assertTrue(all(e["ordner"] is True for e in d["eintraege"]))
+        self.assertNotIn("abgeschnitten", d)
+
+    def test_mehr_als_500_sind_abgeschnitten(self):
+        status, d = self.liste("/probe/ordner-b/viele")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(d["eintraege"]), 500)
+        self.assertTrue(d["abgeschnitten"])
+
+    def test_ausbrueche_sind_403_ausserhalb(self):
+        for p in ["/probe/ordner-a/../draussen", "/probe", "/", "/etc", "/probe/ordner-a/..", "/probe/ordner-ax", "/probe/draussen"]:
+            status, d = self.liste(p)
+            self.assertEqual((status, d["fehler"]), (403, "ausserhalb"), p)
+
+    def test_ungueltige_pfade_sind_400(self):
+        for p in ["relativ/pfad", ".", "/probe/ordner-a\0/x"]:
+            status, d = self.liste(p)
+            self.assertEqual((status, d["fehler"]), (400, "ungueltig"), repr(p))
+
+    def test_nicht_vorhanden_404_und_datei_400(self):
+        self.assertEqual(self.liste("/probe/ordner-a/gibtsnicht")[0], 404)
+        status, d = self.liste("/probe/ordner-a/liesmich.txt")
+        self.assertEqual((status, d["fehler"]), (400, "kein_ordner"))
+
+    def test_token_wird_verlangt(self):
+        self.assertEqual(self.roh("/api/ordner", token="x" * 20)[0], 401)
+        self.assertEqual(self.roh("/api/gespraeche", {"ordner": "/probe/ordner-a"}, token="x" * 20)[0], 401)
+
+    def test_post_mit_ordner_setzt_cwd_in_gespraech_und_liste(self):
+        status, d = self.roh("/api/gespraeche", {"titel": "Mit Ordner", "arbeitsbereich": "projekt", "ordner": "/probe/ordner-a/projekt-eins/"})
+        self.assertEqual(status, 201)
+        g = d["gespraech"]
+        self.assertEqual(g["agent"]["cwd"], "/probe/ordner-a/projekt-eins")
+        self.assertEqual(g["meta"]["arbeitsbereich"], "projekt")
+        self.assertEqual(self.anfrage(f"/api/gespraech/{g['id']}")["agent"]["cwd"], "/probe/ordner-a/projekt-eins")
+        eintrag = next(x for x in self.anfrage("/api/gespraeche")["gespraeche"] if x["id"] == g["id"])
+        self.assertEqual(eintrag["agent"]["cwd"], "/probe/ordner-a/projekt-eins")
+        self.assertEqual(eintrag["ordner"], "/probe/ordner-a/projekt-eins")
+        # ohne Ordner gilt der Arbeitsbereich
+        root = next(x for x in self.anfrage("/api/gespraeche")["gespraeche"] if x["id"] == 1)
+        self.assertEqual(root["agent"]["cwd"], r.BEREICHE["standard"]["pfad"])
+        self.assertIsNone(root["ordner"])
+
+    def test_post_mit_schlechtem_ordner_ist_400_und_legt_nichts_an(self):
+        vorher = len(self.anfrage("/api/gespraeche")["gespraeche"])
+        for p in ["/probe/draussen", "/probe/ordner-a/../draussen", "relativ", "/probe/ordner-a/gibtsnicht", "/probe/ordner-a/liesmich.txt", "/probe/ordner-a\0", 42]:
+            status, d = self.roh("/api/gespraeche", {"ordner": p})
+            self.assertEqual(status, 400, repr(p))
+            self.assertGreater(len(d["fehler"]), 10)
+        self.assertEqual(len(self.anfrage("/api/gespraeche")["gespraeche"]), vorher)
+
+
+class OrdnerAusTests(OrdnerTests):
+    """Funktion aus (--ohne-ordner): keine Wurzeln, Auflisten 403, POST mit ordner 400 „nicht freigegeben“."""
+
+    ohne_ordner = True
+
+    def test_ohne_pfad_nur_die_wurzeln(self):
+        status, d = self.roh("/api/ordner")
+        self.assertEqual((status, d["wurzeln"], d["erlaubt"]), (200, [], False))
+
+    def test_funktion_aus(self):
+        self.assertEqual(self.liste("/probe/ordner-a")[0], 403)
+        status, d = self.roh("/api/gespraeche", {"ordner": "/probe/ordner-a"})
+        self.assertEqual(status, 400)
+        self.assertIn("nicht freigegeben", d["fehler"])
+        self.assertEqual(self.roh("/api/gespraeche", {"titel": "ohne"})[0], 201)
+
+    # Die Tests der Oberklasse, die erlaubte Wurzeln voraussetzen, entfallen hier.
+    test_auflisten_nur_ordner_alphabetisch_ohne_versteckte = None
+    test_mehr_als_500_sind_abgeschnitten = None
+    test_nicht_vorhanden_404_und_datei_400 = None
+    test_post_mit_ordner_setzt_cwd_in_gespraech_und_liste = None
+    test_post_mit_schlechtem_ordner_ist_400_und_legt_nichts_an = None
+    test_ausbrueche_sind_403_ausserhalb = None
 
 
 if __name__ == "__main__":

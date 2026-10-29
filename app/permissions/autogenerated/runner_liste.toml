@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-runner-liste"
+description = "Enables the runner_liste command without any pre-configured scope."
+commands.allow = ["runner_liste"]
+
+[[permission]]
+identifier = "deny-runner-liste"
+description = "Denies the runner_liste command without any pre-configured scope."
+commands.deny = ["runner_liste"]
