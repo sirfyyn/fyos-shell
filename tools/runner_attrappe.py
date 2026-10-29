@@ -16,7 +16,10 @@ Spricht den Teil der Runner-Schnittstelle, den die Chat-Seite und die Seitenleis
   GET  /api/strom                         Aktivitätsstrom über alle Sitzungen: `hallo`, dann Zeilen {t, gespraech, titel, art, typ, text}
   POST /api/gespraech/<id>/nachricht      startet je nach Text ein Szenario (siehe SZENARIEN)
   POST /api/gespraech/<id>/abbrechen      beendet ein laufendes Szenario früh
-  POST /api/freigaben/<id>                Entscheidung (erteilt/abgelehnt), schreibt einen Entscheidungs-Eintrag in den Strom
+  GET  /api/freigaben                     alle Freigaben aller Sitzungen, neueste zuerst, in der Form des Runners (conversationId, gespraechTitel, aktion,
+                                          risiko, kontext, befehl, werkzeug, status offen/erteilt/abgelehnt, erstellt, entschieden, entschiedenVon, notiz)
+  POST /api/freigaben/<id>                {entscheidung: erteilt|abgelehnt, von, notiz} → 200 {ok, freigaben} (die neue Liste) und ein Entscheidungs-Eintrag
+                                          im Strom der Sitzung; Fehler wie beim Runner: 500 {ok: false, fehler} (falsches Wort, unbekannt, schon entschieden)
   POST /api/e2e/ergebnis                  die Seite meldet ein Prüfergebnis (nur Debug-Bauten der Hülle starten das Skript der Seite)
   POST /api/e2e/kappen                    trennt alle offenen Ströme hart (Netzabbruch mitten im Strom)
 Mit --token verlangt jede Anfrage `Authorization: Bearer <T>` (sonst 401). Jede Anfrage steht als JSON-Zeile im Protokoll (--log),
@@ -32,14 +35,14 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 SZENARIEN = {
     "streaming": "Antwort in Teilen (Streaming)",
     "werkzeug": "ein Werkzeugaufruf mit Ergebnis (Karte)",
     "terminal": "Bash-Aufruf mit farbiger Ausgabe in Teilen (Terminal-Ansicht, ANSI)",
     "diff": "Edit- und Write-Aufruf (Diff-Ansicht)",
-    "freigabe": "eine Freigabe, die entschieden werden muss (nur Erlauben/Ablehnen)",
+    "freigabe": "eine Freigabe, die entschieden werden muss (nur Erlauben/Ablehnen); mit „hoch“ im Text hohes Risiko",
     "reset": "ein Reset-Marker (neuer Kontext)",
     "lang": "zwölf Teile über sechs Sekunden (Abbruch mitten im Strom)",
 }
@@ -197,7 +200,7 @@ class Sitzung:
                 self.teil = ""
             self.senden([{"type": "run_start"}, {"type": "message_start", "message": {"role": "assistant", "content": []}}])
             if "freigabe" in t:
-                self.freigabe_szenario()
+                self.freigabe_szenario(hoch="hoch" in t)
             elif "terminal" in t:
                 self.terminal_szenario()
             elif "diff" in t:
@@ -266,12 +269,19 @@ class Sitzung:
         self.werkzeug_ende(tid2, "write", "neu.txt geschrieben")
         self.antwort_in_teilen(["Diff fertig."], 0.1)
 
-    def freigabe_szenario(self):
+    def freigabe_szenario(self, hoch=False):
         fid = f"f{self.z.nr()}"
-        f = {"id": fid, "sid": self.id, "status": "offen", "erstellt": int(time.time() * 1000), "aktion": "Probe-Aktion ausführen", "risiko": "low", "befehl": "echo probe"}
+        risiko = "high" if hoch else "low"
+        jetzt = int(time.time() * 1000)
+        # Form eines Eintrags wie GET /api/freigaben des Runners (neueFreigabe + gespraechTitel + kontext)
+        f = {
+            "id": fid, "conversationId": self.id, "gespraechTitel": self.titel, "taskId": None, "aktion": "Probe-Aktion ausführen", "risiko": risiko,
+            "kontext": "Die Probe-Aktion läuft nur in der Attrappe und ändert nichts.", "kontextHerkunft": "rueckfall", "zerstoererisch": hoch,
+            "werkzeug": "bash", "befehl": "echo probe", "bezug": None, "status": "offen", "erstellt": jetzt, "entschieden": None, "entschiedenVon": None, "notiz": None,
+        }
         with self.z.sperre:
             self.z.freigaben.append(f)
-        e = self.eintrag("fyos.freigabe", {"id": fid, "aktion": f["aktion"], "risiko": "low", "werkzeug": "bash"})
+        e = self.eintrag("fyos.freigabe", {"id": fid, "aktion": f["aktion"], "risiko": risiko, "kontext": f["kontext"], "werkzeug": "bash", "status": "offen"})
         self.senden([{"type": "entry_appended", "entry": e}])
         self.zeile("freigabe", "wartet auf Freigabe: Probe-Aktion ausführen")
         ende = time.time() + 60
@@ -339,16 +349,34 @@ class Zustand:
         except (TypeError, ValueError):
             return None
 
-    def entscheiden(self, fid, wert):
+    def liste_freigaben(self):
+        """Wie runner.freigaben(): alle Eintraege, neueste zuerst; der Titel der Sitzung folgt einer Umbenennung."""
+        with self.sperre:
+            ausgabe = []
+            for f in self.freigaben:
+                s = self.sitzungen.get(f["conversationId"])
+                ausgabe.append({**f, "gespraechTitel": s.titel if s else str(f["conversationId"])})
+            return sorted(ausgabe, key=lambda x: x["erstellt"], reverse=True)
+
+    def entscheiden(self, fid, wert, von="mensch", notiz=None):
+        """Wie runner.entscheideFreigabe(): wirft FreigabeFehler (Text wie beim Runner), sonst die neue Liste."""
+        if wert not in ("erteilt", "abgelehnt"):
+            raise FreigabeFehler("Entscheidung: erteilt oder abgelehnt")
         with self.sperre:
             f = next((x for x in self.freigaben if x["id"] == fid), None)
             if not f:
-                return None
-            f["status"] = wert
-        s = self.sitzungen.get(f.get("sid", 1)) or self.sitzungen[1]
-        e = s.eintrag("fyos.freigabe-entscheidung", {"id": fid, "entscheidung": wert})
+                raise FreigabeFehler("Freigabe nicht gefunden")
+            if f["status"] != "offen":
+                raise FreigabeFehler(f"Freigabe ist bereits {f['status']}")
+            f.update(status=wert, entschieden=int(time.time() * 1000), entschiedenVon=str(von or "mensch")[:64], notiz=(str(notiz)[:600] if notiz else None))
+        s = self.sitzungen.get(f["conversationId"]) or self.sitzungen[1]
+        e = s.eintrag("fyos.freigabe-entscheidung", {"id": fid, "entscheidung": wert, "von": f["entschiedenVon"], "notiz": f["notiz"], "zeit": f["entschieden"]})
         s.senden([{"type": "entry_appended", "entry": e}])
-        return [{k: v for k, v in x.items() if k != "sid"} for x in self.freigaben]
+        return self.liste_freigaben()
+
+
+class FreigabeFehler(Exception):
+    pass
 
 
 def handler(z):
@@ -401,7 +429,7 @@ def handler(z):
                 # wie der echte Runner (gespraeche() in src/runner.js): archivierte Sitzungen stehen nicht in der Liste
                 return self._json(200, {"ok": True, "gespraeche": [s.liste() for s in z.sitzungen.values() if not s.archiviert]})
             if p == "/api/freigaben":
-                return self._json(200, {"freigaben": [{k: v for k, v in x.items() if k != "sid"} for x in z.freigaben]})
+                return self._json(200, {"ok": True, "freigaben": z.liste_freigaben()})
             if p == "/api/laeufe":
                 return self._json(200, {"laeufe": [{"id": 1, "status": "laeuft"}] if z.laeuft else []})
             if p == "/api/strom":
@@ -518,8 +546,11 @@ def handler(z):
                     s.abbruch.set()
                 return self._json(200, {"ok": True})
             if p.startswith("/api/freigaben/"):
-                alle = z.entscheiden(p.rsplit("/", 1)[1], k.get("entscheidung", "abgelehnt"))
-                return self._json(200 if alle is not None else 404, {"freigaben": alle} if alle is not None else {"fehler": "Freigabe nicht gefunden"})
+                try:
+                    alle = z.entscheiden(unquote(p.rsplit("/", 1)[1]), k.get("entscheidung"), k.get("von"), k.get("notiz"))
+                except FreigabeFehler as f:
+                    return self._json(500, {"ok": False, "fehler": str(f)})
+                return self._json(200, {"ok": True, "freigaben": alle})
             if p == "/api/e2e/ergebnis":
                 z.protokoll(ergebnis=k)
                 return self._json(200, {"ok": True})

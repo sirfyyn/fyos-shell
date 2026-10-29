@@ -101,7 +101,8 @@
   function zeigeAktiv() {
     if (!aktiv) return;
     const c = aktiv.chat;
-    zeige({ ...c.S, busy: c.view.busy, wartet: c.view.zustand().wartetAufFreigabe });
+    // „wartet auf dich“ gilt auch, wenn die offene Freigabe in einer anderen Sitzung liegt
+    zeige({ ...c.S, busy: c.view.busy, wartet: c.view.zustand().wartetAufFreigabe || freigaben.offene().length > 0 });
   }
   setInterval(zeigeAktiv, 1000);
 
@@ -124,6 +125,17 @@
     }
     if (aktiv === rec) zeigeOrdner(rec);
   }
+
+  // --- Freigaben: Knopf mit Zahl im Kopf und Panel mit allen offenen Freigaben (alle Sitzungen) ---
+  const freigaben = FP.createFreigaben(
+    { knopf: $('freigabenKnopf'), zahl: $('freigabenZahl'), panel: $('freigabenPanel'), liste: $('freigabenListe'), zu: $('freigabenZu'), hinweis: $('freigabenHinweis') },
+    {
+      transport,
+      // Sprung in die Sitzung der Freigabe: dieselbe Funktion wie in der Leiste, die Ansicht bleibt aufgebaut (kein Neuaufbau)
+      beiSprung: (id) => wechsle(id),
+      beiAenderung: () => zeigeAktiv(),
+    }
+  );
 
   // --- Seitenleiste ---
   // Sitzungen, die dieses Fenster archiviert hat: GET /api/gespraeche nennt archivierte nicht mehr, so bleibt „Wiederherstellen“ möglich (bis zum Neuladen)
@@ -272,6 +284,8 @@
         if (aktiv === rec) zeige(s);
         planeZeichnen();
       },
+      // der Verlauf hat die Liste geholt oder eine Karte entschieden: Zahl und Panel ziehen nach
+      beiFreigaben: (liste) => freigaben.setze(liste),
       beiLaufEnde: () => {
         setTimeout(ladeListe, 300);
         planeZeichnen();
@@ -711,7 +725,10 @@
   // Anderer Runner eingestellt (Einstellungen): neu starten, damit Verlauf und Ströme zum neuen Ziel gehören
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event.listen('ziel-gewechselt', () => window.location.reload());
+    // Tray-Zeile „Freigaben“: Rust holt das Fenster nach vorn und sagt hier, dass das Panel aufgehen soll
+    window.__TAURI__.event.listen('freigaben-zeigen', () => freigaben.zeige(true));
   }
+  window.addEventListener('focus', () => freigaben.lade());
 
   // Aktivitätsstrom (alle Sitzungen): markiert, wo gerade gearbeitet wird, und meldet neue Sitzungen
   transport.onStrom((p) => {
@@ -720,6 +737,8 @@
     else if (p.art === 'zeile' && p.daten) {
       const bekannt = gespraeche.some((g) => String(g.id) === String(p.daten.gespraech));
       aktivitaet.zeile(p.daten);
+      // eine neue Freigabe (in irgendeiner Sitzung) gleich in Zahl und Panel zeigen, nicht erst beim nächsten Abfragen
+      if (p.daten.typ === 'freigabe') freigaben.lade();
       if (!bekannt && p.daten.art !== 'lauf') ladeListe();
       planeZeichnen();
     }
@@ -727,9 +746,11 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
+      // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)
+      if (i && i.freigaben_zeigen) freigaben.zeige(true);
       if (i && i.e2e) {
         const s = document.createElement('script');
         s.src = `${i.e2e_skript || 'e2e'}.js`;
@@ -762,6 +783,7 @@
 
   async function start() {
     transport.oeffneStrom('strom', '/api/strom').catch(() => {});
+    freigaben.start();
     const [konfig, mod] = await Promise.all([
       transport.api('GET', '/api/konfiguration').catch(() => null),
       transport.api('GET', '/api/modelle').catch(() => null),

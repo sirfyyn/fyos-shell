@@ -95,6 +95,49 @@ class Tests(Basis):
         self.assertIn("fyos.freigabe", kinds)
         self.assertIn("fyos.freigabe-entscheidung", kinds)
 
+    def test_freigaben_form_wie_beim_runner_alle_sitzungen_neueste_zuerst_fehler_als_500(self):
+        """Form aus deploy/runner/pi-durable/test/freigaben-wege.test.js (echter Runner): Liste über alle Sitzungen, Sprungziel, Fehlerbild der Entscheidung."""
+        vorher = {f["id"] for f in self.anfrage("/api/freigaben")["freigaben"]}
+        threading.Timer(0.05, lambda: self.anfrage("/api/gespraech/1/nachricht", {"text": "freigabe eins"})).start()
+        time.sleep(0.4)
+        threading.Timer(0.05, lambda: self.anfrage("/api/gespraech/2/nachricht", {"text": "freigabe hoch zwei"})).start()
+        deadline = time.time() + 5
+        neu = []
+        while time.time() < deadline and len(neu) < 2:
+            time.sleep(0.05)
+            neu = [f for f in self.anfrage("/api/freigaben")["freigaben"] if f["id"] not in vorher]
+        self.assertEqual(len(neu), 2)
+        antwort = self.anfrage("/api/freigaben")
+        self.assertIs(antwort["ok"], True)
+        self.assertEqual([f["id"] for f in antwort["freigaben"][:2]], [neu[0]["id"], neu[1]["id"]])
+        spaet, frueh = neu[0], neu[1]
+        self.assertGreater(spaet["erstellt"], frueh["erstellt"], "neueste zuerst")
+        self.assertEqual((spaet["conversationId"], spaet["gespraechTitel"], spaet["risiko"]), (2, "Zweite Sitzung", "high"))
+        self.assertEqual((frueh["conversationId"], frueh["risiko"]), (1, "low"))
+        for f in (spaet, frueh):
+            self.assertEqual((f["status"], f["werkzeug"], f["befehl"]), ("offen", "bash", "echo probe"))
+            self.assertTrue(f["aktion"] and f["kontext"])
+        # Fehler wie beim Runner: 500 mit {ok: false, fehler}
+        for pfad, koerper, text in [
+            (f"/api/freigaben/{frueh['id']}", {"entscheidung": "vielleicht"}, "Entscheidung: erteilt oder abgelehnt"),
+            ("/api/freigaben/gibts-nicht", {"entscheidung": "erteilt"}, "Freigabe nicht gefunden"),
+        ]:
+            with self.assertRaises(urllib.error.HTTPError) as f:
+                self.anfrage(pfad, koerper)
+            self.assertEqual(f.exception.code, 500)
+            self.assertEqual(json.loads(f.exception.read()), {"ok": False, "fehler": text})
+        # Entscheidung: die Antwort ist die neue Liste, der Eintrag steht im Strom der Sitzung der Freigabe, ein zweites Mal ist ein Fehler
+        liste = self.anfrage(f"/api/freigaben/{spaet['id']}", {"entscheidung": "abgelehnt", "von": "mensch"})
+        self.assertIs(liste["ok"], True)
+        entschieden = next(f for f in liste["freigaben"] if f["id"] == spaet["id"])
+        self.assertEqual((entschieden["status"], entschieden["entschiedenVon"]), ("abgelehnt", "mensch"))
+        self.assertEqual(next(f for f in liste["freigaben"] if f["id"] == frueh["id"])["status"], "offen")
+        self.assertIn("fyos.freigabe-entscheidung", [e["kind"] for e in self.anfrage("/api/gespraech/2/ansicht?voll=1")["entries"]])
+        with self.assertRaises(urllib.error.HTTPError) as f:
+            self.anfrage(f"/api/freigaben/{spaet['id']}", {"entscheidung": "erteilt"})
+        self.assertEqual(json.loads(f.exception.read())["fehler"], "Freigabe ist bereits abgelehnt")
+        self.anfrage(f"/api/freigaben/{frueh['id']}", {"entscheidung": "erteilt"})  # räumt das Szenario auf
+
     def test_snapshot_enthaelt_den_laufenden_text_nach_dem_neuverbinden(self):
         self.z.tempo = 0.3  # zwölf Teile in etwa 1,8 s, damit der Strom mitten im Lauf geöffnet werden kann
         try:

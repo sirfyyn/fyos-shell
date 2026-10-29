@@ -106,7 +106,7 @@ pub fn agent_chat_oeffnen(app: AppHandle) -> Result<(), Meldung> {
 
 /// Der Runner, den das Chat-Fenster zeigt (ohne Token): Kennung, Name, Art, Rechnername der Adresse und Ruhe.
 #[tauri::command]
-pub fn ziel_info(h: H<'_>) -> Result<Value, Meldung> {
+pub fn ziel_info(h: H<'_>, a: A<'_>) -> Result<Value, Meldung> {
     let mut e = sperre(&h.einstellungen).agent.clone();
     e.runner_uebernehmen();
     let r = e.aktiver().cloned().ok_or_else(|| m(Fehler::RunnerNichtEingerichtet))?;
@@ -122,6 +122,8 @@ pub fn ziel_info(h: H<'_>) -> Result<Value, Meldung> {
         "host": host, "lokal": adresse::ist_loopback(&host), "ruhe": e.ruhe,
         "runner": {"id": r.id, "name": r.name, "art": r.art},
         "e2e": e2e,
+        // einmalig: das Fenster wurde über die Freigaben-Zeile im Tray geöffnet
+        "freigaben_zeigen": a.freigaben_zeigen.swap(false, Ordering::SeqCst),
         "e2e_skript": if e2e && !skript.is_empty() { skript } else { "e2e".to_string() },
     }))
 }

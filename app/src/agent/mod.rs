@@ -40,6 +40,9 @@ pub struct AgentZustand {
     pub laeufe: AtomicUsize,
     /// Was die Chat-Seite zuletzt gemeldet hat: Kopfzustand (`bereit`, `arbeitet`, …) und ob ein Zug läuft.
     pub kopf: Mutex<(String, bool)>,
+    /// Das Chat-Fenster wurde durch die Freigaben-Zeile im Tray geöffnet und soll sein Freigaben-Panel zeigen: die frisch geladene Seite holt das
+    /// Flag mit `ziel_info` ab (ein schon offenes Fenster bekommt stattdessen das Ereignis `freigaben-zeigen`).
+    pub freigaben_zeigen: AtomicBool,
     /// Der lokale Runner (Fremdprogramm als Kindprozess), falls eingerichtet und gestartet.
     pub lokal: lokal::Lokal,
 }

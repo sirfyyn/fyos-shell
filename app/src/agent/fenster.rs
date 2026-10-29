@@ -28,6 +28,23 @@ fn sperre_chat(url: &Url) -> bool {
     }
 }
 
+/// Tray-Zeile „N offene Freigaben“: das Chat-Fenster nach vorn und das Freigaben-Panel dort aufklappen. Ein offenes Fenster bekommt das Ereignis
+/// `freigaben-zeigen`; ein neu gebautes holt das Flag beim Start mit `ziel_info` ab (die Seite hört noch nicht zu, wenn Rust es sendet).
+/// Ohne eingerichteten Runner öffnet sich wie sonst die Verbindungsseite (Einstellungen).
+pub fn freigaben_zeigen(app: &AppHandle) {
+    let schon_offen = app.get_webview_window(CHAT).is_some();
+    if let (Some(a), Some(h)) = (app.try_state::<Arc<super::AgentZustand>>(), app.try_state::<Arc<Huelle>>()) {
+        // ohne eingerichteten Runner öffnet `nach_vorn` die Einstellungen, nicht das Chat-Fenster: dann kein Merken
+        if !schon_offen && sperre(&h.einstellungen).agent.eingerichtet() {
+            a.freigaben_zeigen.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    huelle_fenster::nach_vorn(app);
+    if schon_offen {
+        let _ = tauri::Emitter::emit_to(app, CHAT, "freigaben-zeigen", ());
+    }
+}
+
 /// Öffnet das Chat-Fenster oder holt es nach vorn.
 pub fn chat_oeffnen(app: &AppHandle) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window(CHAT) {

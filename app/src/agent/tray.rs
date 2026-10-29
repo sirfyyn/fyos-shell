@@ -46,7 +46,8 @@ pub fn bauen(app: &AppHandle) -> tauri::Result<()> {
         .tooltip(produkt)
         .menu(&menu)
         .on_menu_event(|app, ereignis| match ereignis.id.as_ref() {
-            "oeffnen" | "freigaben" => fenster::nach_vorn(app),
+            "oeffnen" => fenster::nach_vorn(app),
+            "freigaben" => super::fenster::freigaben_zeigen(app),
             "einstellungen" => {
                 let _ = fenster::haupt(app, true);
             }

@@ -231,6 +231,7 @@
       try {
         const r = await transport.api('GET', '/api/freigaben');
         S.freigaben = Array.isArray(r.freigaben) ? r.freigaben : [];
+        if (opts.beiFreigaben) opts.beiFreigaben(S.freigaben);
       } catch (e) {
         /* nächste Gelegenheit */
       }
@@ -238,7 +239,10 @@
     async function entscheide(id, wert, notiz) {
       try {
         const r = await transport.api('POST', `/api/freigaben/${encodeURIComponent(id)}`, { entscheidung: wert === 'erlauben' ? 'erteilt' : 'abgelehnt', notiz: notiz || undefined, von: 'mensch' });
-        if (Array.isArray(r.freigaben)) S.freigaben = r.freigaben;
+        if (Array.isArray(r.freigaben)) {
+          S.freigaben = r.freigaben;
+          if (opts.beiFreigaben) opts.beiFreigaben(S.freigaben);
+        }
       } catch (f) {
         view.addNote(`Entscheidung nicht gespeichert: ${f.message || f}`, 'fehler');
       }

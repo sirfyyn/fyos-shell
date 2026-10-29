@@ -57,6 +57,47 @@
     const erteilt = await warte(() => text().includes('Freigabe erteilt.'), 15000);
     await melde('freigabe-erteilt', erteilt, text().slice(-80));
 
+    { // Freigaben-Panel (eigener Block: eigene Namen)
+    // je eine offene Freigabe in Sitzung 1 (Probe) und Sitzung 2 (hohes Risiko); Panel, Erlauben, Später, Sprung
+    const ap = window.__arbeitsplatz;
+    const panelKarten = () => [...document.querySelectorAll('#freigabenListe .fp-karte')];
+    const alle = async () => (await api('GET', '/api/freigaben')).freigaben;
+    await chat.sende('freigabe');
+    await api('POST', '/api/gespraech/2/nachricht', { text: 'freigabe hoch' });
+    const zahl2 = await warte(() => $('freigabenZahl').textContent === '2' && !$('freigabenKnopf').hidden, 15000);
+    await melde('freigaben-zahl', zahl2, `Zahl=${$('freigabenZahl').textContent} Knopf verborgen=${$('freigabenKnopf').hidden}`);
+    $('freigabenKnopf').click();
+    const zwei = await warte(() => panelKarten().length === 2, 5000);
+    const titel = panelKarten().map((k) => `${k.querySelector('.fp-sitzung-titel').textContent}/${k.dataset.risiko}`);
+    await melde('freigaben-panel-alle-sitzungen', zwei && !$('freigabenPanel').hidden && titel.includes('Probe/low') && titel.includes('Zweite Sitzung/high') && panelKarten().some((k) => k.classList.contains('high')), titel.join(' · '));
+    // Erlauben im Panel: die hochriskante Freigabe der Sitzung 2 (die Sitzung selbst ist gar nicht offen)
+    panelKarten().find((k) => k.dataset.risiko === 'high').querySelector('.fp-erlauben').click();
+    const eins = await warte(() => panelKarten().length === 1 && $('freigabenZahl').textContent === '1', 15000);
+    const nachErlauben = (await alle()).map((f) => `${f.conversationId}:${f.status}`).sort().join(',');
+    await melde('freigaben-erlauben-im-panel', eins && /2:erteilt/.test(nachErlauben) && /1:offen/.test(nachErlauben), nachErlauben);
+    // Später: bleibt beim Runner offen und in der Zahl
+    panelKarten()[0].querySelector('.fp-spaeter').click();
+    const spaeter = await warte(() => panelKarten()[0] && panelKarten()[0].dataset.zustand === 'spaeter', 5000);
+    const nachSpaeter = (await alle()).filter((f) => f.status === 'offen').length;
+    await melde('freigaben-spaeter', spaeter && $('freigabenZahl').textContent === '1' && nachSpaeter === 1, `Zahl=${$('freigabenZahl').textContent} offen beim Runner=${nachSpaeter}`);
+    // Sprung: aus Sitzung 2 in Sitzung 1, ohne Neuaufbau der Ansichten
+    await ap.wechsle(2);
+    await warte(() => String(ap.aktiv && ap.aktiv.id) === '2', 15000);
+    const fpPane1 = ap.ansichten.get('1').pane;
+    const fpPane2 = ap.ansichten.get('2').pane;
+    panelKarten()[0].querySelector('.fp-sprung').click();
+    const gesprungen = await warte(() => String(ap.aktiv && ap.aktiv.id) === '1' && $('freigabenPanel').hidden, 15000);
+    await melde('freigaben-sprung', gesprungen, `aktiv=${ap.aktiv && ap.aktiv.id} Panel verborgen=${$('freigabenPanel').hidden}`);
+    await melde('freigaben-sprung-ohne-neuaufbau', ap.ansichten.get('1') && ap.ansichten.get('1').pane === fpPane1 && ap.ansichten.get('2') && ap.ansichten.get('2').pane === fpPane2 && fpPane1.isConnected && fpPane2.isConnected, 'dieselben Ansichten (Elemente) wie vor dem Sprung');
+    // die Karte im Verlauf der Sitzung entscheidet; Zahl und Knopf folgen
+    const offeneKarte = () => spalteAktiv().querySelector('.freigabe[data-zustand="offen"] .fz-knoepfe button');
+    const hatKarte = await warte(() => offeneKarte(), 15000);
+    if (hatKarte) offeneKarte().click();
+    const nachVerlauf = await warte(() => $('freigabenZahl').textContent === '0' && $('freigabenKnopf').hidden, 15000);
+    await melde('freigaben-verlauf-zieht-nach', hatKarte && nachVerlauf, `Zahl=${$('freigabenZahl').textContent} Knopf verborgen=${$('freigabenKnopf').hidden}`);
+    await warte(() => text().includes('Freigabe erteilt.'), 15000);
+    }
+
     await chat.sende('reset');
     await melde('reset-marker', await warte(() => document.querySelector('.marker')), 'Marker im Verlauf');
 

@@ -7,6 +7,7 @@ Die Chat-Seite bedient sich im Prüfmodus selbst (ui/agent/e2e.js, nur mit FYOS_
 
   A1  Chat-Fenster lädt die lokale Seite und verbindet sich: Gesundheit, Gespräche, Verlauf, Strom, alle mit richtigem Token und Kopf X-FYOS-Agent
   A2  Gespräch mit Streaming (Text erscheint vor dem Ende), Werkzeugkarte, Freigabe (genau zwei Knöpfe, Erlauben wirkt), Reset-Marker,
+      Freigaben-Panel (Zahl aller offenen Freigaben, Liste über alle Sitzungen, Erlauben im Panel, Später, Sprung in die Sitzung ohne Neuaufbau),
       Neuverbinden mitten im Strom (Text komplett, nichts doppelt)
       Arbeitsplatz: Sitzungsliste, Arbeitsordner im Kopf, Terminal-Ansicht (ANSI, Fortschrittszeile), Diff-Ansicht, Wechsel ohne Neuaufbau,
       laufende Sitzung markiert, neue Sitzung mit Arbeitsordner, neue Sitzung nur mit Namen (Enter im Namensfeld), Umbenennen im Kopf
@@ -46,7 +47,8 @@ ERWARTET_B = ["runner-liste", "lokaler-runner-laeuft", "lokal-dialog-statt-baum"
               "baum-sitzung-mit-ordner", "ausserhalb-403-klar", "nicht-gefunden-404-klar", "zuletzt-je-runner", "ende"]
 TOKEN = "-".join(["e2e", "probe"] * 4)  # erfundener Testwert
 ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz", "werkzeugkarte", "freigabe-karte",
-            "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt",
+            "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "freigaben-zahl", "freigaben-panel-alle-sitzungen", "freigaben-erlauben-im-panel",
+            "freigaben-spaeter", "freigaben-sprung", "freigaben-sprung-ohne-neuaufbau", "freigaben-verlauf-zieht-nach", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt",
             "sitzungsliste", "ordner-im-kopf", "terminal-ansicht", "terminal-fortschrittszeile", "diff-ansicht", "wechsel-zu-zweiter", "wechsel-eigener-verlauf",
             "laufende-sitzung-markiert", "markierung-endet", "wechsel-erhaelt-sitzung", "wechsel-nichts-doppelt", "neue-sitzung",
             "neue-sitzung-mit-namen", "umbenennen-kopf", "umbenennen-ohne-neuaufbau", "umbenennen-esc", "umbenennen-leiste", "umbenennen-fehler-klar",

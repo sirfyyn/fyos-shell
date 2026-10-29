@@ -785,3 +785,225 @@ test('Brücke: PATCH ist der einzige Schreibweg der Benennung; die Seite sendet 
   assert.ok(/aenderungsKoerper\(\{ titel: p\.titel \}\)/.test(quelle) && /aenderungsKoerper\(\{ archiviert: !!an \}\)/.test(quelle));
   assert.ok(!/'(PUT|DELETE)'/.test(quelle), 'kein PUT oder DELETE in der Seite');
 });
+
+// --- Freigaben-Panel (freigaben.js): Zahl, Liste über alle Sitzungen, Karten, Später, Sprung ---
+const FREIGABEN_HTML = '<!doctype html><body><button id="kn" hidden></button><b id="za">0</b><aside id="pa" hidden><button id="zu"></button><p id="hi" hidden></p><div id="li"></div></aside></body>';
+
+const plain = (x) => JSON.parse(JSON.stringify(x)); // Werte aus dem jsdom-Fenster haben andere Prototypen: erst vergleichbar machen
+
+/** Form eines Eintrags aus GET /api/freigaben des Runners (siehe deploy/runner/pi-durable/test/freigaben-wege.test.js). */
+const fg = (id, conv, extra) => ({ id, conversationId: conv, gespraechTitel: `Sitzung ${conv}`, aktion: `Aktion ${id}`, risiko: 'medium', kontext: `Kontext ${id}`, befehl: null, werkzeug: 'bash', status: 'offen', erstellt: Number(String(id).replace(/\D/g, '')) || 1, ...extra });
+
+function freigabenMit(start, opts = {}) {
+  const w = fenster(['freigaben.js'], FREIGABEN_HTML);
+  const d = w.document;
+  const g = (id) => d.getElementById(id);
+  const zustand = { liste: start, aufrufe: [], fehler: null, sprung: [], aenderungen: 0 };
+  const transport = {
+    api: async (methode, pfad, koerper) => {
+      zustand.aufrufe.push([methode, pfad, koerper]);
+      if (zustand.fehler && methode === 'POST') throw new Error(zustand.fehler);
+      if (methode === 'GET') return { ok: true, freigaben: zustand.liste };
+      const id = decodeURIComponent(pfad.split('/').pop());
+      zustand.liste = zustand.liste.map((f) => (String(f.id) === id ? { ...f, status: koerper.entscheidung } : f));
+      return { ok: true, freigaben: zustand.liste };
+    },
+  };
+  const fp = w.FyosPrototyp.createFreigaben(
+    { knopf: g('kn'), zahl: g('za'), panel: g('pa'), liste: g('li'), zu: g('zu'), hinweis: g('hi') },
+    { transport, intervallMs: 0, beiSprung: (id) => zustand.sprung.push(id), beiAenderung: () => void (zustand.aenderungen += 1), ...opts },
+  );
+  const karten = () => [...d.querySelectorAll('.fp-karte')];
+  return { w, d, g, fp, zustand, karten };
+}
+
+dom('Freigaben: Knopf mit der Zahl ALLER offenen Freigaben (alle Sitzungen), Entschiedenes zählt nicht, bei null ist der Knopf weg', async () => {
+  const f = freigabenMit([fg('f1', 1), fg('f2', 2), fg('f3', 2, { status: 'erteilt' }), fg('f4', 3, { status: 'abgelehnt' })]);
+  assert.equal(f.g('kn').hidden, true, 'vor dem Laden: nichts zu zeigen');
+  await f.fp.lade();
+  assert.equal(f.g('kn').hidden, false);
+  assert.equal(f.g('za').textContent, '2');
+  assert.equal(f.g('kn').getAttribute('aria-expanded'), 'false');
+  f.zustand.liste = [];
+  await f.fp.lade();
+  assert.equal(f.g('za').textContent, '0');
+  assert.equal(f.g('kn').hidden, true);
+  assert.ok(f.zustand.aenderungen > 0, 'der Aufrufer wird bei jeder Änderung benachrichtigt (Kopfzustand „wartet auf dich“)');
+});
+
+dom('Freigaben: Panel zeigt jede offene Freigabe mit Sitzung, Risiko, Aktion, Kontext und Befehl; hohes Risiko ist hervorgehoben; leer: „Keine offenen Freigaben.“', async () => {
+  const f = freigabenMit([
+    fg('f1', 1, { risiko: 'low', befehl: 'echo eins' }),
+    fg('f2', 2, { risiko: 'high', befehl: 'git branch -D alt', aktion: 'Branch löschen', kontext: 'Aufräumen nach dem Merge.' }),
+    fg('f3', 2, { risiko: undefined, befehl: null, werkzeug: 'edit' }),
+  ]);
+  await f.fp.lade();
+  assert.equal(f.g('pa').hidden, true);
+  f.g('kn').click();
+  assert.equal(f.g('pa').hidden, false);
+  assert.equal(f.g('kn').getAttribute('aria-expanded'), 'true');
+  const k = f.karten();
+  assert.equal(k.length, 3);
+  assert.deepEqual(k.map((x) => x.dataset.id), ['f1', 'f2', 'f3'], 'älteste zuerst');
+  assert.match(k[0].querySelector('.chip.risiko').textContent, /geringes Risiko/);
+  assert.equal(k[1].classList.contains('high'), true);
+  assert.equal(k[0].classList.contains('high'), false);
+  assert.match(k[1].querySelector('.chip.risiko').textContent, /hohes Risiko/);
+  assert.match(k[2].querySelector('.chip.risiko').textContent, /mittleres Risiko/, 'ohne Angabe: mittleres Risiko');
+  assert.equal(k[1].querySelector('.fp-aktion').textContent, 'Branch löschen');
+  assert.equal(k[1].querySelector('.fp-kontext').textContent, 'Aufräumen nach dem Merge.');
+  assert.equal(k[1].querySelector('.fp-befehl').textContent, 'git branch -D alt');
+  assert.equal(k[2].querySelector('.fp-befehl').textContent, 'edit', 'ohne Befehl das Werkzeug');
+  assert.equal(k[1].querySelector('.fp-sitzung-titel').textContent, 'Sitzung 2');
+  for (const x of k) assert.deepEqual([...x.querySelectorAll('.fp-knoepfe button')].map((b) => b.textContent), ['Erlauben', 'Ablehnen', 'Später']);
+  // leer
+  f.zustand.liste = [];
+  await f.fp.lade();
+  assert.equal(f.karten().length, 0);
+  assert.equal(f.g('li').textContent, 'Keine offenen Freigaben.');
+  assert.equal(f.g('pa').hidden, false, 'ein geöffnetes Panel bleibt offen, auch wenn nichts mehr offen ist');
+  assert.equal(f.g('kn').hidden, false);
+});
+
+dom('Freigaben: Texte vom Runner sind nur Text (kein HTML)', async () => {
+  const f = freigabenMit([fg('f1', 1, { aktion: '<img src=x onerror=alert(1)>', kontext: '<b>fett</b>', gespraechTitel: '<script>x</script>' })]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  assert.equal(f.d.querySelectorAll('.fp-liste img, .fp-liste b, .fp-liste script, #li img, #li script').length, 0);
+  assert.equal(f.d.querySelector('.fp-aktion').textContent, '<img src=x onerror=alert(1)>');
+});
+
+dom('Freigaben: Erlauben und Ablehnen schicken genau erteilt/abgelehnt mit von=mensch an den Weg des Runners; die Antwortliste ersetzt die Anzeige', async () => {
+  const f = freigabenMit([fg('f1', 1), fg('f2', 2)]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  const knopf = (id, text) => [...f.d.querySelectorAll(`.fp-karte[data-id="${id}"] button`)].find((b) => b.textContent === text);
+  knopf('f1', 'Erlauben').click();
+  await bis(() => f.karten().length === 1);
+  const post = f.zustand.aufrufe.filter((a) => a[0] === 'POST');
+  assert.deepEqual(plain(post), [['POST', '/api/freigaben/f1', { entscheidung: 'erteilt', von: 'mensch' }]]);
+  assert.equal(f.g('za').textContent, '1');
+  assert.match(f.g('hi').textContent, /Freigabe erteilt/);
+  knopf('f2', 'Ablehnen').click();
+  await bis(() => f.karten().length === 0);
+  assert.deepEqual(plain(f.zustand.aufrufe.filter((a) => a[0] === 'POST')[1]), ['POST', '/api/freigaben/f2', { entscheidung: 'abgelehnt', von: 'mensch' }]);
+  assert.equal(f.g('li').textContent, 'Keine offenen Freigaben.');
+  assert.match(f.g('hi').textContent, /Freigabe abgelehnt/);
+});
+
+dom('Freigaben: Ids mit Sonderzeichen werden im Weg maskiert; scheitert die Entscheidung, steht der Grund da und die Knöpfe sind wieder frei', async () => {
+  const f = freigabenMit([fg('fr-a/b c', 1)]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  f.zustand.fehler = 'Freigabe ist bereits abgelehnt';
+  f.d.querySelector('.fp-erlauben').click();
+  await bis(() => /nicht gespeichert/.test(f.g('hi').textContent));
+  assert.match(f.g('hi').textContent, /bereits abgelehnt/);
+  assert.equal(f.zustand.aufrufe.find((a) => a[0] === 'POST')[1], '/api/freigaben/fr-a%2Fb%20c');
+  await bis(() => f.d.querySelector('.fp-erlauben') && !f.d.querySelector('.fp-erlauben').disabled);
+  assert.equal(f.d.querySelector('.fp-ablehnen').disabled, false);
+});
+
+dom('Freigaben: „Später“ stellt nur im Fenster zurück: nichts wird gesendet, die Zahl bleibt, die Karte bleibt in der Liste, „Jetzt entscheiden“ holt die Knöpfe zurück', async () => {
+  const f = freigabenMit([fg('f1', 1), fg('f2', 2)]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  const aufrufeVorher = f.zustand.aufrufe.length;
+  f.d.querySelector('.fp-karte[data-id="f1"] .fp-spaeter').click();
+  assert.equal(f.zustand.aufrufe.length, aufrufeVorher, 'kein Aufruf beim Runner');
+  assert.equal(f.g('za').textContent, '2', 'bleibt offen und gezählt');
+  const k = f.d.querySelector('.fp-karte[data-id="f1"]');
+  assert.equal(k.dataset.zustand, 'spaeter');
+  assert.match(k.querySelector('.fp-ergebnis').textContent, /bleibt in der Liste und in der Menüleiste offen/);
+  assert.deepEqual([...k.querySelectorAll('button')].map((b) => b.textContent).filter((t) => t !== 'Zur Sitzung'), ['Jetzt entscheiden']);
+  assert.deepEqual(plain(f.fp.zurueckgestellt()), ['f1']);
+  // das nächste Abfragen ändert daran nichts
+  await f.fp.lade();
+  assert.equal(f.d.querySelector('.fp-karte[data-id="f1"]').dataset.zustand, 'spaeter');
+  assert.equal(f.karten().length, 2);
+  f.d.querySelector('.fp-karte[data-id="f1"] .fp-jetzt').click();
+  assert.equal(f.d.querySelector('.fp-karte[data-id="f1"]').dataset.zustand, 'offen');
+  assert.deepEqual([...f.d.querySelectorAll('.fp-karte[data-id="f1"] .fp-knoepfe button')].map((b) => b.textContent), ['Erlauben', 'Ablehnen', 'Später']);
+  // zurückgestellt, dann anderswo entschieden: das Merken fällt weg
+  f.d.querySelector('.fp-karte[data-id="f2"] .fp-spaeter').click();
+  f.zustand.liste = f.zustand.liste.map((x) => (x.id === 'f2' ? { ...x, status: 'erteilt' } : x));
+  await f.fp.lade();
+  assert.deepEqual(plain(f.fp.zurueckgestellt()), []);
+  assert.equal(f.g('za').textContent, '1');
+});
+
+dom('Freigaben: der Sprung öffnet die Sitzung der Freigabe (ihre Id), schließt das Panel und ruft nichts beim Runner auf', async () => {
+  const f = freigabenMit([fg('f1', 1), fg('f2', 'abc-7')]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  const vorher = f.zustand.aufrufe.length;
+  f.d.querySelector('.fp-karte[data-id="f2"] .fp-sprung').click();
+  assert.deepEqual(f.zustand.sprung, ['abc-7']);
+  assert.equal(f.g('pa').hidden, true, 'das Panel geht zu, die Karte der Sitzung ist im Verlauf');
+  assert.equal(f.zustand.aufrufe.length, vorher);
+  assert.equal(f.g('za').textContent, '2', 'die Freigabe bleibt offen');
+  assert.equal(f.g('kn').hidden, false);
+  // Sprung auch aus einer zurückgestellten Karte
+  f.fp.zeige(true);
+  f.d.querySelector('.fp-karte[data-id="f1"] .fp-spaeter').click();
+  f.d.querySelector('.fp-karte[data-id="f1"] .fp-sprung').click();
+  assert.deepEqual(f.zustand.sprung, ['abc-7', '1']);
+});
+
+dom('Freigaben: Esc schließt das Panel; 1, 2, J, N und Esc im Panel erreichen nicht die Tastenkürzel der Verlaufskarte am Dokument', async () => {
+  const f = freigabenMit([fg('f1', 1)]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  const amDokument = [];
+  f.d.addEventListener('keydown', (e) => amDokument.push(e.key));
+  const knopf = f.d.querySelector('.fp-erlauben');
+  for (const key of ['1', '2', 'y', 'n']) taste(f.w, knopf, key);
+  assert.deepEqual(amDokument, [], 'keine der Tasten kommt am Dokument an');
+  assert.equal(f.zustand.aufrufe.filter((a) => a[0] === 'POST').length, 0, 'und entscheidet nichts');
+  taste(f.w, knopf, 'Escape');
+  assert.equal(f.g('pa').hidden, true);
+  assert.deepEqual(amDokument, []);
+  // andere Tasten (Tab, Cmd+B) gehen weiter
+  f.fp.zeige(true);
+  taste(f.w, f.d.querySelector('.fp-erlauben'), 'b', { metaKey: true });
+  assert.deepEqual(amDokument, ['b']);
+});
+
+dom('Freigaben: bei einem Fehler der Liste bleibt die alte stehen; nach zwei Fehlern steht ein Hinweis im Panel', async () => {
+  const w = fenster(['freigaben.js'], FREIGABEN_HTML);
+  const g = (id) => w.document.getElementById(id);
+  let ok = true;
+  const fp = w.FyosPrototyp.createFreigaben(
+    { knopf: g('kn'), zahl: g('za'), panel: g('pa'), liste: g('li'), zu: g('zu'), hinweis: g('hi') },
+    { intervallMs: 0, transport: { api: async () => { if (!ok) throw new Error('weg'); return { freigaben: [fg('f1', 1)] }; } } },
+  );
+  await fp.lade();
+  fp.zeige(true);
+  ok = false;
+  await fp.lade();
+  assert.equal(w.document.querySelectorAll('.fp-karte').length, 1, 'die alte Liste bleibt');
+  assert.ok(!/nicht laden/.test(g('li').textContent), 'ein einzelner Fehler macht keinen Lärm');
+  await fp.lade();
+  assert.match(g('li').textContent, /lässt sich gerade nicht laden/);
+  assert.equal(w.document.querySelectorAll('.fp-karte').length, 1);
+});
+
+test('Freigaben-Panel: eingebunden in chat.js (Sprung = wechsle, Strom, Tray-Ereignis) und neutral formuliert (Quelltext-Prüfung)', () => {
+  const chat = lies('chat.js');
+  assert.match(chat, /FP\.createFreigaben\(/);
+  assert.match(chat, /beiSprung: \(id\) => wechsle\(id\)/, 'der Sprung nutzt den Sitzungswechsel der Leiste (kein Neuaufbau der Ansichten)');
+  assert.match(chat, /p\.daten\.typ === 'freigabe'\) freigaben\.lade\(\)/, 'eine neue Freigabe im Aktivitätsstrom lädt die Liste sofort');
+  assert.match(chat, /listen\('freigaben-zeigen'/, 'Tray-Zeile öffnet das Panel');
+  assert.match(chat, /i\.freigaben_zeigen/, 'neu geöffnetes Fenster holt das Flag mit ziel_info');
+  assert.match(chat, /beiFreigaben: \(liste\) => freigaben\.setze\(liste\)/, 'Entscheidung in der Verlaufskarte zieht das Panel nach');
+  const html = lies('chat.html');
+  for (const id of ['freigabenKnopf', 'freigabenZahl', 'freigabenPanel', 'freigabenListe', 'freigabenZu', 'freigabenHinweis']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.includes('src="freigaben.js"') && html.includes('href="freigaben.css"'));
+  const eigene = lies('freigaben.js') + lies('freigaben.css') + html;
+  // die Namen stehen hier zerlegt, damit der Export-Scan diese Datei nicht selbst trifft
+  const verboten = new RegExp(['gin', 'ny|perse', 'phone|ti', 'tan|rh', 'ea|sirf', 'yyn'].join(''), 'i');
+  assert.ok(!verboten.test(eigene), 'kein Agenten- oder Rechnername im Quelltext des Panels');
+  // einziger Schreibweg: die Entscheidung über den Weg der Altfassung und der Verlaufskarten
+  assert.equal((lies('freigaben.js').match(/'POST'/g) || []).length, 1);
+  assert.ok(lies('freigaben.js').includes("`/api/freigaben/${encodeURIComponent(id)}`") && lies('freigaben.js').includes("'/api/freigaben'"));
+});
