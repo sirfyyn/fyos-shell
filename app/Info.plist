@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Wird von Tauri beim macOS-Bau in die Info.plist des Bündels gemischt. Ohne diesen Text zeigt macOS die Anfrage „Lokales Netzwerk“
+	     nicht an und blockiert Verbindungen zu Adressen im Heimnetz (Runner im LAN) ohne Fehlermeldung (Fund 29.10.2026). -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Die App verbindet sich mit einem Runner oder Server in deinem lokalen Netzwerk.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

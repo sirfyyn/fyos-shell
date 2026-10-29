@@ -373,3 +373,11 @@ test('Brücke: die Seite öffnet weder fremde Wege noch den reservierten Weg zum
   assert.ok(!quelle.includes('ordner/erlauben'), 'nur Rust meldet dem lokalen Runner einen gewählten Ordner');
   assert.ok(!/plugin:dialog|plugin-dialog|__TAURI_PLUGIN/.test(quelle), 'die Seite hat keinen Zugriff auf das Dialog-Plugin');
 });
+
+test('Gesundheitsprobe: ein Fehler bleibt als Hinweis stehen und die Probe wiederholt sich, ohne die Seite neu zu laden (Quelltext-Prüfung)', () => {
+  const quelle = lies('chat.js');
+  const probe = quelle.slice(quelle.indexOf('function gesundheitPruefen'), quelle.indexOf('gesundheitPruefen();'));
+  assert.ok(probe.includes('setTimeout(gesundheitPruefen, 8000)'), 'die Probe wiederholt sich alle 8 s an Ort und Stelle');
+  assert.ok(!/location\.reload/.test(probe), 'kein Neuladen: sonst blitzt der Hinweis nur auf');
+  assert.match(probe, /Kein Runner erreichbar/);
+});

@@ -643,15 +643,27 @@
     }).catch(() => {});
   }
 
-  transport.api('GET', '/api/health').then(nameSetzen).catch((f) => {
-    // Runner nicht erreichbar oder Token abgelehnt: die Katalogmeldung (Ursache und Abhilfe) bleibt im Banner, die Seite versucht es alle 8 s neu
-    startFehler = `${(f && f.message) || f}${f && f.code ? ` (${f.code})` : ''}`;
-    $('verbindung').textContent = 'kein Runner';
-    zeigeAktiv();
-    $('banner').hidden = false;
-    $('banner').textContent = `Kein Runner erreichbar: ${startFehler}`;
-    setTimeout(() => window.location.reload(), 8000);
-  });
+  // Runner nicht erreichbar oder Token abgelehnt: die Katalogmeldung (Ursache und Abhilfe) bleibt im Banner stehen, die Prüfung wiederholt
+  // sich alle 8 s an Ort und Stelle (kein Neuladen der Seite: sonst blitzt der Hinweis nur auf und die Ursache ist nicht zu lesen).
+  let gesundheitVersuche = 0;
+  function gesundheitPruefen() {
+    transport.api('GET', '/api/health').then((r) => {
+      if (gesundheitVersuche > 0) {
+        $('banner').hidden = true;
+        startFehler = '';
+      }
+      nameSetzen(r);
+    }).catch((f) => {
+      gesundheitVersuche += 1;
+      startFehler = `${(f && f.message) || f}${f && f.code ? ` (${f.code})` : ''}`;
+      $('verbindung').textContent = 'kein Runner';
+      zeigeAktiv();
+      $('banner').hidden = false;
+      $('banner').textContent = `Kein Runner erreichbar: ${startFehler}`;
+      setTimeout(gesundheitPruefen, 8000);
+    });
+  }
+  gesundheitPruefen();
 
   async function start() {
     transport.oeffneStrom('strom', '/api/strom').catch(() => {});
