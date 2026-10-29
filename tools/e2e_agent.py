@@ -47,7 +47,8 @@ ERWARTET_B = ["runner-liste", "lokaler-runner-laeuft", "lokal-dialog-statt-baum"
               "baum-sitzung-mit-ordner", "ausserhalb-403-klar", "nicht-gefunden-404-klar", "zuletzt-je-runner", "ende"]
 TOKEN = "-".join(["e2e", "probe"] * 4)  # erfundener Testwert
 ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz", "werkzeugkarte", "freigabe-karte",
-            "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "freigaben-zahl", "freigaben-panel-alle-sitzungen", "freigaben-erlauben-im-panel",
+            "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "freigaben-zahl", "freigaben-live-strom", "freigaben-banner", "freigaben-banner-oeffnet-panel",
+            "freigaben-panel-alle-sitzungen", "freigaben-zerstoererisch-marke", "freigaben-zerstoererisch-zweite-bestaetigung", "freigaben-erlauben-im-panel", "freigaben-notiz-beim-runner",
             "freigaben-spaeter", "freigaben-sprung", "freigaben-sprung-ohne-neuaufbau", "freigaben-verlauf-zieht-nach", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt",
             "sitzungsliste", "ordner-im-kopf", "terminal-ansicht", "terminal-fortschrittszeile", "diff-ansicht", "wechsel-zu-zweiter", "wechsel-eigener-verlauf",
             "laufende-sitzung-markiert", "markierung-endet", "wechsel-erhaelt-sitzung", "wechsel-nichts-doppelt", "neue-sitzung",

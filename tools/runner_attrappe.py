@@ -17,8 +17,8 @@ Spricht den Teil der Runner-Schnittstelle, den die Chat-Seite und die Seitenleis
   POST /api/gespraech/<id>/nachricht      startet je nach Text ein Szenario (siehe SZENARIEN)
   POST /api/gespraech/<id>/abbrechen      beendet ein laufendes Szenario früh
   GET  /api/freigaben                     alle Freigaben aller Sitzungen, neueste zuerst, in der Form des Runners (conversationId, gespraechTitel, aktion,
-                                          risiko, kontext, befehl, werkzeug, status offen/erteilt/abgelehnt, erstellt, entschieden, entschiedenVon, notiz)
-  POST /api/freigaben/<id>                {entscheidung: erteilt|abgelehnt, von, notiz} → 200 {ok, freigaben} (die neue Liste) und ein Entscheidungs-Eintrag
+                                          risiko, zerstoererisch, kontext, befehl, werkzeug, status offen/erteilt/abgelehnt, erstellt, entschieden, entschiedenVon, notiz)
+  POST /api/freigaben/<id>                {entscheidung: erteilt|abgelehnt, von, notiz (höchstens 600 Zeichen, leer = null)} → 200 {ok, freigaben} (die neue Liste) und ein Entscheidungs-Eintrag
                                           im Strom der Sitzung; Fehler wie beim Runner: 500 {ok: false, fehler} (falsches Wort, unbekannt, schon entschieden)
   POST /api/e2e/ergebnis                  die Seite meldet ein Prüfergebnis (nur Debug-Bauten der Hülle starten das Skript der Seite)
   POST /api/e2e/kappen                    trennt alle offenen Ströme hart (Netzabbruch mitten im Strom)
@@ -42,7 +42,7 @@ SZENARIEN = {
     "werkzeug": "ein Werkzeugaufruf mit Ergebnis (Karte)",
     "terminal": "Bash-Aufruf mit farbiger Ausgabe in Teilen (Terminal-Ansicht, ANSI)",
     "diff": "Edit- und Write-Aufruf (Diff-Ansicht)",
-    "freigabe": "eine Freigabe, die entschieden werden muss (nur Erlauben/Ablehnen); mit „hoch“ im Text hohes Risiko",
+    "freigabe": "eine Freigabe, die entschieden werden muss (nur Erlauben/Ablehnen); mit „hoch“ im Text hohes Risiko (und zerstörerisch), mit „zerst“ mittleres Risiko und zerstörerisch",
     "reset": "ein Reset-Marker (neuer Kontext)",
     "lang": "zwölf Teile über sechs Sekunden (Abbruch mitten im Strom)",
 }
@@ -200,7 +200,7 @@ class Sitzung:
                 self.teil = ""
             self.senden([{"type": "run_start"}, {"type": "message_start", "message": {"role": "assistant", "content": []}}])
             if "freigabe" in t:
-                self.freigabe_szenario(hoch="hoch" in t)
+                self.freigabe_szenario(hoch="hoch" in t, zerst="zerst" in t)
             elif "terminal" in t:
                 self.terminal_szenario()
             elif "diff" in t:
@@ -269,14 +269,16 @@ class Sitzung:
         self.werkzeug_ende(tid2, "write", "neu.txt geschrieben")
         self.antwort_in_teilen(["Diff fertig."], 0.1)
 
-    def freigabe_szenario(self, hoch=False):
+    def freigabe_szenario(self, hoch=False, zerst=False):
         fid = f"f{self.z.nr()}"
-        risiko = "high" if hoch else "low"
+        risiko = "high" if hoch else ("medium" if zerst else "low")
+        # wie neueFreigabe() des Runners: hohes Risiko gilt immer als zerstörerisch; das Modell kann es auch bei kleinerem Risiko setzen
+        zerst = bool(zerst or hoch)
         jetzt = int(time.time() * 1000)
         # Form eines Eintrags wie GET /api/freigaben des Runners (neueFreigabe + gespraechTitel + kontext)
         f = {
             "id": fid, "conversationId": self.id, "gespraechTitel": self.titel, "taskId": None, "aktion": "Probe-Aktion ausführen", "risiko": risiko,
-            "kontext": "Die Probe-Aktion läuft nur in der Attrappe und ändert nichts.", "kontextHerkunft": "rueckfall", "zerstoererisch": hoch,
+            "kontext": "Die Probe-Aktion läuft nur in der Attrappe und ändert nichts.", "kontextHerkunft": "rueckfall", "zerstoererisch": zerst,
             "werkzeug": "bash", "befehl": "echo probe", "bezug": None, "status": "offen", "erstellt": jetzt, "entschieden": None, "entschiedenVon": None, "notiz": None,
         }
         with self.z.sperre:

@@ -30,6 +30,14 @@
 .fp-knoepfe { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
 .fp-ergebnis { font-size: 12.5px; color: var(--leise); }
 
+.fp-banner { position: absolute; top: 0; left: 0; right: 0; z-index: 6; display: block; box-sizing: border-box; width: 100%; padding: 7px 14px; text-align: left; font-size: 13px; font-weight: 600; color: var(--warn); background: var(--flaeche2); border: 0; border-bottom: 1px solid var(--warn); border-radius: 0; cursor: pointer; }
+.fp-banner[hidden] { display: none; }
+.fp-chips { display: inline-flex; align-items: center; gap: 6px; }
+.fp-karte.zerst { border-left-color: var(--schlecht); }
+.chip.zerst { color: #fff; background: var(--schlecht); border-color: var(--schlecht); font-weight: 600; }
+.fp-notiz { width: 100%; box-sizing: border-box; resize: vertical; min-height: 40px; max-height: 140px; padding: 6px 8px; font: inherit; font-size: 12.5px; color: inherit; background: var(--flaeche); border: 1px solid var(--linie); border-radius: 7px; }
+.fp-warnung { padding: 6px 8px; border-radius: 7px; font-size: 12.5px; font-weight: 600; color: var(--schlecht); border: 1px solid var(--schlecht); background: rgba(255, 123, 114, .1); }
+
 @media (max-width: 640px) {
   .fp-panel { width: 100%; }
 }

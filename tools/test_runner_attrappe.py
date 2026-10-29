@@ -138,6 +138,28 @@ class Tests(Basis):
         self.assertEqual(json.loads(f.exception.read())["fehler"], "Freigabe ist bereits abgelehnt")
         self.anfrage(f"/api/freigaben/{frueh['id']}", {"entscheidung": "erteilt"})  # räumt das Szenario auf
 
+    def test_freigabe_zerstoererisch_und_notiz_wie_beim_runner(self):
+        """Feld zerstoererisch (hohes Risiko gilt immer als zerstörerisch, „zerst“ setzt es bei mittlerem Risiko) und notiz (Entscheidungs-Eintrag, auf 600 gekürzt, leer = null)."""
+        vorher = {f["id"] for f in self.anfrage("/api/freigaben")["freigaben"]}
+        # eine Freigabe je Sitzung (eine zweite in derselben Sitzung wartet, bis die erste entschieden ist)
+        for sitzung, text in [(2, "freigabe hoch"), (1, "freigabe zerst")]:
+            threading.Timer(0.05, lambda s=sitzung, t=text: self.anfrage(f"/api/gespraech/{s}/nachricht", {"text": t})).start()
+            time.sleep(0.4)
+        deadline = time.time() + 5
+        neu = []
+        while time.time() < deadline and len(neu) < 2:
+            time.sleep(0.05)
+            neu = sorted((f for f in self.anfrage("/api/freigaben")["freigaben"] if f["id"] not in vorher), key=lambda f: f["erstellt"])
+        self.assertEqual([(f["risiko"], f["zerstoererisch"]) for f in neu], [("high", True), ("medium", True)])
+        hoch, mittel = neu
+        liste = self.anfrage(f"/api/freigaben/{hoch['id']}", {"entscheidung": "erteilt", "von": "mensch", "notiz": "ok" + "x" * 700})
+        self.assertEqual(len(next(f for f in liste["freigaben"] if f["id"] == hoch["id"])["notiz"]), 600)
+        eintraege = [e for e in self.anfrage("/api/gespraech/2/ansicht?voll=1")["entries"] if e["kind"] == "fyos.freigabe-entscheidung"]
+        self.assertEqual(eintraege[-1]["data"]["notiz"], "ok" + "x" * 598)
+        liste = self.anfrage(f"/api/freigaben/{mittel['id']}", {"entscheidung": "abgelehnt", "von": "mensch"})  # ohne Notiz: null
+        self.assertIsNone(next(f for f in liste["freigaben"] if f["id"] == mittel["id"])["notiz"])
+        time.sleep(0.4)  # die Szenarien enden, bevor der nächste Test eine Sitzung braucht
+
     def test_snapshot_enthaelt_den_laufenden_text_nach_dem_neuverbinden(self):
         self.z.tempo = 0.3  # zwölf Teile in etwa 1,8 s, damit der Strom mitten im Lauf geöffnet werden kann
         try:

@@ -128,7 +128,7 @@
 
   // --- Freigaben: Knopf mit Zahl im Kopf und Panel mit allen offenen Freigaben (alle Sitzungen) ---
   const freigaben = FP.createFreigaben(
-    { knopf: $('freigabenKnopf'), zahl: $('freigabenZahl'), panel: $('freigabenPanel'), liste: $('freigabenListe'), zu: $('freigabenZu'), hinweis: $('freigabenHinweis') },
+    { knopf: $('freigabenKnopf'), zahl: $('freigabenZahl'), panel: $('freigabenPanel'), liste: $('freigabenListe'), zu: $('freigabenZu'), hinweis: $('freigabenHinweis'), banner: $('freigabenBanner') },
     {
       transport,
       // Sprung in die Sitzung der Freigabe: dieselbe Funktion wie in der Leiste, die Ansicht bleibt aufgebaut (kein Neuaufbau)
@@ -738,7 +738,7 @@
       const bekannt = gespraeche.some((g) => String(g.id) === String(p.daten.gespraech));
       aktivitaet.zeile(p.daten);
       // eine neue Freigabe (in irgendeiner Sitzung) gleich in Zahl und Panel zeigen, nicht erst beim nächsten Abfragen
-      if (p.daten.typ === 'freigabe') freigaben.lade();
+      freigaben.beiStromZeile(p.daten);
       if (!bekannt && p.daten.art !== 'lauf') ladeListe();
       planeZeichnen();
     }

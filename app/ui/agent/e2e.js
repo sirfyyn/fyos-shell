@@ -62,19 +62,43 @@
     const ap = window.__arbeitsplatz;
     const panelKarten = () => [...document.querySelectorAll('#freigabenListe .fp-karte')];
     const alle = async () => (await api('GET', '/api/freigaben')).freigaben;
+    // Live: das Abfragen alle 4 s ruht; die Zahl muss allein über den Aktivitätsstrom (/api/strom) nachkommen
+    const fpObj = ap.freigaben;
+    fpObj.stopp();
+    const t0 = Date.now();
     await chat.sende('freigabe');
     await api('POST', '/api/gespraech/2/nachricht', { text: 'freigabe hoch' });
     const zahl2 = await warte(() => $('freigabenZahl').textContent === '2' && !$('freigabenKnopf').hidden, 15000);
+    const dauer = Date.now() - t0;
+    fpObj.start(); // Abfragen wieder an (Rückfall)
     await melde('freigaben-zahl', zahl2, `Zahl=${$('freigabenZahl').textContent} Knopf verborgen=${$('freigabenKnopf').hidden}`);
-    $('freigabenKnopf').click();
+    await melde('freigaben-live-strom', zahl2 && dauer < 3500, `ohne Abfragen nach ${dauer} ms`);
+    // Banner bei geschlossenem Panel; ein Klick öffnet das Panel
+    const banner = $('freigabenBanner');
+    await melde('freigaben-banner', !banner.hidden && $('freigabenPanel').hidden && banner.textContent === '2 Freigaben warten', `Banner verborgen=${banner.hidden} Text=${banner.textContent}`);
+    banner.click();
     const zwei = await warte(() => panelKarten().length === 2, 5000);
+    await melde('freigaben-banner-oeffnet-panel', zwei && !$('freigabenPanel').hidden && banner.hidden, `Panel verborgen=${$('freigabenPanel').hidden} Banner verborgen=${banner.hidden}`);
     const titel = panelKarten().map((k) => `${k.querySelector('.fp-sitzung-titel').textContent}/${k.dataset.risiko}`);
     await melde('freigaben-panel-alle-sitzungen', zwei && !$('freigabenPanel').hidden && titel.includes('Probe/low') && titel.includes('Zweite Sitzung/high') && panelKarten().some((k) => k.classList.contains('high')), titel.join(' · '));
-    // Erlauben im Panel: die hochriskante Freigabe der Sitzung 2 (die Sitzung selbst ist gar nicht offen)
-    panelKarten().find((k) => k.dataset.risiko === 'high').querySelector('.fp-erlauben').click();
+    // Marke „zerstörerisch“ nur bei der hochriskanten Karte (der Runner setzt zerstoererisch bei hohem Risiko immer)
+    const hochKarte = () => panelKarten().find((k) => k.dataset.risiko === 'high');
+    const markiert = panelKarten().filter((k) => k.querySelector('.chip.zerst')).map((k) => k.dataset.risiko);
+    await melde('freigaben-zerstoererisch-marke', markiert.length === 1 && markiert[0] === 'high' && hochKarte().querySelector('.chip.zerst').textContent === 'zerstörerisch', `markiert: ${markiert.join(',')}`);
+    // Erlauben im Panel: die hochriskante Freigabe der Sitzung 2 (die Sitzung selbst ist gar nicht offen); zerstörerisch: erst „Wirklich erlauben“, mit Notiz
+    const notizFeld = hochKarte().querySelector('.fp-notiz');
+    notizFeld.value = 'Probelauf, nichts wird gelöscht.';
+    notizFeld.dispatchEvent(new Event('input', { bubbles: true }));
+    hochKarte().querySelector('.fp-erlauben').click();
+    const wirklich = await warte(() => hochKarte() && hochKarte().querySelector('.fp-wirklich'), 5000);
+    const nachErstem = (await alle()).filter((f) => f.status === 'offen').length;
+    await melde('freigaben-zerstoererisch-zweite-bestaetigung', !!wirklich && nachErstem === 2, `Knopf Wirklich erlauben: ${!!wirklich}, offen beim Runner nach dem ersten Klick: ${nachErstem}`);
+    if (wirklich) hochKarte().querySelector('.fp-wirklich').click();
     const eins = await warte(() => panelKarten().length === 1 && $('freigabenZahl').textContent === '1', 15000);
     const nachErlauben = (await alle()).map((f) => `${f.conversationId}:${f.status}`).sort().join(',');
     await melde('freigaben-erlauben-im-panel', eins && /2:erteilt/.test(nachErlauben) && /1:offen/.test(nachErlauben), nachErlauben);
+    const entschieden = (await alle()).find((f) => f.conversationId === 2);
+    await melde('freigaben-notiz-beim-runner', !!entschieden && entschieden.notiz === 'Probelauf, nichts wird gelöscht.' && entschieden.entschiedenVon === 'mensch', `notiz=${entschieden && entschieden.notiz}`);
     // Später: bleibt beim Runner offen und in der Zahl
     panelKarten()[0].querySelector('.fp-spaeter').click();
     const spaeter = await warte(() => panelKarten()[0] && panelKarten()[0].dataset.zustand === 'spaeter', 5000);

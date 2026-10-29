@@ -787,7 +787,7 @@ test('Brücke: PATCH ist der einzige Schreibweg der Benennung; die Seite sendet 
 });
 
 // --- Freigaben-Panel (freigaben.js): Zahl, Liste über alle Sitzungen, Karten, Später, Sprung ---
-const FREIGABEN_HTML = '<!doctype html><body><button id="kn" hidden></button><b id="za">0</b><aside id="pa" hidden><button id="zu"></button><p id="hi" hidden></p><div id="li"></div></aside></body>';
+const FREIGABEN_HTML = '<!doctype html><body><button id="kn" hidden></button><button id="ba" hidden></button><b id="za">0</b><aside id="pa" hidden><button id="zu"></button><p id="hi" hidden></p><div id="li"></div></aside></body>';
 
 const plain = (x) => JSON.parse(JSON.stringify(x)); // Werte aus dem jsdom-Fenster haben andere Prototypen: erst vergleichbar machen
 
@@ -810,7 +810,7 @@ function freigabenMit(start, opts = {}) {
     },
   };
   const fp = w.FyosPrototyp.createFreigaben(
-    { knopf: g('kn'), zahl: g('za'), panel: g('pa'), liste: g('li'), zu: g('zu'), hinweis: g('hi') },
+    { knopf: g('kn'), zahl: g('za'), panel: g('pa'), liste: g('li'), zu: g('zu'), hinweis: g('hi'), banner: g('ba') },
     { transport, intervallMs: 0, beiSprung: (id) => zustand.sprung.push(id), beiAenderung: () => void (zustand.aenderungen += 1), ...opts },
   );
   const karten = () => [...d.querySelectorAll('.fp-karte')];
@@ -988,16 +988,158 @@ dom('Freigaben: bei einem Fehler der Liste bleibt die alte stehen; nach zwei Feh
   assert.equal(w.document.querySelectorAll('.fp-karte').length, 1);
 });
 
+const tippe = (w, feld, wert) => {
+  feld.value = wert;
+  feld.dispatchEvent(new w.Event('input', { bubbles: true }));
+};
+const knopfIn = (f, id, text) => [...f.d.querySelectorAll(`.fp-karte[data-id="${id}"] button`)].find((b) => b.textContent === text);
+
+dom('Freigaben: zerstörerische Freigaben tragen die Marke „zerstörerisch“ neben dem Risiko (Text und Farbklasse), die übrigen nicht', async () => {
+  const f = freigabenMit([fg('f1', 1), fg('f2', 2, { zerstoererisch: true }), fg('f3', 3, { risiko: 'high', zerstoererisch: true })]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  const k = f.karten();
+  assert.equal(k[0].querySelector('.chip.zerst'), null);
+  assert.equal(k[0].dataset.zerstoererisch, undefined);
+  assert.equal(k[1].querySelector('.chip.zerst').textContent, 'zerstörerisch');
+  assert.match(k[1].querySelector('.chip.risiko').textContent, /mittleres Risiko/, 'die Marke ersetzt das Risiko nicht');
+  assert.equal(k[1].dataset.zerstoererisch, '1');
+  assert.ok(k[1].classList.contains('zerst'));
+  assert.ok(k[2].querySelector('.chip.zerst') && k[2].querySelector('.chip.risiko'));
+});
+
+dom('Freigaben: Notizfeld ist optional, auf 500 Zeichen begrenzt, geht getrimmt im POST mit und fehlt dort, wenn es leer ist', async () => {
+  const f = freigabenMit([fg('f1', 1), fg('f2', 2), fg('f3', 3)]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  const feld = (id) => f.d.querySelector(`.fp-karte[data-id="${id}"] textarea.fp-notiz`);
+  assert.equal(feld('f1').maxLength, 500);
+  assert.match(feld('f1').getAttribute('aria-label'), /Notiz/);
+  tippe(f.w, feld('f1'), '  Nur in der Testumgebung.  ');
+  knopfIn(f, 'f1', 'Erlauben').click();
+  await bis(() => f.zustand.aufrufe.some((a) => a[0] === 'POST'));
+  assert.deepEqual(plain(f.zustand.aufrufe.filter((a) => a[0] === 'POST')[0]), ['POST', '/api/freigaben/f1', { entscheidung: 'erteilt', von: 'mensch', notiz: 'Nur in der Testumgebung.' }]);
+  await bis(() => f.karten().length === 2);
+  // leer oder nur Leerraum: kein Feld notiz
+  tippe(f.w, feld('f2'), '   ');
+  knopfIn(f, 'f2', 'Ablehnen').click();
+  await bis(() => f.zustand.aufrufe.filter((a) => a[0] === 'POST').length === 2);
+  assert.deepEqual(plain(f.zustand.aufrufe.filter((a) => a[0] === 'POST')[1][2]), { entscheidung: 'abgelehnt', von: 'mensch' });
+  await bis(() => f.karten().length === 1);
+  // länger als 500 (z. B. eingefügt am Feld vorbei): die Hülle kürzt selbst
+  tippe(f.w, feld('f3'), 'a'.repeat(700));
+  knopfIn(f, 'f3', 'Ablehnen').click();
+  await bis(() => f.zustand.aufrufe.filter((a) => a[0] === 'POST').length === 3);
+  assert.equal(f.zustand.aufrufe.filter((a) => a[0] === 'POST')[2][2].notiz.length, 500);
+});
+
+dom('Freigaben: eine getippte Notiz überlebt das Neuzeichnen (neue Abfrage) und „Später“; nach der Entscheidung ist sie weg', async () => {
+  const f = freigabenMit([fg('f1', 1)]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  tippe(f.w, f.d.querySelector('.fp-notiz'), 'erst prüfen');
+  f.zustand.liste = [fg('f1', 1, { aktion: 'Aktion geändert' }), fg('f2', 2)];
+  await f.fp.lade(); // andere Liste: die Karten werden neu gebaut
+  assert.equal(f.d.querySelector('.fp-karte[data-id="f1"] .fp-aktion').textContent, 'Aktion geändert');
+  assert.equal(f.d.querySelector('.fp-karte[data-id="f1"] .fp-notiz').value, 'erst prüfen');
+  assert.equal(f.d.querySelector('.fp-karte[data-id="f2"] .fp-notiz').value, '');
+  f.d.querySelector('.fp-karte[data-id="f1"] .fp-spaeter').click();
+  f.d.querySelector('.fp-karte[data-id="f1"] .fp-jetzt').click();
+  assert.equal(f.d.querySelector('.fp-karte[data-id="f1"] .fp-notiz').value, 'erst prüfen');
+});
+
+dom('Freigaben: zerstörerisch fragt zweimal („Wirklich erlauben“), Ablehnen und nicht zerstörerisch fragen nicht; „Zurück“ nimmt die Nachfrage zurück', async () => {
+  const f = freigabenMit([fg('f1', 1, { zerstoererisch: true, risiko: 'high' }), fg('f2', 2)]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  const posts = () => f.zustand.aufrufe.filter((a) => a[0] === 'POST');
+  tippe(f.w, f.d.querySelector('.fp-karte[data-id="f1"] .fp-notiz'), 'bewusst');
+  knopfIn(f, 'f1', 'Erlauben').click();
+  assert.equal(posts().length, 0, 'der erste Klick sendet nichts');
+  assert.deepEqual([...f.d.querySelectorAll('.fp-karte[data-id="f1"] .fp-knoepfe button')].map((b) => b.textContent), ['Wirklich erlauben', 'Ablehnen', 'Zurück']);
+  assert.match(f.d.querySelector('.fp-karte[data-id="f1"] .fp-warnung').textContent, /zerstörerisch/);
+  assert.equal(f.d.activeElement.textContent, 'Wirklich erlauben', 'der Fokus steht auf der zweiten Bestätigung');
+  assert.equal(f.d.querySelector('.fp-karte[data-id="f1"] .fp-notiz').value, 'bewusst', 'die Notiz bleibt');
+  // eine neue Abfrage nimmt die Nachfrage nicht weg
+  await f.fp.lade();
+  assert.ok(knopfIn(f, 'f1', 'Wirklich erlauben'));
+  // Zurück
+  knopfIn(f, 'f1', 'Zurück').click();
+  assert.deepEqual([...f.d.querySelectorAll('.fp-karte[data-id="f1"] .fp-knoepfe button')].map((b) => b.textContent), ['Erlauben', 'Ablehnen', 'Später']);
+  assert.equal(f.d.querySelector('.fp-karte[data-id="f1"] .fp-warnung'), null);
+  assert.equal(posts().length, 0);
+  // zweimal: genau ein POST
+  knopfIn(f, 'f1', 'Erlauben').click();
+  knopfIn(f, 'f1', 'Wirklich erlauben').click();
+  await bis(() => posts().length === 1);
+  assert.deepEqual(plain(posts()[0]), ['POST', '/api/freigaben/f1', { entscheidung: 'erteilt', von: 'mensch', notiz: 'bewusst' }]);
+  await bis(() => f.karten().length === 1);
+  // nicht zerstörerisch: ein Klick genügt
+  knopfIn(f, 'f2', 'Erlauben').click();
+  await bis(() => posts().length === 2);
+  assert.equal(posts()[1][2].entscheidung, 'erteilt');
+});
+
+dom('Freigaben: Ablehnen einer zerstörerischen Freigabe braucht keine zweite Bestätigung', async () => {
+  const f = freigabenMit([fg('f1', 1, { zerstoererisch: true })]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  knopfIn(f, 'f1', 'Ablehnen').click();
+  await bis(() => f.zustand.aufrufe.some((a) => a[0] === 'POST'));
+  assert.equal(f.zustand.aufrufe.find((a) => a[0] === 'POST')[2].entscheidung, 'abgelehnt');
+});
+
+dom('Freigaben: Banner „Eine Freigabe wartet“ / „N Freigaben warten“ nur bei offener Freigabe und geschlossenem Panel; Klick öffnet das Panel', async () => {
+  const f = freigabenMit([fg('f1', 1)]);
+  assert.equal(f.g('ba').hidden, true, 'vor dem Laden');
+  await f.fp.lade();
+  assert.equal(f.g('ba').hidden, false);
+  assert.equal(f.g('ba').textContent, 'Eine Freigabe wartet');
+  f.zustand.liste = [fg('f1', 1), fg('f2', 2), fg('f3', 3, { status: 'erteilt' })];
+  await f.fp.lade();
+  assert.equal(f.g('ba').textContent, '2 Freigaben warten');
+  f.g('ba').click();
+  assert.equal(f.g('pa').hidden, false, 'der Klick öffnet das Panel');
+  assert.equal(f.g('ba').hidden, true, 'bei offenem Panel kein Banner');
+  f.g('zu').click();
+  assert.equal(f.g('ba').hidden, false, 'nach dem Schließen wartet das Banner wieder');
+  f.zustand.liste = [];
+  await f.fp.lade();
+  assert.equal(f.g('ba').hidden, true, 'nichts offen: kein Banner');
+});
+
+dom('Freigaben: eine Freigabe-Zeile im Aktivitätsstrom (/api/strom) aktualisiert Zahl und Banner sofort, ohne auf das Abfragen zu warten; andere Zeilen nicht', async () => {
+  const f = freigabenMit([], { intervallMs: 0 });
+  await f.fp.lade();
+  assert.equal(f.g('za').textContent, '0');
+  const gets = () => f.zustand.aufrufe.filter((a) => a[0] === 'GET').length;
+  const vorher = gets();
+  f.zustand.liste = [fg('f1', 1)];
+  assert.equal(f.fp.beiStromZeile({ typ: 'sagt', gespraech: 1, text: 'Hallo' }), false);
+  assert.equal(f.fp.beiStromZeile(null), false);
+  assert.equal(gets(), vorher, 'andere Zeilen holen nichts');
+  assert.equal(f.fp.beiStromZeile({ typ: 'freigabe', gespraech: 1, text: 'wartet auf Freigabe: Aktion f1' }), true);
+  await bis(() => f.g('za').textContent === '1');
+  assert.equal(gets(), vorher + 1);
+  assert.equal(f.g('ba').hidden, false);
+  // Entscheidung anderswo (Zeile „Freigabe erteilt“): die Zahl fällt sofort
+  f.zustand.liste = [fg('f1', 1, { status: 'erteilt' })];
+  f.fp.beiStromZeile({ typ: 'freigabe', gespraech: 1, text: 'Freigabe erteilt (f1)' });
+  await bis(() => f.g('za').textContent === '0');
+  assert.equal(f.g('ba').hidden, true);
+});
+
 test('Freigaben-Panel: eingebunden in chat.js (Sprung = wechsle, Strom, Tray-Ereignis) und neutral formuliert (Quelltext-Prüfung)', () => {
   const chat = lies('chat.js');
   assert.match(chat, /FP\.createFreigaben\(/);
   assert.match(chat, /beiSprung: \(id\) => wechsle\(id\)/, 'der Sprung nutzt den Sitzungswechsel der Leiste (kein Neuaufbau der Ansichten)');
-  assert.match(chat, /p\.daten\.typ === 'freigabe'\) freigaben\.lade\(\)/, 'eine neue Freigabe im Aktivitätsstrom lädt die Liste sofort');
+  assert.match(chat, /freigaben\.beiStromZeile\(p\.daten\)/, 'eine neue Freigabe im Aktivitätsstrom lädt die Liste sofort');
+  assert.match(chat, /banner: \$\('freigabenBanner'\)/, 'das Banner gehört zum Panel');
   assert.match(chat, /listen\('freigaben-zeigen'/, 'Tray-Zeile öffnet das Panel');
   assert.match(chat, /i\.freigaben_zeigen/, 'neu geöffnetes Fenster holt das Flag mit ziel_info');
   assert.match(chat, /beiFreigaben: \(liste\) => freigaben\.setze\(liste\)/, 'Entscheidung in der Verlaufskarte zieht das Panel nach');
   const html = lies('chat.html');
-  for (const id of ['freigabenKnopf', 'freigabenZahl', 'freigabenPanel', 'freigabenListe', 'freigabenZu', 'freigabenHinweis']) assert.ok(html.includes(`id="${id}"`), id);
+  for (const id of ['freigabenKnopf', 'freigabenZahl', 'freigabenPanel', 'freigabenListe', 'freigabenZu', 'freigabenHinweis', 'freigabenBanner']) assert.ok(html.includes(`id="${id}"`), id);
   assert.ok(html.includes('src="freigaben.js"') && html.includes('href="freigaben.css"'));
   const eigene = lies('freigaben.js') + lies('freigaben.css') + html;
   // die Namen stehen hier zerlegt, damit der Export-Scan diese Datei nicht selbst trifft
