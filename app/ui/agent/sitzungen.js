@@ -66,14 +66,19 @@
   /**
    * Zeilen der Seitenleiste. Eingabe: gespraeche (Liste des Runners), bereiche ({ name: { titel, pfad } }), aktiv (createAktivitaet),
    * o: { jetzt, offeneIds (Set der ID mit sicher laufendem Zug), auswahlId }.
-   * Ausgabe: { sitzungen: [...], weitere: [...] }, neueste Aktivität oben; Zeile: { id, titel, art, zeit, zeitText, bereich, ordner, pfad, laeuft }.
+   * Ausgabe: { sitzungen: [...], weitere: [...], archiv: [...] }, neueste Aktivität oben; Zeile: { id, titel, art, zeit, zeitText, bereich, ordner, pfad, laeuft, archiviert }.
+   * o.archivLokal: Einträge, die dieses Fenster archiviert hat (der Runner nennt sie in der Liste nicht mehr); sie stehen im Archiv und erlauben „Wiederherstellen“.
    */
   function sitzungsListe(gespraeche, bereiche, aktiv, o) {
     o = o || {};
     const jetzt = o.jetzt || Date.now();
     const sicher = o.laufend || new Set();
-    const zeilen = (Array.isArray(gespraeche) ? gespraeche : [])
-      .filter((g) => g && g.id !== undefined && !g.archiviert && !VERSTECKT.has(g.art))
+    // Archivierte: was die Liste des Runners trägt (heute lässt GET /api/gespraeche sie weg) und was dieses Fenster selbst archiviert hat (o.archivLokal)
+    const lokal = (Array.isArray(o.archivLokal) ? o.archivLokal : []).map((g) => ({ ...g, archiviert: true }));
+    const lokaleIds = new Set(lokal.map((g) => String(g && g.id)));
+    const alle = (Array.isArray(gespraeche) ? gespraeche : []).filter((g) => !(g && lokaleIds.has(String(g.id)))).concat(lokal);
+    const zeilen = alle
+      .filter((g) => g && g.id !== undefined && !VERSTECKT.has(g.art))
       .map((g) => {
         const b = (bereiche && bereiche[g.arbeitsbereich]) || null;
         const zeit = Math.max(Number(g.erstellt) || 0, aktiv ? aktiv.zuletzt(g.id) : 0);
@@ -89,12 +94,15 @@
           ordner: cwd ? letzterOrdner(cwd) : b && b.pfad ? letzterOrdner(b.pfad) : '',
           pfad: cwd || (b && b.pfad ? b.pfad : ''),
           laeuft: sicher.has(String(g.id)) || !!(aktiv && aktiv.laeuft(g.id)),
+          archiviert: !!g.archiviert,
         };
       })
       .sort((a, b) => b.zeit - a.zeit);
+    const offen = zeilen.filter((z) => !z.archiviert);
     return {
-      sitzungen: zeilen.filter((z) => HAUPT_ARTEN.has(z.art)),
-      weitere: zeilen.filter((z) => !HAUPT_ARTEN.has(z.art)),
+      sitzungen: offen.filter((z) => HAUPT_ARTEN.has(z.art)),
+      weitere: offen.filter((z) => !HAUPT_ARTEN.has(z.art)),
+      archiv: zeilen.filter((z) => z.archiviert && HAUPT_ARTEN.has(z.art)),
     };
   }
 
@@ -112,5 +120,68 @@
     return { name: letzterOrdner(pfad) || (bereich && bereich.titel) || '', pfad };
   }
 
-  FP.sitzungen = { createAktivitaet, sitzungsListe, nachbar, ordnerAnzeige, relativ, letzterOrdner, LAUF_FRIST_MS };
+  // --- Benennen, Umbenennen, Archivieren (PATCH /api/gespraech/:id; der Körper trägt nur `titel` und `archiviert`) ---
+  /** Längster Name, den der Runner annimmt (POST /api/gespraeche und PATCH schneiden bei 120 Zeichen ab). */
+  const TITEL_MAX = 120;
+
+  /** Name prüfen: getrimmt, nicht leer, höchstens TITEL_MAX Zeichen. → { ok, titel } oder { ok: false, fehler }. */
+  function titelPruefen(roh) {
+    const titel = String(roh === undefined || roh === null ? '' : roh).trim();
+    if (!titel) return { ok: false, fehler: 'Der Name darf nicht leer sein.' };
+    if (titel.length > TITEL_MAX) return { ok: false, fehler: `Der Name ist zu lang (höchstens ${TITEL_MAX} Zeichen).` };
+    return { ok: true, titel };
+  }
+
+  /** Der Körper einer Änderung: nur `titel` (Text) und `archiviert` (Wahrheitswert) gehen zum Runner, alles andere fällt weg. */
+  function aenderungsKoerper(felder) {
+    const k = {};
+    if (felder && typeof felder.titel === 'string') k.titel = felder.titel;
+    if (felder && typeof felder.archiviert === 'boolean') k.archiviert = felder.archiviert;
+    return k;
+  }
+
+  /** Der Name in der Antwort des Runners (PATCH und POST liefern { gespraech: { id, meta: { titel } } }); sonst null. */
+  function titelAusAntwort(r) {
+    const g = r && (r.gespraech || r);
+    const t = g && ((g.meta && g.meta.titel) || g.titel);
+    return typeof t === 'string' && t.trim() ? t.trim() : null;
+  }
+
+  /**
+   * Änderungen an einer Sitzung über die Brücke (transport.api → runner_anfrage). Fehler des Runners kommen als Error mit Klartext durch.
+   * umbenennen(id, text) → { titel } (der Name, den der Runner gespeichert hat); archivieren(id, an) → { archiviert }.
+   */
+  function createAenderung(transport) {
+    const weg = (id) => `/api/gespraech/${encodeURIComponent(id)}`;
+    function melde(f, vorn) {
+      let text = (f && (f.message || f.ursache)) || String(f || 'unbekannter Fehler');
+      // Die Brücke legt den Text des Runners in details („HTTP 500: Gespräch nicht gefunden“): mitzeigen
+      const d = f && f.meldung && typeof f.meldung.details === 'string' ? f.meldung.details.trim() : '';
+      if (d && !text.includes(d)) text += ` (${d})`;
+      return Object.assign(new Error(`${vorn} ${text}`), { code: f && f.code });
+    }
+    return {
+      async umbenennen(id, text) {
+        const p = titelPruefen(text);
+        if (!p.ok) throw new Error(p.fehler);
+        let r;
+        try {
+          r = await transport.api('PATCH', weg(id), aenderungsKoerper({ titel: p.titel }));
+        } catch (f) {
+          throw melde(f, 'Nicht umbenannt:');
+        }
+        return { titel: titelAusAntwort(r) || p.titel };
+      },
+      async archivieren(id, an) {
+        try {
+          await transport.api('PATCH', weg(id), aenderungsKoerper({ archiviert: !!an }));
+        } catch (f) {
+          throw melde(f, an ? 'Nicht archiviert:' : 'Nicht wiederhergestellt:');
+        }
+        return { archiviert: !!an };
+      },
+    };
+  }
+
+  FP.sitzungen = { createAktivitaet, sitzungsListe, nachbar, ordnerAnzeige, relativ, letzterOrdner, LAUF_FRIST_MS, TITEL_MAX, titelPruefen, aenderungsKoerper, titelAusAntwort, createAenderung };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

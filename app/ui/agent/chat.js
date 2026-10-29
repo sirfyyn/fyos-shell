@@ -126,17 +126,71 @@
   }
 
   // --- Seitenleiste ---
+  // Sitzungen, die dieses Fenster archiviert hat: GET /api/gespraeche nennt archivierte nicht mehr, so bleibt „Wiederherstellen“ möglich (bis zum Neuladen)
+  const archivLokal = new Map(); // String(id) → Eintrag der Liste
+  const aenderung = FP.sitzungen.createAenderung(transport);
   const leiste = FP.createLeiste(
-    { liste: $('sitzungsliste'), weitere: $('weitereListe'), weitereKopf: $('weitereKopf'), weitereZahl: $('weitereZahl'), leer: $('sitzungenLeer') },
-    { beiWahl: (id) => wechsle(id) }
+    {
+      liste: $('sitzungsliste'),
+      weitere: $('weitereListe'),
+      weitereKopf: $('weitereKopf'),
+      weitereZahl: $('weitereZahl'),
+      leer: $('sitzungenLeer'),
+      archiv: $('archivListe'),
+      archivKopf: $('archivKopf'),
+      archivZahl: $('archivZahl'),
+    },
+    { beiWahl: (id) => wechsle(id), beiUmbenennen: (id, text) => umbenenne(id, text), beiArchivieren: (id, an) => archiviere(id, an) }
   );
+
+  /** Umbenennen (Leiste und Kopf): PATCH, dann Liste, Kopf und Ansicht der Sitzung nachziehen, ohne etwas neu aufzubauen. */
+  async function umbenenne(id, text) {
+    const r = await aenderung.umbenennen(id, text);
+    const g = gespraeche.find((x) => String(x.id) === String(id));
+    if (g) g.titel = r.titel;
+    const a = archivLokal.get(String(id));
+    if (a) a.titel = r.titel;
+    const rec = ansichten.get(String(id));
+    if (rec) rec.chat.S.titel = r.titel;
+    zeichneListe();
+    zeigeAktiv();
+    return r;
+  }
+
+  async function archiviere(id, an) {
+    const schluessel = String(id);
+    if (an) {
+      const g = gespraeche.find((x) => String(x.id) === schluessel);
+      if (!g) throw new Error('Die Sitzung steht nicht mehr in der Liste.');
+      // Die Hauptsitzung (root) bleibt: ohne sie hätte die App keinen Anfang
+      if (g.art === 'root') throw new Error('Die Hauptsitzung kann nicht archiviert werden.');
+      await aenderung.archivieren(id, true);
+      archivLokal.set(schluessel, { ...g, archiviert: true });
+      gespraeche = gespraeche.filter((x) => String(x.id) !== schluessel);
+      if (aktiv && String(aktiv.id) === schluessel) {
+        const naechste = gespraeche.find((x) => x.art === 'root') || gespraeche.find((x) => ['root', 'mensch', 'zweig'].includes(x.art));
+        zeichneListe();
+        if (naechste) await wechsle(naechste.id);
+        else zeichneListe();
+      } else {
+        zeichneListe();
+      }
+    } else {
+      const g = archivLokal.get(schluessel);
+      await aenderung.archivieren(id, false);
+      archivLokal.delete(schluessel);
+      if (g && !gespraeche.some((x) => String(x.id) === schluessel)) gespraeche.push({ ...g, archiviert: false });
+      zeichneListe();
+      ladeListe();
+    }
+  }
   let zeichnenGeplant = false;
   function zeichneListe() {
     zeichnenGeplant = false;
     const laufend = new Set();
     // die sichtbare Sitzung weiß es genau; die übrigen kennt nur der Aktivitätsstrom
     if (aktiv && aktiv.chat.view.busy) laufend.add(String(aktiv.id));
-    const daten = FP.sitzungen.sitzungsListe(gespraeche, bereiche, aktivitaet, { laufend });
+    const daten = FP.sitzungen.sitzungsListe(gespraeche, bereiche, aktivitaet, { laufend, archivLokal: [...archivLokal.values()] });
     if (aktiv) {
       const z = [...daten.sitzungen, ...daten.weitere].find((x) => String(x.id) === String(aktiv.id));
       if (z && !aktiv.chat.view.busy) z.laeuft = false;
@@ -242,8 +296,37 @@
     }
   }
 
+  // --- Name der offenen Sitzung im Kopf ändern (gleiche Funktion wie in der Leiste) ---
+  let kopfEditor = null;
+  function kopfStift() {
+    $('titelUmbenennen').hidden = !aktiv || !!kopfEditor;
+  }
+  function kopfBearbeiten() {
+    if (!aktiv || kopfEditor) return;
+    const rec = aktiv;
+    $('titel').hidden = true;
+    $('titelUmbenennen').hidden = true;
+    $('titelEditor').hidden = false;
+    kopfEditor = FP.createTitelEditor($('titelEditor'), {
+      wert: rec.chat.S.titel || '',
+      label: 'Neuer Name der Sitzung',
+      pruefen: FP.sitzungen.titelPruefen,
+      speichern: (t) => umbenenne(rec.id, t),
+      beiEnde: () => {
+        kopfEditor = null;
+        $('titelEditor').hidden = true;
+        $('titel').hidden = false;
+        kopfStift();
+        if (!document.activeElement || document.activeElement === document.body) $('titelUmbenennen').focus();
+      },
+    });
+  }
+  $('titelUmbenennen').addEventListener('click', kopfBearbeiten);
+  $('titel').addEventListener('dblclick', kopfBearbeiten);
+
   function setzeAktiv(rec) {
     if (aktiv === rec) return;
+    if (kopfEditor) kopfEditor.schliesse();
     const alt = aktiv;
     if (alt) {
       alt.entwurf = eingabe.value;
@@ -262,6 +345,7 @@
     merken.schreibe(rec.id);
     window.__aktuelleId = rec.id;
     zeigeAktiv();
+    kopfStift();
     zeigeOrdner(rec);
     ladeOrdner(rec);
     zeichneListe();
@@ -422,6 +506,12 @@
   $('neuOrdner').addEventListener('change', pfadZeigen);
   $('neueSitzung').addEventListener('click', () => (neuForm.hidden ? neuOeffnen() : neuSchliessen()));
   $('neuAbbrechen').addEventListener('click', neuSchliessen);
+  // Enter im Namensfeld startet die Sitzung wie der Knopf „Anlegen“
+  $('neuTitel').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing || e.shiftKey) return;
+    e.preventDefault();
+    if (!$('neuAnlegen').disabled) neuForm.requestSubmit();
+  });
   neuForm.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -556,6 +646,11 @@
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
     const mod = e.metaKey || e.ctrlKey;
+    if (e.key === 'F2' && !mod && !e.altKey && !e.shiftKey && aktiv) {
+      e.preventDefault();
+      kopfBearbeiten();
+      return;
+    }
     if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
       e.preventDefault();
       neuForm.hidden ? neuOeffnen() : neuSchliessen();

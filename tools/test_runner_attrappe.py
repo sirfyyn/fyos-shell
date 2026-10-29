@@ -40,6 +40,13 @@ class Basis(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=5) as a:
             return json.loads(a.read())
 
+    def patch(self, pfad, daten, token=TOKEN):
+        req = urllib.request.Request(self.basis + pfad, data=json.dumps(daten).encode(), method="PATCH")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=5) as a:
+            return json.loads(a.read())
+
     def strom(self, bis, frist=5):
         """Liest den Strom, bis `bis(ereignisse)` wahr ist; liefert (Snapshot, Ereignisse)."""
         req = urllib.request.Request(self.basis + "/api/gespraech/1/ereignisse", headers={"Authorization": f"Bearer {TOKEN}"})
@@ -114,6 +121,48 @@ class Tests(Basis):
         with self.assertRaises(urllib.error.HTTPError) as f:
             self.anfrage("/api/gespraeche", {"arbeitsbereich": "gibt-es-nicht"})
         self.assertEqual(f.exception.code, 400)
+
+    def test_neue_sitzung_mit_namen_und_standardname(self):
+        # wie der echte Runner (neuesGespraech): Name bis 120 Zeichen, ohne Name „Neuer Agent“; Antwort gespraech.meta.titel, Liste gespraeche[].titel
+        mit = self.anfrage("/api/gespraeche", {"titel": "Mein Projekt"})["gespraech"]
+        self.assertEqual(mit["meta"]["titel"], "Mein Projekt")
+        ohne = self.anfrage("/api/gespraeche", {})["gespraech"]
+        self.assertEqual(ohne["meta"]["titel"], "Neuer Agent")
+        leer = self.anfrage("/api/gespraeche", {"titel": ""})["gespraech"]
+        self.assertEqual(leer["meta"]["titel"], "Neuer Agent")
+        lang = self.anfrage("/api/gespraeche", {"titel": "x" * 300})["gespraech"]
+        self.assertEqual(len(lang["meta"]["titel"]), 120)
+        liste = {g["id"]: g for g in self.anfrage("/api/gespraeche")["gespraeche"]}
+        self.assertEqual(liste[mit["id"]]["titel"], "Mein Projekt")
+        self.assertEqual(liste[ohne["id"]]["titel"], "Neuer Agent")
+
+    def test_umbenennen_und_archivieren_per_patch(self):
+        sid = self.anfrage("/api/gespraeche", {"titel": "Alt"})["gespraech"]["id"]
+        r = self.patch(f"/api/gespraech/{sid}", {"titel": "Neu"})
+        self.assertEqual(r["gespraech"]["meta"]["titel"], "Neu")
+        self.assertFalse(r["gespraech"]["meta"]["archiviert"])
+        # ein leerer Name ändert nichts, ein zu langer wird gekürzt
+        self.assertEqual(self.patch(f"/api/gespraech/{sid}", {"titel": ""})["gespraech"]["meta"]["titel"], "Neu")
+        self.assertEqual(len(self.patch(f"/api/gespraech/{sid}", {"titel": "y" * 200})["gespraech"]["meta"]["titel"]), 120)
+        self.patch(f"/api/gespraech/{sid}", {"titel": "Neu"})
+        # archivieren: weg aus der Liste, einzeln noch lesbar; Umbenennen im Archiv entarchiviert nicht
+        self.assertTrue(self.patch(f"/api/gespraech/{sid}", {"archiviert": True})["gespraech"]["meta"]["archiviert"])
+        self.assertNotIn(sid, [g["id"] for g in self.anfrage("/api/gespraeche")["gespraeche"]])
+        self.assertTrue(self.anfrage(f"/api/gespraech/{sid}")["meta"]["archiviert"])
+        self.assertTrue(self.patch(f"/api/gespraech/{sid}", {"titel": "Im Archiv"})["gespraech"]["meta"]["archiviert"])
+        self.patch(f"/api/gespraech/{sid}", {"archiviert": False})
+        liste = {g["id"]: g for g in self.anfrage("/api/gespraeche")["gespraeche"]}
+        self.assertEqual(liste[sid]["titel"], "Im Archiv")
+        self.assertFalse(liste[sid]["archiviert"])
+
+    def test_patch_unbekannte_sitzung_und_ohne_token(self):
+        with self.assertRaises(urllib.error.HTTPError) as f:
+            self.patch("/api/gespraech/999", {"titel": "x"})
+        self.assertEqual(f.exception.code, 500)  # so antwortet der echte Runner heute
+        self.assertIn("nicht gefunden", json.loads(f.exception.read())["fehler"])
+        with self.assertRaises(urllib.error.HTTPError) as g:
+            self.patch("/api/gespraech/1", {"titel": "x"}, token="falsch")
+        self.assertEqual(g.exception.code, 401)
 
     def test_sitzungen_haben_getrennte_verlaeufe(self):
         self.anfrage("/api/gespraech/2/nachricht", {"text": "reset"})

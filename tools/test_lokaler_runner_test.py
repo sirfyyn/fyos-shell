@@ -52,8 +52,8 @@ class Vertrag(unittest.TestCase):
         cls.p.wait()
         cls.tmp.cleanup()
 
-    def api(self, pfad, daten=None, token=TOKEN):
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{pfad}", data=None if daten is None else json.dumps(daten).encode(), method="GET" if daten is None else "POST")
+    def api(self, pfad, daten=None, token=TOKEN, methode=None):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{pfad}", data=None if daten is None else json.dumps(daten).encode(), method=methode or ("GET" if daten is None else "POST"))
         if token:
             req.add_header("Authorization", f"Bearer {token}")
         try:
@@ -88,6 +88,19 @@ class Vertrag(unittest.TestCase):
         liste = self.api("/api/gespraeche")[1]["gespraeche"]
         self.assertIn(self.draussen, [g["agent"]["cwd"] for g in liste])
         self.assertEqual(self.api("/api/ordner/erlauben", {"pfad": "/gibt/es/nicht"})[0], 400)
+
+    def test_umbenennen_und_archivieren(self):
+        c, s = self.api("/api/gespraeche", {"titel": "Alt"})
+        sid = s["gespraech"]["id"]
+        c, r = self.api(f"/api/gespraech/{sid}", {"titel": "Neu"}, methode="PATCH")
+        self.assertEqual((c, r["gespraech"]["meta"]["titel"]), (200, "Neu"))
+        self.assertEqual(self.api(f"/api/gespraech/{sid}", {"titel": ""}, methode="PATCH")[1]["gespraech"]["meta"]["titel"], "Neu")
+        self.api(f"/api/gespraech/{sid}", {"archiviert": True}, methode="PATCH")
+        self.assertNotIn(sid, [g["id"] for g in self.api("/api/gespraeche")[1]["gespraeche"]])
+        self.api(f"/api/gespraech/{sid}", {"archiviert": False}, methode="PATCH")
+        self.assertEqual({g["id"]: g["titel"] for g in self.api("/api/gespraeche")[1]["gespraeche"]}[sid], "Neu")
+        self.assertEqual(self.api("/api/gespraech/9999", {"titel": "x"}, methode="PATCH")[0], 500)
+        self.assertEqual(self.api(f"/api/gespraech/{sid}", {"titel": "x"}, token=None, methode="PATCH")[0], 401)
 
     def test_zuletzt_sigterm_beendet_sauber(self):
         # eigener Prozess, damit die anderen Tests nicht gestört werden

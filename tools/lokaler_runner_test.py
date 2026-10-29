@@ -8,7 +8,7 @@ Umgebung (von der Hülle gesetzt, bei einem Handstart selbst setzen):
   FYOS_RUNNER_PORT, FYOS_RUNNER_TOKEN, FYOS_RUNNER_ORDNER_ERLAUBT (":" getrennt), FYOS_RUNNER_HOST (Vorgabe 127.0.0.1), FYOS_RUNNER_DATEN
 Optional: --log DATEI schreibt je Anfrage eine JSON-Zeile {methode, pfad, auth, koerper}, nie das Token.
 
-Wege: GET /api/health, /api/ordner[?pfad=], POST /api/ordner/erlauben, GET/POST /api/gespraeche, GET /api/gespraech/<id>,
+Wege: GET /api/health, /api/ordner[?pfad=], POST /api/ordner/erlauben, GET/POST /api/gespraeche, GET/PATCH /api/gespraech/<id>,
 /api/gespraech/<id>/ansicht, /api/gespraech/<id>/ereignisse (SSE), /api/strom (SSE), /api/konfiguration, /api/modelle, /api/freigaben, /api/laeufe.
 Ordner außerhalb der Wurzeln: 403 {"fehler":"ausserhalb"}; nicht vorhanden: 404; Anfrage ohne Token: 401. Endet bei SIGTERM sauber.
 """
@@ -104,7 +104,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.senden(200, {"laeufe": []})
         if p == "/api/gespraeche":
             with z.sperre:
-                liste = [{"id": s["id"], "titel": s["titel"], "art": s["art"], "arbeitsbereich": "", "erstellt": 1, "archiviert": False, "agent": {"cwd": s["cwd"]}} for s in z.sitzungen.values()]
+                liste = [{"id": s["id"], "titel": s["titel"], "art": s["art"], "arbeitsbereich": "", "erstellt": 1, "archiviert": False, "agent": {"cwd": s["cwd"]}} for s in z.sitzungen.values() if not s.get("archiviert")]
             return self.senden(200, {"gespraeche": liste})
         if p.startswith("/api/gespraech/"):
             teile = p[len("/api/gespraech/"):].split("/")
@@ -154,6 +154,25 @@ class Handler(BaseHTTPRequestHandler):
                 s = z.sitzungen[sid]
             return self.senden(201, {"gespraech": {"id": sid, "meta": {"titel": s["titel"]}, "agent": {"cwd": s["cwd"]}}})
         self.senden(404, {"fehler": "unbekannter Weg"})
+
+    def do_PATCH(self):
+        """PATCH /api/gespraech/<id> {titel, archiviert} wie der echte Runner (leerer Name ändert nichts; archivierte stehen nicht in der Liste)."""
+        k = self.koerper()
+        if not self.pruefe("PATCH", k):
+            return
+        p = urlparse(self.path).path.rstrip("/")
+        z = self.z
+        try:
+            sid = int(p[len("/api/gespraech/"):]) if p.startswith("/api/gespraech/") else None
+            s = z.sitzungen[sid]
+        except (ValueError, KeyError):
+            return self.senden(500, {"ok": False, "fehler": "Gespräch nicht gefunden"})
+        with z.sperre:
+            if isinstance(k, dict) and isinstance(k.get("titel"), str):
+                s["titel"] = k["titel"][:120] or s["titel"]
+            if isinstance(k, dict) and "archiviert" in k:
+                s["archiviert"] = bool(k["archiviert"])
+        self.senden(200, {"ok": True, "gespraech": {"id": s["id"], "meta": {"titel": s["titel"], "archiviert": bool(s.get("archiviert"))}, "agent": {"cwd": s["cwd"]}}})
 
     def ordner(self, pfad):
         z = self.z

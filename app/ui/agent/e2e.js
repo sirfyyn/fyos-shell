@@ -8,7 +8,8 @@
   const chat = { get S() { return window.__chat.S; }, sende: (t, s) => window.__chat.sende(t, s) };
   const $ = (id) => document.getElementById(id);
   const spalteAktiv = () => document.querySelector('.pane.aktiv .spalte');
-  const reihe = (id) => document.querySelector(`.sitzung[data-id="${id}"]`);
+  const reihe = (id) => document.querySelector(`#sitzungsliste .sitzung[data-id="${id}"]`); // nur die Liste, nicht das Archiv
+  const doppel = (el) => el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
   const api = (methode, pfad, koerper) => tauri.core.invoke('runner_anfrage', { methode, pfad, koerper: koerper === undefined ? null : koerper });
   const melde = (schritt, ok, detail) => api('POST', '/api/e2e/ergebnis', { schritt, ok: !!ok, detail: String(detail || '').slice(0, 300) }).catch(() => {});
   const warte = async (f, ms) => {
@@ -112,6 +113,74 @@
     $('neuForm').requestSubmit();
     const neu = await warte(() => window.__arbeitsplatz.aktiv && String(window.__arbeitsplatz.aktiv.id) !== '1' && String(window.__arbeitsplatz.aktiv.id) !== '2' && $('titel').textContent === 'Neu E2E' && $('ordner').textContent === 'alpha', 15000);
     await melde('neue-sitzung', neu, `${$('titel').textContent} / ${$('ordner').textContent}`);
+
+    // --- Benennen, Umbenennen, Archivieren: alles über die echte Brücke (PATCH geht durch runner_anfrage zur Attrappe) ---
+    const taste = (ziel, key) => ziel.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    const serverTitel = async (id) => {
+      const r = await api('GET', '/api/gespraeche');
+      const g = (r.gespraeche || []).find((x) => String(x.id) === String(id));
+      return g ? g.titel : null;
+    };
+    const vorherId = String(window.__arbeitsplatz.aktiv.id);
+    $('neueSitzung').click();
+    $('neuTitel').value = 'Nur Name';
+    taste($('neuTitel'), 'Enter'); // Enter im Namensfeld startet die Sitzung
+    const benannt = await warte(() => window.__arbeitsplatz.aktiv && String(window.__arbeitsplatz.aktiv.id) !== vorherId && $('titel').textContent === 'Nur Name', 15000);
+    const sid = benannt ? String(window.__arbeitsplatz.aktiv.id) : '';
+    await melde('neue-sitzung-mit-namen', benannt && (await serverTitel(sid)) === 'Nur Name' && !!reihe(sid) && reihe(sid).querySelector('.sitzung-titel').textContent === 'Nur Name', `${$('titel').textContent} / Server: ${await serverTitel(sid)}`);
+
+    // Umbenennen im Kopf (Doppelklick auf den Namen, Enter)
+    const entwurf = 'noch nicht gesendet';
+    $('eingabe').value = entwurf;
+    const paneVorher = document.querySelector('.pane.aktiv');
+    $('titel').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    const kopfFeld = $('titelEditor').querySelector('input');
+    if (kopfFeld) {
+      kopfFeld.value = 'Umbenannt E2E';
+      taste(kopfFeld, 'Enter');
+    }
+    const kopfOk = await warte(() => $('titel').textContent === 'Umbenannt E2E' && $('titelEditor').hidden, 15000);
+    await melde('umbenennen-kopf', kopfOk && (await serverTitel(sid)) === 'Umbenannt E2E' && reihe(sid).querySelector('.sitzung-titel').textContent === 'Umbenannt E2E', `${$('titel').textContent} / Server: ${await serverTitel(sid)}`);
+    await melde('umbenennen-ohne-neuaufbau', document.querySelector('.pane.aktiv') === paneVorher && $('eingabe').value === entwurf, `Entwurf: ${$('eingabe').value}`);
+    $('eingabe').value = '';
+
+    // Esc bricht ab: nichts wird gesendet, der Name bleibt
+    $('titelUmbenennen').click();
+    const escFeld = $('titelEditor').querySelector('input');
+    if (escFeld) {
+      escFeld.value = 'Wird verworfen';
+      taste(escFeld, 'Escape');
+    }
+    await melde('umbenennen-esc', !!escFeld && $('titelEditor').hidden && $('titel').textContent === 'Umbenannt E2E' && (await serverTitel(sid)) === 'Umbenannt E2E', $('titel').textContent);
+
+    // Umbenennen in der Leiste (Doppelklick auf eine andere Sitzung)
+    doppel(reihe(2).querySelector('.sitzung-titel'));
+    const zeilenFeld = document.querySelector('.sitzung-editor .titel-eingabe');
+    if (zeilenFeld) {
+      zeilenFeld.value = 'Zweite umbenannt';
+      taste(zeilenFeld, 'Enter');
+    }
+    const zeileOk = await warte(() => reihe(2) && reihe(2).querySelector('.sitzung-titel').textContent === 'Zweite umbenannt' && !document.querySelector('.titel-eingabe'), 15000);
+    await melde('umbenennen-leiste', zeileOk && (await serverTitel(2)) === 'Zweite umbenannt' && $('titel').textContent === 'Umbenannt E2E', `Server: ${await serverTitel(2)}`);
+
+    // Der Runner lehnt ab (unbekannte Sitzung): die Brücke meldet den Fehler mit Text
+    let abgelehnt = null;
+    try {
+      await api('PATCH', '/api/gespraech/9999', { titel: 'x' });
+    } catch (f) {
+      abgelehnt = f;
+    }
+    await melde('umbenennen-fehler-klar', !!abgelehnt && abgelehnt.code === 'RUNNER_FEHLER' && /nicht gefunden/.test(String(abgelehnt.details || '')), JSON.stringify(abgelehnt));
+
+    // Archivieren (Knopf an der Zeile): weg aus der Liste, im eingeklappten Archiv, die offene Sitzung weicht auf die Hauptsitzung aus
+    reihe(sid).closest('.sitzung-zeile').querySelector('.archivieren').click();
+    const weg = await warte(() => !reihe(sid) && $('archivKopf') && !$('archivKopf').hidden && String(window.__arbeitsplatz.aktiv.id) === '1', 15000);
+    await melde('archivieren', weg && (await serverTitel(sid)) === null && $('archivListe').hidden && $('archivZahl').textContent === '1', `Archiv ${$('archivZahl').textContent}, aktiv ${window.__arbeitsplatz.aktiv.id}`);
+    $('archivKopf').click();
+    const imArchiv = !$('archivListe').hidden && $('archivListe').textContent.includes('Umbenannt E2E');
+    $('archivListe').querySelector('.wiederherstellen').click();
+    const zurueckInListe = await warte(() => reihe(sid) && $('archivKopf').hidden, 15000);
+    await melde('wiederherstellen', imArchiv && zurueckInListe && (await serverTitel(sid)) === 'Umbenannt E2E', `im Archiv: ${imArchiv}, Server: ${await serverTitel(sid)}`);
     await melde('ende', true, '');
   }
   lauf().catch((f) => melde('abgebrochen', false, (f && f.message) || f));

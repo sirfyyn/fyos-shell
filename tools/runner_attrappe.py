@@ -6,7 +6,8 @@
 Spricht den Teil der Runner-Schnittstelle, den die Chat-Seite und die Seitenleiste brauchen:
   GET  /api/health, /api/konfiguration, /api/modelle, /api/freigaben, /api/laeufe
   GET  /api/gespraeche                    Sitzungsliste (Sitzung 1 Hauptgespräch, Sitzung 2 in einem anderen Arbeitsbereich)
-  POST /api/gespraeche                    neue Sitzung {titel, arbeitsbereich, modell} → 201 {gespraech: {id, meta, agent}}
+  POST /api/gespraeche                    neue Sitzung {titel, arbeitsbereich, modell} → 201 {gespraech: {id, meta, agent}}; ohne titel „Neuer Agent“, bis 120 Zeichen
+  PATCH /api/gespraech/<id>               {titel, archiviert} → 200 {gespraech: {id, meta, agent}}; archivierte Sitzungen fehlen in GET /api/gespraeche (wie beim Runner)
   GET  /api/ordner?pfad=…                 Ordnerwahl: ohne pfad die Wurzeln, mit pfad die Unterordner (erfundener Baum unter /probe/ordner-a und -b)
                                           POST /api/gespraeche nimmt zusätzlich `ordner`; Gesprächsliste und Gespräch tragen ihn in `ordner` und `agent.cwd`
   GET  /api/gespraech/<id>                Meta und Arbeitsordner der Sitzung (agent.cwd)
@@ -123,6 +124,7 @@ class Sitzung:
         self.ordner = ordner
         self.id = sid
         self.titel = titel
+        self.archiviert = False
         self.art = art
         self.bereich = bereich
         self.erstellt = erstellt
@@ -137,10 +139,10 @@ class Sitzung:
         return self.ordner or BEREICHE[self.bereich]["pfad"]
 
     def liste(self):
-        return {"id": self.id, "art": self.art, "titel": self.titel, "arbeitsbereich": self.bereich, "ordner": self.ordner, "agent": {"cwd": self.cwd()}, "erstellt": self.erstellt, "modell": None, "archiviert": False}
+        return {"id": self.id, "art": self.art, "titel": self.titel, "arbeitsbereich": self.bereich, "ordner": self.ordner, "agent": {"cwd": self.cwd()}, "erstellt": self.erstellt, "modell": None, "archiviert": self.archiviert}
 
     def meta(self):
-        return {"id": self.id, "titel": self.titel, "modell": "probe-modell", "arbeitsbereich": self.bereich, "ordner": self.ordner, "erstellt": self.erstellt, "art": self.art}
+        return {"id": self.id, "titel": self.titel, "modell": "probe-modell", "arbeitsbereich": self.bereich, "ordner": self.ordner, "erstellt": self.erstellt, "art": self.art, "archiviert": self.archiviert}
 
     def senden(self, ereignisse):
         with self.z.sperre:
@@ -327,7 +329,7 @@ class Zustand:
         with self.sperre:
             sid = self.naechste_id
             self.naechste_id += 1
-            s = Sitzung(self, sid, (titel or "").strip()[:120] or "Neuer Agent", "mensch", bereich if bereich in BEREICHE else "standard", int(time.time() * 1000), ordner)
+            s = Sitzung(self, sid, str(titel or "")[:120] or "Neuer Agent", "mensch", bereich if bereich in BEREICHE else "standard", int(time.time() * 1000), ordner)
             self.sitzungen[sid] = s
         return s
 
@@ -396,7 +398,8 @@ def handler(z):
                 except OrdnerFehler as f:
                     return self._json(f.status, {"ok": False, "fehler": f.code, "meldung": f.meldung, "wurzeln": z.wurzeln, "erlaubt": bool(z.wurzeln)})
             if p == "/api/gespraeche":
-                return self._json(200, {"ok": True, "gespraeche": [s.liste() for s in z.sitzungen.values()]})
+                # wie der echte Runner (gespraeche() in src/runner.js): archivierte Sitzungen stehen nicht in der Liste
+                return self._json(200, {"ok": True, "gespraeche": [s.liste() for s in z.sitzungen.values() if not s.archiviert]})
             if p == "/api/freigaben":
                 return self._json(200, {"freigaben": [{k: v for k, v in x.items() if k != "sid"} for x in z.freigaben]})
             if p == "/api/laeufe":
@@ -464,6 +467,27 @@ def handler(z):
             finally:
                 with z.sperre:
                     z.strom_abonnenten[:] = [a for a in z.strom_abonnenten if a[0] is not q]
+
+        def do_PATCH(self):
+            """PATCH /api/gespraech/<id> wie aendereGespraech des echten Runners: nur `titel` (Text, bis 120 Zeichen, leer ändert nichts) und
+            `archiviert` (Wahrheitswert) wirken; unbekannte Sitzung → 500 mit Text (so antwortet der echte Runner heute)."""
+            if not self._erlaubt():
+                return
+            p = urlparse(self.path).path
+            k = self._koerper()
+            m = re.fullmatch(r"/api/gespraech/(\d+)", p)
+            if not m:
+                return self._json(404, {"fehler": "unbekannt"})
+            s = z.sitzung(m.group(1))
+            if not s:
+                return self._json(500, {"ok": False, "fehler": "Gespräch nicht gefunden"})
+            with z.sperre:
+                if "titel" in k and k["titel"] is not None:
+                    neu = str(k["titel"])[:120]
+                    s.titel = neu or s.titel
+                if "archiviert" in k:
+                    s.archiviert = bool(k["archiviert"])
+            return self._json(200, {"ok": True, "gespraech": {"id": s.id, "meta": s.meta(), "agent": {"model": "probe-modell", "cwd": s.cwd(), "tools": []}, "usage": None}})
 
         def do_POST(self):
             if not self._erlaubt():

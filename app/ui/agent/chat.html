@@ -19,8 +19,9 @@
         <button id="neueSitzung" type="button" class="primaer neu-knopf" aria-keyshortcuts="Meta+Shift+O Control+Shift+O">Neue Sitzung</button>
       </div>
       <form id="neuForm" class="neu-form" autocomplete="off" hidden>
-        <label for="neuTitel">Titel (optional)</label>
-        <input id="neuTitel" type="text" maxlength="120" placeholder="Neue Sitzung">
+        <label for="neuTitel">Name</label>
+        <input id="neuTitel" type="text" maxlength="120" placeholder="Name der Sitzung (optional)" aria-describedby="neuTitelHinweis">
+        <p id="neuTitelHinweis" class="sr">Leer lassen, dann vergibt der Runner einen Namen. Enter legt die Sitzung an.</p>
         <fieldset id="ordnerKasten" class="ordner-kasten" hidden>
           <legend>Arbeitsordner</legend>
           <p id="ordnerGewaehlt" class="leise ordner-gewaehlt">Noch kein Ordner gewählt.</p>
@@ -48,6 +49,11 @@
           Hintergrund <span id="weitereZahl" class="chip">0</span>
         </button>
         <div id="weitereListe" role="listbox" aria-label="Hintergrundarbeit" hidden></div>
+        <button id="archivKopf" type="button" class="weitere-kopf" aria-expanded="false" aria-controls="archivListe" hidden>
+          <span class="chev"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5L10 8l-4.5 4.5" /></svg></span>
+          Archiv <span id="archivZahl" class="chip">0</span>
+        </button>
+        <div id="archivListe" role="list" aria-label="Archivierte Sitzungen" hidden></div>
       </nav>
       <div class="leiste-fuss leise" id="leisteFuss"></div>
     </aside>
@@ -58,7 +64,11 @@
           <button id="leisteSchalter" type="button" class="leise-knopf leiste-schalter" aria-controls="leiste" aria-expanded="true" title="Seitenleiste ein- oder ausblenden (Cmd/Strg+B)">Sitzungen</button>
           <span id="avatar" class="avatar" aria-hidden="true">A</span>
           <div class="kopf-text">
-            <h1 id="titel">Agent</h1>
+            <div class="titel-zeile">
+              <h1 id="titel" title="Doppelklick zum Umbenennen">Agent</h1>
+              <button id="titelUmbenennen" type="button" class="leise-knopf titel-stift" aria-label="Sitzung umbenennen" title="Sitzung umbenennen" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13l-3.5.5L3 10z" /></svg></button>
+              <div id="titelEditor" class="titel-editor" hidden></div>
+            </div>
             <div class="unterzeile"><span id="verbindung">verbinde …</span><span id="ordner" class="ordner" hidden></span></div>
           </div>
         </div>

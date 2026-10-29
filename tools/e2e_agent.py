@@ -9,8 +9,9 @@ Die Chat-Seite bedient sich im Prüfmodus selbst (ui/agent/e2e.js, nur mit FYOS_
   A2  Gespräch mit Streaming (Text erscheint vor dem Ende), Werkzeugkarte, Freigabe (genau zwei Knöpfe, Erlauben wirkt), Reset-Marker,
       Neuverbinden mitten im Strom (Text komplett, nichts doppelt)
       Arbeitsplatz: Sitzungsliste, Arbeitsordner im Kopf, Terminal-Ansicht (ANSI, Fortschrittszeile), Diff-Ansicht, Wechsel ohne Neuaufbau,
-      laufende Sitzung markiert, neue Sitzung mit Arbeitsordner
-  A3  der Beobachter fragt Freigaben und Läufe ab (Tray), auch ohne dass die Seite etwas tut
+      laufende Sitzung markiert, neue Sitzung mit Arbeitsordner, neue Sitzung nur mit Namen (Enter im Namensfeld), Umbenennen im Kopf
+      und in der Leiste (PATCH durch die Brücke, Esc, ohne Neuaufbau, Entwurf bleibt), Fehler des Runners klar, Archivieren und Wiederherstellen
+  A3 der Beobachter fragt Freigaben und Läufe ab (Tray), auch ohne dass die Seite etwas tut
   A4  Token nirgends in den Einstellungen (nur der Verweis), keine Anfrage ohne Token
   A5  falsches Token: die Anwendung bleibt am Leben und versucht es wieder (Katalogmeldung im Banner, Wiederholen)
   A6  SIGTERM beendet die Hülle
@@ -47,7 +48,9 @@ TOKEN = "-".join(["e2e", "probe"] * 4)  # erfundener Testwert
 ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz", "werkzeugkarte", "freigabe-karte",
             "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt",
             "sitzungsliste", "ordner-im-kopf", "terminal-ansicht", "terminal-fortschrittszeile", "diff-ansicht", "wechsel-zu-zweiter", "wechsel-eigener-verlauf",
-            "laufende-sitzung-markiert", "markierung-endet", "wechsel-erhaelt-sitzung", "wechsel-nichts-doppelt", "neue-sitzung", "ende"]
+            "laufende-sitzung-markiert", "markierung-endet", "wechsel-erhaelt-sitzung", "wechsel-nichts-doppelt", "neue-sitzung",
+            "neue-sitzung-mit-namen", "umbenennen-kopf", "umbenennen-ohne-neuaufbau", "umbenennen-esc", "umbenennen-leiste", "umbenennen-fehler-klar",
+            "archivieren", "wiederherstellen", "ende"]
 
 
 def bauen(ausgabe):

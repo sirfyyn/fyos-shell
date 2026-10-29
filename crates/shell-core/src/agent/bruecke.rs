@@ -169,6 +169,21 @@ mod tests {
     }
 
     #[test]
+    fn sitzung_benennen_und_archivieren_geht_durch_die_bruecke() {
+        // Seitenleiste und Kopf der Agent-Oberfläche: PATCH /api/gespraech/<id> mit {titel} oder {archiviert}; POST /api/gespraeche mit {titel}.
+        // Die Brücke gibt alle Methoden für Wege unter /api/ frei (Adresse und Token bleiben in Rust); die Seite schickt nur diese beiden Felder
+        // (Prüfung in tools/ui_agent.test.mjs). Der reservierte Weg zum Erlauben von Ordnern bleibt auch mit PATCH zu.
+        assert_eq!(methode_erlaubt("patch"), Some("PATCH"));
+        for gut in ["/api/gespraech/14", "/api/gespraech/a%2Fb", "/api/gespraeche"] {
+            assert!(pfad_erlaubt(gut) && !pfad_reserviert(gut), "{gut}");
+        }
+        for schlecht in ["/api/gespraech/../ordner/erlauben", "/api/gespraech/1 2", "https://evil.example.org/api/gespraech/1"] {
+            assert!(!pfad_erlaubt(schlecht), "{schlecht}");
+        }
+        assert!(pfad_reserviert("/api/ordner/erlauben"));
+    }
+
+    #[test]
     fn nur_diese_stroeme() {
         assert!(strom_pfad_ok("strom", "/api/strom"));
         assert!(strom_pfad_ok("gespraech", "/api/gespraech/14/ereignisse"));
