@@ -49,6 +49,15 @@ pub fn runner_zeile(name: Option<&str>) -> String {
     }
 }
 
+/// Die Runner-Zeile für den Tooltip, bei zwei Adressen mit dem Rechnernamen der gerade genutzten (`Runner: Fern (fern)`); nur der Rechnername,
+/// nie Pfad, Port oder Token.
+pub fn runner_zeile_mit_adresse(zeile: &str, genutzte_adresse: Option<&str>) -> String {
+    match genutzte_adresse.map(super::adresse::host_aus).map(|h| anzeige_name(&h)).filter(|h| !h.is_empty()) {
+        Some(h) => format!("{zeile} ({h})"),
+        None => zeile.to_string(),
+    }
+}
+
 /// Name für Menü und Tooltip: Steuerzeichen und Zeilenumbrüche werden zu Leerzeichen, an den Rändern gekürzt, höchstens 40 Zeichen.
 pub fn anzeige_name(roh: &str) -> String {
     let sauber: String = roh.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
@@ -140,6 +149,13 @@ mod tests {
     fn unbekannter_kopfzustand_ist_bereit() {
         assert_eq!(kopf_art("arbeitet"), "arbeitet");
         assert_eq!(kopf_art("unfug"), "bereit");
+    }
+
+    #[test]
+    fn tooltip_nennt_die_genutzte_adresse_nur_als_rechnername() {
+        assert_eq!(runner_zeile_mit_adresse("Runner: Fern", Some("http://fern:18438")), "Runner: Fern (fern)");
+        assert_eq!(runner_zeile_mit_adresse("Runner: Fern", Some("http://heim:18438/agent")), "Runner: Fern (heim)");
+        assert_eq!(runner_zeile_mit_adresse("Runner: Fern", None), "Runner: Fern");
     }
 
     #[test]

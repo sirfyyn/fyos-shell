@@ -31,13 +31,17 @@ pub struct RunnerEintrag {
     pub art: Art,
     /// Nur `entfernt`: Basis-Adresse.
     pub adresse: Option<String>,
+    /// Nur `entfernt`, optional: Rückfalladresse (z. B. der Name im Tunnelnetz), die gilt, wenn die erste nicht antwortet. Fehlt sie, ändert sich
+    /// nichts; in der Datei steht das Feld nur, wenn es gesetzt ist (ältere Fassungen lesen die Datei unverändert).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adresse2: Option<String>,
     /// Nur `entfernt`: Verweis `{tresor:NAME}` oder leer (kein Token nötig).
     pub token: String,
 }
 
 impl Default for RunnerEintrag {
     fn default() -> Self {
-        RunnerEintrag { id: String::new(), name: String::new(), art: Art::Entfernt, adresse: None, token: String::new() }
+        RunnerEintrag { id: String::new(), name: String::new(), art: Art::Entfernt, adresse: None, adresse2: None, token: String::new() }
     }
 }
 
@@ -53,7 +57,7 @@ pub struct LokalKonfig {
 
 impl RunnerEintrag {
     pub fn lokal() -> RunnerEintrag {
-        RunnerEintrag { id: LOKAL_ID.into(), name: "Dieser Rechner".into(), art: Art::Lokal, adresse: None, token: String::new() }
+        RunnerEintrag { id: LOKAL_ID.into(), name: "Dieser Rechner".into(), art: Art::Lokal, adresse: None, adresse2: None, token: String::new() }
     }
 }
 
@@ -101,7 +105,7 @@ impl AgentEinst {
         let name = name_aus_adresse(&adresse);
         let id = neue_id(&name, &self.runner);
         let token = if self.runner_token.trim().is_empty() { String::new() } else { self.runner_token.clone() };
-        self.runner.push(RunnerEintrag { id: id.clone(), name, art: Art::Entfernt, adresse: Some(adresse), token });
+        self.runner.push(RunnerEintrag { id: id.clone(), name, art: Art::Entfernt, adresse: Some(adresse), adresse2: None, token });
         self.aktiv_runner = Some(id);
         true
     }
@@ -198,6 +202,17 @@ pub fn ordner_name(pfad: &str) -> String {
     t.rsplit(['/', '\\']).next().filter(|s| !s.is_empty()).unwrap_or(t).to_string()
 }
 
+/// Prüft beim Speichern beide Adressen mit denselben Regeln (`adresse::normalisiere`, Katalogfehler). Die Rückfalladresse ist optional: leer
+/// (oder nur Leerraum) heißt keine; zeigt sie auf dieselbe Basis wie die erste, fällt sie weg (ein Rückfall auf sich selbst wäre sinnlos).
+pub fn adressen_pruefen(erste: &str, zweite: Option<&str>) -> Result<(super::adresse::Adresse, Option<super::adresse::Adresse>), Fehler> {
+    let a1 = super::adresse::normalisiere(erste)?;
+    let a2 = match zweite.map(str::trim).filter(|z| !z.is_empty()) {
+        None => None,
+        Some(z) => Some(super::adresse::normalisiere(z)?).filter(|a| a.basis != a1.basis),
+    };
+    Ok((a1, a2))
+}
+
 /// Das Ergebnis für die Seite: Liste ohne Geheimnisse (nicht einmal der Verweis), mit Markierung des aktiven.
 pub fn liste_json(e: &AgentEinst, lokal_status: &str) -> serde_json::Value {
     let aktiv = e.aktiver().map(|r| r.id.clone());
@@ -207,7 +222,7 @@ pub fn liste_json(e: &AgentEinst, lokal_status: &str) -> serde_json::Value {
         .map(|r| {
             serde_json::json!({
                 "id": r.id, "name": r.name, "art": r.art,
-                "adresse": r.adresse,
+                "adresse": r.adresse, "adresse2": r.adresse2,
                 "hat_token": !r.token.trim().is_empty(),
                 "aktiv": aktiv.as_deref() == Some(r.id.as_str()),
                 "status": if r.art == Art::Lokal { lokal_status } else { "" },
@@ -329,12 +344,57 @@ mod tests {
     }
 
     #[test]
+    fn adresse2_ist_optional_und_alte_dateien_laden_ohne_verlust() {
+        let alt = r#"{"id":"fern","name":"Fern","art":"entfernt","adresse":"http://heim:18438","token":"{tresor:runner-fern}"}"#;
+        let r: RunnerEintrag = serde_json::from_str(alt).unwrap();
+        assert_eq!(r.adresse2, None);
+        assert_eq!(r.adresse.as_deref(), Some("http://heim:18438"));
+        assert!(!serde_json::to_string(&r).unwrap().contains("adresse2"), "ohne Rückfall bleibt die Datei wie früher");
+        let mit = RunnerEintrag { adresse2: Some("http://fern:18438".into()), ..r.clone() };
+        let r2: RunnerEintrag = serde_json::from_str(&serde_json::to_string(&mit).unwrap()).unwrap();
+        assert_eq!(r2, mit);
+        // der bisherige einzelne Runner wird weiter übernommen, ohne Rückfall
+        let mut e = alt_einst("http://rechner:18438");
+        assert!(e.runner_uebernehmen());
+        assert_eq!(e.runner[0].adresse2, None);
+        // ein Runner der Liste behält adresse2 beim Übernehmen (Liste nicht leer: nichts wird überschrieben)
+        e.runner[0].adresse2 = Some("http://fern:18438".into());
+        assert!(!e.runner_uebernehmen());
+        assert_eq!(e.runner[0].adresse2.as_deref(), Some("http://fern:18438"));
+        assert!(liste_json(&e, "").to_string().contains("\"adresse2\":\"http://fern:18438\""));
+    }
+
+    fn alt_einst(adresse: &str) -> AgentEinst {
+        AgentEinst { runner_adresse: Some(adresse.into()), ..Default::default() }
+    }
+
+    #[test]
+    fn beide_adressen_werden_beim_speichern_geprueft() {
+        let (a, b) = adressen_pruefen("heim:18438", Some("fern:18438")).unwrap();
+        assert_eq!((a.basis.as_str(), b.unwrap().basis.as_str()), ("http://heim:18438", "http://fern:18438"));
+        let (_, b) = adressen_pruefen("fern:1", Some("   ")).unwrap();
+        assert!(b.is_none(), "leer = keine zweite");
+        let (_, b) = adressen_pruefen("fern:1", None).unwrap();
+        assert!(b.is_none());
+        let (_, b) = adressen_pruefen("http://fern:1/", Some("fern:1")).unwrap();
+        assert!(b.is_none(), "dieselbe Basis fällt weg");
+        // Adresse aus dem Tunnelnetz ist als zweite erlaubt
+        assert!(adressen_pruefen("heim:18438", Some("100.64.0.6:18438")).unwrap().1.is_some());
+        // Katalogfehler für jede der beiden
+        assert_eq!(adressen_pruefen("http://runner.example.org", None).unwrap_err().code(), "RUNNER_ADRESSE_UNSICHER");
+        assert_eq!(adressen_pruefen("fern:1", Some("http://runner.example.org")).unwrap_err().code(), "RUNNER_ADRESSE_UNSICHER");
+        assert_eq!(adressen_pruefen("fern:1", Some("a b")).unwrap_err().code(), "RUNNER_ADRESSE_UNBRAUCHBAR");
+        assert_eq!(adressen_pruefen("", Some("fern:1")).unwrap_err().code(), "RUNNER_NICHT_EINGERICHTET");
+    }
+
+    #[test]
     fn die_liste_wird_ohne_geheimnisse_gespeichert_und_wieder_gelesen() {
         let d = tempfile::tempdir().unwrap();
         let p = crate::speicher::Pfade::neu(d.path());
         let mut ein = crate::einstellungen::Einstellungen::default();
         ein.agent = alt("https://runner.example.org");
         ein.agent.runner_uebernehmen();
+        ein.agent.runner[0].adresse2 = Some("http://100.64.0.6:18438".into());
         ein.agent.runner_setzen(RunnerEintrag::lokal());
         ein.agent.lokal = LokalKonfig { programm: "/probe/runner".into(), args: vec!["--port".into(), "{port}".into()] };
         ein.agent.ordner_merken("lokal", "/probe/a").unwrap();

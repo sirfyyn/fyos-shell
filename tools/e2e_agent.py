@@ -22,6 +22,11 @@ Die Chat-Seite bedient sich im Prüfmodus selbst (ui/agent/e2e.js, nur mit FYOS_
   B2  Umschalten auf einen entfernten Runner ohne Neustart: Ordnerbaum (Wurzeln, Aufklappen, Wählen), 403 und 404 klar, zuletzt je Runner
   B3  SIGTERM der Hülle beendet auch das lokale Programm (kein Zombie, kein Waise); das Token steht nicht in den Einstellungen
 
+  C1  zwei Adressen je Runner: die erste ist tot (geschlossener Port auf Loopback), die zweite lebt (Attrappe): die ganze Sitzung läuft über die zweite
+  C2  danach leben beide: die Hülle bleibt bei der zuletzt funktionierenden (die erste bekommt keine Anfrage)
+  C3  die erste antwortet mit 401: kein Wechsel, die zweite sieht nichts
+  C4  die gemerkte (zweite) fällt aus: die Hülle geht zurück zur ersten; die gemerkte Adresse steht nicht in den Einstellungen
+
 Aufruf (aus apps/fyos-shell):  python3 tools/e2e_agent.py [--ohne-bau]
 """
 import argparse
@@ -41,6 +46,11 @@ NAME = "FYOS Agent D0-Test"
 PORT = 18681
 PORT_FALSCH = 18682
 PORT_FERNE = 18683
+# zwei Adressen je Runner (C1 bis C4); PORT_ERSTE ist zuerst ein freier, geschlossener Port, später lebt dort eine Attrappe
+PORT_ERSTE = 18684
+PORT_ZWEITE = 18685
+PORT_401 = 18686
+PORT_401_ZWEITE = 18687
 PROGRAMM = e.TOOLS / "lokaler_runner_test.py"
 ERWARTET_B = ["runner-liste", "lokaler-runner-laeuft", "lokal-dialog-statt-baum", "lokal-ordner-gewaehlt", "lokal-sitzung-mit-ordner", "ordner-in-liste",
               "zuletzt-benutzt", "erlauben-nicht-fuer-die-seite", "wechsel-entfernt", "baum-wurzeln", "baum-aufklappen", "baum-auswahl",
@@ -187,6 +197,9 @@ def ergebnisse_aus(*logs):
             k = x.get("koerper")
             if x.get("pfad") == "/api/e2e/ergebnis" and isinstance(k, dict) and "schritt" in k:
                 aus[k["schritt"]] = k
+            # die Attrappe des Runners schreibt das Ergebnis als eigene Zeile {"ergebnis": {...}}
+            if isinstance(x.get("ergebnis"), dict) and "schritt" in x["ergebnis"]:
+                aus[x["ergebnis"]["schritt"]] = x["ergebnis"]
     return aus
 
 
@@ -254,18 +267,115 @@ def pruefe_ordner(app, arbeit):
         ferne.wait(timeout=10)
 
 
+def app_starten_zwei(app, daten, tmp, erste, zweite, token_im_tresor):
+    """Startet die Hülle mit einem Runner der Liste, der zwei Adressen hat (`adresse`, `adresse2`); das Token liegt im Tresor im Arbeitsspeicher."""
+    daten.mkdir(parents=True, exist_ok=True)
+    (daten / "einstellungen.json").write_text(json.dumps({"schema": 1, "agent": {
+        "runner": [{"id": "zwei", "name": "Zwei Adressen", "art": "entfernt", "adresse": f"http://127.0.0.1:{erste}", "adresse2": f"http://127.0.0.1:{zweite}", "token": "{tresor:runner-zwei}"}],
+        "aktiv_runner": "zwei", "ruhe": False, "gemeldet": []}}), encoding="utf-8")
+    env = dict(os.environ, FYOS_SHELL_DATEN=str(daten), TMPDIR=str(tmp), FYOS_SHELL_TRESOR_SAAT=f"runner-zwei={token_im_tresor}", FYOS_SHELL_AGENT_E2E="1")
+    return subprocess.Popen([str(app / "Contents" / "MacOS" / "fyos-shell")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def anfragen_in(log):
+    return [x for x in zeilen(log) if "pfad" in x]
+
+
+def pruefe_adressen(app, arbeit):
+    """C1 bis C4: zwei Adressen je Runner. Erste Adresse = freier, geschlossener Port auf Loopback; zweite = Attrappe."""
+    tmp = arbeit / "tmp"
+    tmp.mkdir(exist_ok=True)
+    for port in (PORT_ERSTE, PORT_ZWEITE, PORT_401, PORT_401_ZWEITE):
+        if e.port_offen(port):
+            sys.exit(f"Port {port} ist belegt (ein anderer Prüfstand läuft noch). Abhilfe: beenden oder die Ports in tools/e2e_agent.py ändern.")
+    daten = arbeit / "daten" / "zwei"
+    if daten.exists():
+        shutil.rmtree(daten)
+    log1, log2 = arbeit / "zwei-erste.log", arbeit / "zwei-zweite.log"
+    log1.unlink(missing_ok=True)
+    log2.unlink(missing_ok=True)
+    print("C1 erste Adresse tot, zweite lebt")
+    zweite = attrappe(PORT_ZWEITE, log2, TOKEN)
+    erste = None
+    try:
+        if not e.warten_bis(lambda: e.port_offen(PORT_ZWEITE), 10):
+            sys.exit("Runner-Attrappe (zweite Adresse) startet nicht")
+        proc = app_starten_zwei(app, daten, tmp, PORT_ERSTE, PORT_ZWEITE, TOKEN)
+        try:
+            e.warten_bis(lambda: "verbunden" in ergebnisse_aus(log2), 120)
+            e.melde("C1", "die Verbindung kommt über die zweite Adresse zustande (erste: kein TCP)", "verbunden" in ergebnisse_aus(log2) and "/api/health" in [x["pfad"].split("?")[0] for x in anfragen_in(log2)])
+            # C2: jetzt lebt auch die erste Adresse; die Hülle bleibt bei der zuletzt funktionierenden (zweiten)
+            erste = attrappe(PORT_ERSTE, log1, TOKEN)
+            e.warten_bis(lambda: e.port_offen(PORT_ERSTE), 10)
+            ok = e.warten_bis(lambda: any(x in ergebnisse_aus(log2) for x in ("ende", "abgebrochen")), 240)
+            erg = ergebnisse_aus(log2)
+            for schritt in ("verbunden", "streaming-ganz", "freigabe-erteilt", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt", "wechsel-erhaelt-sitzung", "ende"):
+                r = erg.get(schritt)
+                e.melde("C1", f"Schritt {schritt} (über die zweite Adresse)", bool(r and r["ok"]), json.dumps(r) if r else "kein Ergebnis")
+            e.melde("C1", "der Prüflauf ist über die zweite Adresse bis zum Ende gekommen", ok and "ende" in erg)
+            print("C2 beide lebendig: bleibt bei der zuletzt funktionierenden")
+            e.warten_bis(lambda: False, 12)  # mindestens zwei Beobachter-Durchgänge nach dem Ende
+            e.melde("C2", "die erste (inzwischen lebende) Adresse hat keine einzige Anfrage bekommen, auch nicht beim Neuverbinden des Stroms", len(anfragen_in(log1)) == 0, f"{len(anfragen_in(log1))} Anfragen")
+            e.melde("C2", "die zweite Adresse bedient weiter (Beobachter)", len([x for x in anfragen_in(log2) if x["pfad"].split("?")[0] == "/api/freigaben"]) >= 3)
+            # C4: die gemerkte (zweite) fällt aus: zurück zur ersten
+            print("C4 die gemerkte Adresse fällt aus: zurück zur ersten")
+            zweite.terminate()
+            zweite.wait(timeout=10)
+            e.melde("C4", "nach dem Ausfall der zweiten Adresse kommen Anfragen mit richtigem Token bei der ersten an",
+                    e.warten_bis(lambda: any(x["auth"] and x["pfad"].split("?")[0] == "/api/freigaben" for x in anfragen_in(log1)), 60), f"{len(anfragen_in(log1))} Anfragen")
+            e.melde("C4", "die Hülle läuft weiter", proc.poll() is None)
+            datei = (daten / "einstellungen.json").read_text(encoding="utf-8")
+            runner = json.loads(datei).get("agent", {}).get("runner", [{}])[0]
+            e.melde("C4", "die Einstellungen bleiben, wie eingetragen (erste, zweite): die gemerkte Adresse steht nur im Speicher; das Token steht nicht darin",
+                    TOKEN not in datei and runner.get("adresse") == f"http://127.0.0.1:{PORT_ERSTE}" and runner.get("adresse2") == f"http://127.0.0.1:{PORT_ZWEITE}", json.dumps(runner))
+        finally:
+            beenden(proc)
+    finally:
+        for s in (zweite, erste):
+            if s is not None and s.poll() is None:
+                s.terminate()
+                s.wait(timeout=10)
+
+    print("C3 die erste Adresse antwortet mit 401: kein Wechsel")
+    daten3 = arbeit / "daten" / "zwei-401"
+    if daten3.exists():
+        shutil.rmtree(daten3)
+    log3, log4 = arbeit / "zwei-401-erste.log", arbeit / "zwei-401-zweite.log"
+    log3.unlink(missing_ok=True)
+    log4.unlink(missing_ok=True)
+    abweisend = attrappe(PORT_401, log3, "ein-ganz-anderes-token-0123456789")
+    gut = attrappe(PORT_401_ZWEITE, log4, TOKEN)
+    try:
+        e.warten_bis(lambda: e.port_offen(PORT_401) and e.port_offen(PORT_401_ZWEITE), 10)
+        proc = app_starten_zwei(app, daten3, tmp, PORT_401, PORT_401_ZWEITE, TOKEN)
+        try:
+            e.warten_bis(lambda: len([x for x in anfragen_in(log3) if not x["auth"]]) >= 3, 60)
+            e.melde("C3", "die erste Adresse bekommt die Anfragen und lehnt ab (mindestens drei, Wiederholen läuft)", len([x for x in anfragen_in(log3) if not x["auth"]]) >= 3, f"{len(anfragen_in(log3))} Anfragen")
+            e.melde("C3", "die zweite Adresse bekommt keine einzige Anfrage (kein Wechsel bei 401, das Token geht nicht an eine zweite Stelle)", len(anfragen_in(log4)) == 0, f"{len(anfragen_in(log4))} Anfragen")
+            e.melde("C3", "die Hülle läuft weiter", proc.poll() is None)
+        finally:
+            beenden(proc)
+    finally:
+        for s in (abweisend, gut):
+            s.terminate()
+            s.wait(timeout=10)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--arbeit", default="/private/tmp/fyos-shell-d0-e2e/lauf-agent")
     p.add_argument("--ohne-bau", action="store_true")
+    p.add_argument("--nur-adressen", action="store_true", help="nur C1 bis C4 (zwei Adressen je Runner)")
     a = p.parse_args()
     if sys.platform != "darwin":
         sys.exit("Dieses Skript läuft nur auf macOS.")
     arbeit = Path(a.arbeit)
     arbeit.mkdir(parents=True, exist_ok=True)
     app = arbeit / "bau" / f"{NAME}.app" if a.ohne_bau else bauen(arbeit)
-    pruefe(app, arbeit)
-    pruefe_ordner(app, arbeit)
+    if not a.nur_adressen:
+        pruefe(app, arbeit)
+        pruefe_ordner(app, arbeit)
+    pruefe_adressen(app, arbeit)
     schlecht = [x for x in e.ERGEBNISSE if not x[2]]
     print(f"\n{len(e.ERGEBNISSE) - len(schlecht)} von {len(e.ERGEBNISSE)} Prüfungen bestanden.")
     for tor, name, _, detail in schlecht:

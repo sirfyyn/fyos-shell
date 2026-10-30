@@ -3,7 +3,7 @@
 
 use super::AgentZustand;
 use crate::{befehle, fenster, tray as huelle_tray, zustand::{sperre, Huelle}};
-use shell_core::agent::anzeige::{runner_id_aus_menue, runner_wahl, runner_zeile, status_text, text_freigaben, titel_text, tooltip_text, zustand_text, WahlEintrag, RUNNER_WAHL_LEER, RUNNER_WAHL_TITEL};
+use shell_core::agent::anzeige::{runner_id_aus_menue, runner_wahl, runner_zeile, runner_zeile_mit_adresse, status_text, text_freigaben, titel_text, tooltip_text, zustand_text, WahlEintrag, RUNNER_WAHL_LEER, RUNNER_WAHL_TITEL};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -121,12 +121,13 @@ fn wahl_anzeigen(app: &AppHandle, w: &Wahl, neu: Vec<WahlEintrag>) {
 pub fn aktualisieren(app: &AppHandle) {
     let (Some(h), Some(a)) = (app.try_state::<Arc<Huelle>>(), app.try_state::<Arc<AgentZustand>>()) else { return };
     let produkt = app.config().product_name.clone().unwrap_or_else(|| "FYOS Agent".into());
-    let (eingerichtet, ruhe, runner_name, wahl) = {
+    let (eingerichtet, ruhe, runner_name, wahl, zwei_adressen) = {
         let mut e = sperre(&h.einstellungen).agent.clone();
         e.runner_uebernehmen();
         let liste: Vec<(String, String)> = e.runner.iter().map(|r| (r.id.clone(), r.name.clone())).collect();
         let aktiv = e.aktiver().map(|r| (r.id.clone(), r.name.clone()));
-        (e.eingerichtet(), e.ruhe, aktiv.as_ref().map(|r| r.1.clone()), runner_wahl(&liste, aktiv.as_ref().map(|r| r.0.as_str())))
+        let zwei = e.aktiver().is_some_and(|r| r.adresse2.as_deref().is_some_and(|a| !a.trim().is_empty()));
+        (e.eingerichtet(), e.ruhe, aktiv.as_ref().map(|r| r.1.clone()), runner_wahl(&liste, aktiv.as_ref().map(|r| r.0.as_str())), zwei)
     };
     let (verbunden, offene, laeufe) = (a.verbunden.load(Ordering::SeqCst), a.offene.load(Ordering::SeqCst), a.laeufe.load(Ordering::SeqCst));
     let (kopf_art, kopf_busy) = sperre(&a.kopf).clone();
@@ -143,7 +144,9 @@ pub fn aktualisieren(app: &AppHandle) {
         let _ = g.ruhe.set_checked(ruhe);
     }
     if let Some(t) = app.tray_by_id(TRAY_ID) {
-        let _ = t.set_tooltip(Some(tooltip_text(&zeile, &status, &frei)));
+        // bei zwei Adressen steht im Tooltip (nicht im Menü), welche gerade genutzt wird
+        let kopf = if zwei_adressen { runner_zeile_mit_adresse(&zeile, a.genutzt().as_deref()) } else { zeile.clone() };
+        let _ = t.set_tooltip(Some(tooltip_text(&kopf, &status, &frei)));
         let _ = t.set_title(titel_text(offene));
     }
 }

@@ -25,6 +25,7 @@
     bearbeiteId = null;
     $("r-name").value = "";
     $("a-adresse").value = "";
+    $("a-adresse2").value = "";
     $("a-token").value = "";
     $("r-form-titel").textContent = "Runner hinzufügen";
     $("a-neu").hidden = true;
@@ -34,6 +35,7 @@
     bearbeiteId = r.id;
     $("r-name").value = r.name || "";
     $("a-adresse").value = r.adresse || "";
+    $("a-adresse2").value = r.adresse2 || "";
     $("a-token").value = "";
     $("r-form-titel").textContent = `Runner „${r.name}“ ändern`;
     $("a-neu").hidden = false;
@@ -49,7 +51,7 @@
       li.dataset.id = r.id;
       const t = document.createElement("span");
       t.className = "r-name";
-      const art = r.art === "lokal" ? `lokal, ${STAND[r.status] || r.status}` : r.adresse || "ohne Adresse";
+      const art = r.art === "lokal" ? `lokal, ${STAND[r.status] || r.status}` : (r.adresse || "ohne Adresse") + (r.adresse2 ? `, Rückfall ${r.adresse2}` : "");
       t.textContent = `${r.name} (${art})${r.aktiv ? " · aktiv" : ""}`;
       li.appendChild(t);
       if (r.art === "entfernt") {
@@ -87,8 +89,15 @@
 
   async function pruefen(id) {
     $("a-text").textContent = "Prüfe …";
-    const r = await aufrufFn("agent_verbindung_pruefen", { id: id || bearbeiteId, adresse: id ? null : $("a-adresse").value || null, token: id ? null : $("a-token").value || null });
-    $("a-text").textContent = r ? `Verbindung steht${r.agent ? " (" + r.agent + ")" : ""}${r.geraet ? " auf " + r.geraet : ""}.` : "Keine Verbindung (siehe oben).";
+    // aus dem Formular: adresse2 "" heißt „keine Rückfalladresse“ (nicht die gespeicherte nehmen); aus der Liste (id): die gespeicherten
+    const r = await aufrufFn("agent_verbindung_pruefen", { id: id || bearbeiteId, adresse: id ? null : $("a-adresse").value || null, adresse2: id ? null : $("a-adresse2").value.trim(), token: id ? null : $("a-token").value || null });
+    if (!r) {
+      $("a-text").textContent = "Keine Verbindung (siehe oben).";
+      return;
+    }
+    let text = `Verbindung steht${r.agent ? " (" + r.agent + ")" : ""}${r.geraet ? " auf " + r.geraet : ""}.`;
+    if (r.zweite) text += r.zweite.ok ? " Die Rückfalladresse antwortet auch." : " Die Rückfalladresse antwortet nicht.";
+    $("a-text").textContent = text;
   }
 
   async function entfernen(r) {
@@ -104,7 +113,7 @@
     start(aufruf, info, leise) {
       aufrufFn = aufruf;
       $("a-speichern").addEventListener("click", async () => {
-        const v = await aufruf("runner_speichern", { id: bearbeiteId, name: $("r-name").value || null, adresse: $("a-adresse").value, token: $("a-token").value || null });
+        const v = await aufruf("runner_speichern", { id: bearbeiteId, name: $("r-name").value || null, adresse: $("a-adresse").value, adresse2: $("a-adresse2").value.trim() || null, token: $("a-token").value || null });
         if (!v) return;
         $("a-token").value = "";
         $("a-text").textContent = "Gespeichert. Das Token liegt im Tresor.";

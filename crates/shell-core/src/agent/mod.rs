@@ -4,6 +4,7 @@
 //! (im Tresor) des Runners und spricht dessen `/api/…` über eine Brücke in Rust. Alles hier ist rein (ohne Fenster, ohne Netz) und getestet.
 //!
 //! - [`adresse`]: Runner-Adresse prüfen (http nur im eigenen Netz), `api_url`
+//! - [`adressfolge`]: zwei Adressen je Runner (Reihenfolge, Rückfall nur bei Verbindungsfehler, Fehlertext)
 //! - [`bruecke`]: welche Wege und Ströme die Seite öffnen darf, SSE lesen, Wartetreppe, Fehler aus HTTP-Status
 //! - [`freigaben`]: offene Freigaben lesen, „neu“ erkennen, Meldungstext
 //! - [`runner`]: Liste der Runner (entfernt/lokal), aktiver Runner, zuletzt benutzte Ordner, Übernahme des bisherigen Runners
@@ -11,6 +12,7 @@
 //! - [`anzeige`]: Texte für Tray und Tooltip (Zustand, Zahl offener Freigaben, Runner-Name, Untermenü zum Wechseln)
 //! - [`lage`]: Lage (Position, Größe) des Chat-Fensters in den Einstellungen, Prüfung gegen die vorhandenen Bildschirme
 
+pub mod adressfolge;
 pub mod adresse;
 pub mod anzeige;
 pub mod bruecke;

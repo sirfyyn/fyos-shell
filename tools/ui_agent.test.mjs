@@ -1149,3 +1149,109 @@ test('Freigaben-Panel: eingebunden in chat.js (Sprung = wechsle, Strom, Tray-Ere
   assert.equal((lies('freigaben.js').match(/'POST'/g) || []).length, 1);
   assert.ok(lies('freigaben.js').includes("`/api/freigaben/${encodeURIComponent(id)}`") && lies('freigaben.js').includes("'/api/freigaben'"));
 });
+
+// --- Einstellungen: zwei Adressen je Runner (Rückfalladresse) ---
+const OBERFLAECHE = path.join(HIER, '..', 'app', 'ui');
+
+/** Die echte Seite index.html mit agent-einstellungen.js; `antworten[name]` ist eine Funktion (Argumente) -> Antwort oder null (= Fehler gezeigt). */
+function einstellungen(antworten) {
+  const html = fs.readFileSync(path.join(OBERFLAECHE, 'index.html'), 'utf8');
+  const d = new jsdom.JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
+  d.window.eval(fs.readFileSync(path.join(OBERFLAECHE, 'agent-einstellungen.js'), 'utf8'));
+  const aufrufe = [];
+  const aufruf = async (name, args) => {
+    aufrufe.push([name, plain(args || {})]);
+    const f = antworten[name];
+    return f ? f(args || {}) : null;
+  };
+  d.window.FyosAgentEinstellungen.start(aufruf, () => ({}), aufruf);
+  const g = (id) => d.window.document.getElementById(id);
+  return { d, g, aufrufe, aufruf, E: d.window.FyosAgentEinstellungen, ende: () => d.window.close() };
+}
+
+dom('Einstellungen: unter „Adresse“ steht das Feld „Rückfalladresse (optional)“ mit Hilfetext', () => {
+  const e = einstellungen({});
+  try {
+    const f = e.g('a-adresse2');
+    assert.ok(f, 'Feld a-adresse2');
+    assert.match(f.getAttribute('aria-label'), /Rückfalladresse/);
+    assert.equal(f.getAttribute('placeholder'), 'Rückfalladresse (optional)');
+    const hilfe = e.g('a-adresse2-hilfe').textContent;
+    assert.match(hilfe, /^z\. B\. der \w+-Name, damit der Runner auch unterwegs erreichbar ist$/);
+    assert.equal(f.getAttribute('aria-describedby'), 'a-adresse2-hilfe');
+    // Reihenfolge: Adresse, dann Rückfalladresse, dann Token
+    const pos = (a, b) => e.g(a).compareDocumentPosition(e.g(b)) & e.d.window.Node.DOCUMENT_POSITION_FOLLOWING;
+    assert.ok(pos('a-adresse', 'a-adresse2') && pos('a-adresse2', 'a-token'));
+  } finally {
+    e.ende();
+  }
+});
+
+dom('Einstellungen: Speichern schickt adresse2 (getrimmt, leer = keine), Fehler lassen das Formular stehen', async () => {
+  let antwort = { runner: [{ id: 'x', name: 'X', art: 'entfernt', adresse: 'http://heim:1', adresse2: 'http://fern:1', hat_token: true }] };
+  const e = einstellungen({ runner_speichern: () => antwort, runner_liste: () => antwort, lokaler_runner_status: () => null });
+  try {
+    e.g('a-adresse').value = 'heim:1';
+    e.g('a-adresse2').value = '  fern:1  ';
+    e.g('a-speichern').click();
+    await new Promise((r) => setTimeout(r, 20));
+    const s = e.aufrufe.find((a) => a[0] === 'runner_speichern');
+    assert.equal(s[1].adresse, 'heim:1');
+    assert.equal(s[1].adresse2, 'fern:1');
+    assert.equal(e.g('a-adresse2').value, '', 'nach dem Speichern ist das Formular leer');
+    assert.match(e.g('r-liste').textContent, /X \(http:\/\/heim:1, Rückfall http:\/\/fern:1\)/);
+    // leere Rückfalladresse: null (die Brücke speichert dann keine)
+    e.g('a-adresse').value = 'heim:1';
+    e.g('a-adresse2').value = '   ';
+    e.g('a-speichern').click();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(e.aufrufe.filter((a) => a[0] === 'runner_speichern')[1][1].adresse2, null);
+    // Katalogfehler (aufruf liefert null und zeigt die Meldung selbst): nichts wird geleert
+    antwort = null;
+    e.g('a-adresse').value = 'http://runner.example.org';
+    e.g('a-adresse2').value = 'http://runner.example.org';
+    e.g('a-speichern').click();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(e.g('a-adresse2').value, 'http://runner.example.org');
+    assert.equal(e.g('a-adresse').value, 'http://runner.example.org');
+  } finally {
+    e.ende();
+  }
+});
+
+dom('Einstellungen: Ändern füllt die Rückfalladresse ein; Prüfen meldet, ob sie antwortet', async () => {
+  const r = { id: 'x', name: 'X', art: 'entfernt', adresse: 'http://heim:1', adresse2: 'http://fern:1', hat_token: true };
+  let pruef = { ok: true, adresse: 'http://heim:1', zweite: { adresse: 'http://fern:1', ok: true } };
+  const e = einstellungen({ agent_verbindung_pruefen: () => pruef });
+  try {
+    e.E.zeichneListe({ runner: [r] });
+    [...e.g('r-liste').querySelectorAll('button')].find((b) => b.textContent === 'Ändern').click();
+    assert.equal(e.g('a-adresse').value, 'http://heim:1');
+    assert.equal(e.g('a-adresse2').value, 'http://fern:1');
+    e.g('a-pruefen').click();
+    await new Promise((x) => setTimeout(x, 20));
+    const p = e.aufrufe.find((a) => a[0] === 'agent_verbindung_pruefen');
+    assert.equal(p[1].adresse2, 'http://fern:1', 'das Formular gilt, nicht die gespeicherte Adresse');
+    assert.match(e.g('a-text').textContent, /Verbindung steht\..*Rückfalladresse antwortet auch/);
+    pruef = { ok: true, adresse: 'http://heim:1', zweite: { adresse: 'http://fern:1', ok: false } };
+    e.g('a-pruefen').click();
+    await new Promise((x) => setTimeout(x, 20));
+    assert.match(e.g('a-text').textContent, /Rückfalladresse antwortet nicht/);
+    // ohne zweite Adresse bleibt die Meldung wie früher
+    pruef = { ok: true, adresse: 'http://heim:1', zweite: null };
+    e.g('a-pruefen').click();
+    await new Promise((x) => setTimeout(x, 20));
+    assert.equal(e.g('a-text').textContent, 'Verbindung steht.');
+    // „Neuer Runner“ leert auch die Rückfalladresse
+    e.g('a-neu').click();
+    assert.equal(e.g('a-adresse2').value, '');
+  } finally {
+    e.ende();
+  }
+});
+
+test('Runner-Auswahl im Chat-Fenster zeigt den Namen, nie eine Adresse (Quelltext-Prüfung)', () => {
+  const chat = lies('chat.js');
+  assert.match(chat, /o\.textContent = r\.art === 'lokal' \? `\$\{r\.name\} \(lokal\)` : r\.name;/);
+  assert.ok(!/adresse/i.test(chat), 'chat.js liest keine Adresse');
+});

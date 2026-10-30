@@ -5,14 +5,19 @@
 
 use serde_json::{json, Value};
 use shell_core::agent::bruecke::{fehler_aus_status, fehler_aus_status_fuer, fehler_aus_transport};
+use shell_core::agent::adressfolge::Fehlschlag;
 use shell_core::Fehler;
 use std::io::Read;
 use std::time::Duration;
 
 const KENNUNG: &str = "fyos-agent-desktop/0.1";
 
-fn agent(frist: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(frist).redirects(0).user_agent(KENNUNG).build()
+fn agent(frist: Duration, verbinden: Option<Duration>) -> ureq::Agent {
+    let mut b = ureq::AgentBuilder::new().timeout(frist).redirects(0).user_agent(KENNUNG);
+    if let Some(v) = verbinden {
+        b = b.timeout_connect(v);
+    }
+    b.build()
 }
 
 fn meldung_aus(text: &str) -> Option<String> {
@@ -25,7 +30,15 @@ fn weiterleitung(url: &str, status: u16) -> Fehler {
 
 /// Eine Anfrage an den Runner. Antwort: JSON (leerer Körper wird `{}`). `koerper` geht als JSON; bei POST ohne Körper `{}`.
 pub fn anfrage(methode: &str, url: &str, token: &str, koerper: Option<&Value>, frist: Duration) -> Result<Value, Fehler> {
-    let mut req = agent(frist).request(methode, url).set("Accept", "application/json").set("X-FYOS-Agent", "1");
+    anfrage_folge(methode, url, token, koerper, frist, None).map_err(Fehlschlag::fehler)
+}
+
+/// Wie [`anfrage`], aber mit der Einstufung des Scheiterns für den Rückfall auf die zweite Adresse und optional kurzer Verbindungsfrist.
+/// `Verbindung` nur, wenn die Anfrage sicher nie angekommen ist (kein TCP: abgelehnt, Zeitüberschreitung beim Verbinden, DNS) oder wenn sie
+/// lesend ist (GET); eine Schreibanfrage, die nach dem Verbinden abbricht, wird nie auf einer zweiten Adresse wiederholt.
+pub fn anfrage_folge(methode: &str, url: &str, token: &str, koerper: Option<&Value>, frist: Duration, verbinden: Option<Duration>) -> Result<Value, Fehlschlag> {
+    let lesend = methode == "GET";
+    let mut req = agent(frist, verbinden).request(methode, url).set("Accept", "application/json").set("X-FYOS-Agent", "1");
     if !token.is_empty() {
         req = req.set("Authorization", &format!("Bearer {token}"));
     }
@@ -35,33 +48,44 @@ pub fn anfrage(methode: &str, url: &str, token: &str, koerper: Option<&Value>, f
         (None, "GET") | (None, "DELETE") => req.call(),
         (None, _) => json_senden(req, &json!({})),
     };
-    match antwort {
+    let ergebnis: Result<Value, Fehler> = match antwort {
         Ok(a) => {
             if (300..400).contains(&a.status()) {
-                return Err(weiterleitung(url, a.status()));
+                Err(weiterleitung(url, a.status()))
+            } else {
+                a.into_string().map_err(|e| Fehler::RunnerAntwortUnlesbar { grund: format!("Antwort nicht lesbar: {e}") }).and_then(|text| {
+                    if text.trim().is_empty() {
+                        Ok(json!({}))
+                    } else {
+                        serde_json::from_str::<Value>(&text).map_err(|e| Fehler::RunnerAntwortUnlesbar { grund: format!("kein JSON: {e}") })
+                    }
+                })
             }
-            let text = a.into_string().map_err(|e| Fehler::RunnerAntwortUnlesbar { grund: format!("Antwort nicht lesbar: {e}") })?;
-            if text.trim().is_empty() {
-                return Ok(json!({}));
-            }
-            serde_json::from_str::<Value>(&text).map_err(|e| Fehler::RunnerAntwortUnlesbar { grund: format!("kein JSON: {e}") })
         }
         Err(ureq::Error::Status(code, a)) => {
             if (300..400).contains(&code) {
-                return Err(weiterleitung(url, code));
+                Err(weiterleitung(url, code))
+            } else {
+                let text = a.into_string().unwrap_or_default();
+                let pfad = url.find("/api/").map(|i| &url[i..]).unwrap_or("");
+                Err(fehler_aus_status_fuer(pfad, code, meldung_aus(&text).as_deref()))
             }
-            let text = a.into_string().unwrap_or_default();
-            let pfad = url.find("/api/").map(|i| &url[i..]).unwrap_or("");
-            Err(fehler_aus_status_fuer(pfad, code, meldung_aus(&text).as_deref()))
         }
-        Err(ureq::Error::Transport(t)) => Err(fehler_aus_transport(url, &t.to_string())),
-    }
+        Err(ureq::Error::Transport(t)) => {
+            let f = fehler_aus_transport(url, &t.to_string());
+            // Kein TCP (abgelehnt, Zeitüberschreitung beim Verbinden, DNS): die Anfrage ist nie angekommen. Alles danach nur bei lesenden Anfragen.
+            let nie_angekommen = matches!(t.kind(), ureq::ErrorKind::ConnectionFailed | ureq::ErrorKind::Dns);
+            return Err(if nie_angekommen || lesend { Fehlschlag::Verbindung(f) } else { Fehlschlag::Antwort(f) });
+        }
+    };
+    ergebnis.map_err(Fehlschlag::from)
 }
 
 /// Einen Ereignisstrom (SSE) öffnen. Verbinden darf 6 s dauern; danach muss mindestens alle `lese_frist` etwas kommen
 /// (der Runner schickt regelmäßig einen Herzschlag), sonst gilt die Verbindung als tot.
-pub fn strom_verbinden(url: &str, token: &str, lese_frist: Duration) -> Result<Box<dyn Read + Send + Sync + 'static>, Fehler> {
-    let a = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(6)).timeout_read(lese_frist).redirects(0).user_agent(KENNUNG).build();
+/// Die Verbindungsfrist ist wählbar (üblich 6 s, mit zweiter Adresse kurz, siehe `adressfolge::VERBINDEN_MIT_RUECKFALL_MS`).
+pub fn strom_verbinden_mit(url: &str, token: &str, lese_frist: Duration, verbinden: Duration) -> Result<Box<dyn Read + Send + Sync + 'static>, Fehler> {
+    let a = ureq::AgentBuilder::new().timeout_connect(verbinden).timeout_read(lese_frist).redirects(0).user_agent(KENNUNG).build();
     let mut req = a.get(url).set("Accept", "text/event-stream").set("X-FYOS-Agent", "1");
     if !token.is_empty() {
         req = req.set("Authorization", &format!("Bearer {token}"));
@@ -88,15 +112,15 @@ pub fn gesundheit(basis: &str, token: &str) -> Result<Value, Fehler> {
     }
 }
 
+/// Wegwerf-Gegenstellen für Tests (auch für `agent::tests`): ein Server mit fester Antwort und ein geschlossener Port.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod attrappe {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
 
     /// Ein Wegwerf-Server: antwortet jedem Aufruf mit `antwort` und merkt sich die Kopfzeilen der Anfrage.
-    fn server(antwort: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
+    pub fn server(antwort: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let basis = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
         let gesehen: Arc<Mutex<Vec<String>>> = Arc::default();
@@ -118,6 +142,24 @@ mod tests {
         (basis, gesehen)
     }
 
+    pub const GESUND: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    pub const NEIN_401: &str = "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: 25\r\nConnection: close\r\n\r\n{\"fehler\":\"Nicht erlaubt\"}";
+
+    /// Ein Port, auf dem niemand lauscht (gerade noch gebunden, dann geschlossen): Verbindung wird sofort abgelehnt.
+    pub fn tote_basis() -> String {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let basis = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+        drop(l);
+        basis
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attrappe::server;
+    use super::*;
+    use std::net::TcpListener;
+
     #[test]
     fn token_geht_als_bearer_und_nur_wenn_gesetzt() {
         let (basis, gesehen) = server("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}");
@@ -137,7 +179,7 @@ mod tests {
         assert_eq!(f.code(), "RUNNER_ANTWORT_UNLESBAR");
         assert!(f.meldung().details.unwrap().contains("Weiterleitung"));
         assert_eq!(gesehen.lock().unwrap().iter().filter(|z| z.starts_with("GET ")).count(), 1, "nur eine Anfrage, kein zweiter Weg");
-        assert_eq!(strom_verbinden(&format!("{basis}/api/strom"), "t", Duration::from_secs(2)).err().unwrap().code(), "RUNNER_ANTWORT_UNLESBAR");
+        assert_eq!(strom_verbinden_mit(&format!("{basis}/api/strom"), "t", Duration::from_secs(2), Duration::from_secs(6)).err().unwrap().code(), "RUNNER_ANTWORT_UNLESBAR");
     }
 
     #[test]
@@ -153,6 +195,32 @@ mod tests {
         assert_eq!(anfrage("GET", &format!("{tot}/api/health"), "t", None, Duration::from_secs(2)).unwrap_err().code(), "RUNNER_NICHT_ERREICHBAR");
         let (basis, _) = server("HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nkein json");
         assert_eq!(anfrage("GET", &format!("{basis}/api/x"), "t", None, Duration::from_secs(3)).unwrap_err().code(), "RUNNER_ANTWORT_UNLESBAR");
+    }
+
+    #[test]
+    fn einstufung_fuer_den_rueckfall_verbindung_antwort_und_schreibanfragen() {
+        let t = Duration::from_secs(1);
+        let tot = super::attrappe::tote_basis();
+        for methode in ["GET", "POST"] {
+            let f = anfrage_folge(methode, &format!("{tot}/api/x"), "t", None, t, Some(Duration::from_secs(2))).unwrap_err();
+            assert!(matches!(f, Fehlschlag::Verbindung(_)), "{methode}: kein TCP ist immer ein Verbindungsfehler");
+        }
+        let (basis, _) = server(super::attrappe::NEIN_401);
+        let f = anfrage_folge("GET", &format!("{basis}/api/x"), "t", None, t, None).unwrap_err();
+        assert!(matches!(f, Fehlschlag::Antwort(Fehler::TokenAbgelehnt { .. })), "{f:?}");
+        // stumm: nimmt an, antwortet nie
+        let stumm = TcpListener::bind("127.0.0.1:0").unwrap();
+        let basis = format!("http://127.0.0.1:{}", stumm.local_addr().unwrap().port());
+        std::thread::spawn(move || {
+            let mut halten = vec![];
+            for s in stumm.incoming().flatten() {
+                halten.push(s);
+            }
+        });
+        let f = anfrage_folge("GET", &format!("{basis}/api/x"), "t", None, t, None).unwrap_err();
+        assert!(matches!(f, Fehlschlag::Verbindung(_)), "lesend darf die andere Adresse es versuchen: {f:?}");
+        let f = anfrage_folge("POST", &format!("{basis}/api/x"), "t", Some(&json!({"a": 1})), t, None).unwrap_err();
+        assert!(matches!(f, Fehlschlag::Antwort(Fehler::RunnerNichtErreichbar { .. })), "eine unterwegs gescheiterte Schreibanfrage wird nicht doppelt gesendet: {f:?}");
     }
 
     #[test]

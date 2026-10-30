@@ -391,7 +391,7 @@ impl Fehler {
             Fehler::RunnerNichtErreichbar { url, grund } => (
                 "Der Runner antwortet nicht (er ist aus, die Adresse stimmt nicht, das Netz oder der Tunnel ist unterbrochen).".into(),
                 "Prüfen, ob der Runner läuft und die Adresse in den Einstellungen stimmt; im Heimnetz das Gerät mit dem Netz verbinden, bei einem Tunnel dessen Verbindung prüfen. Die Anwendung verbindet sich von allein neu, sobald der Runner wieder da ist; der Verlauf kommt dann vollständig zurück.".into(),
-                Some(format!("{url}: {}", kurz(grund))),
+                Some(if url.is_empty() { kurz(grund) } else { format!("{url}: {}", kurz(grund)) }),
             ),
             Fehler::TokenAbgelehnt { status } => (
                 format!("Der Runner hat das Token abgelehnt (Status {status})."),

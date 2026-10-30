@@ -50,15 +50,18 @@ fn tick(app: &AppHandle, h: &Arc<Huelle>, a: &Arc<AgentZustand>) -> Duration {
     };
     let lokal = url::Url::parse(&ziel.basis).ok().and_then(|u| u.host_str().map(|x| ist_loopback(x.trim_matches(|c| c == '[' || c == ']')))).unwrap_or(false);
     let pause = Duration::from_secs(if lokal { 2 } else { 5 });
-    let antwort = http::anfrage("GET", &api_url(&ziel.basis, "/api/freigaben"), &ziel.token, None, Duration::from_secs(5));
-    let laeufe = if antwort.is_ok() {
-        http::anfrage("GET", &api_url(&ziel.basis, "/api/laeufe"), &ziel.token, None, Duration::from_secs(5)).map(|v| freigaben::laufende(&v)).unwrap_or(0)
-    } else {
-        0
-    };
+    // dieselbe Auflösung wie die Brücke: gemerkte Adresse zuerst, bei Verbindungsfehler die andere
+    let hole = |weg: &'static str| a.versuchen(&ziel, |basis, weitere| http::anfrage_folge("GET", &api_url(basis, weg), &ziel.token, None, Duration::from_secs(5), super::bruecke::verbinden_frist(weitere)));
+    let vorher = a.genutzt();
+    let antwort = hole("/api/freigaben");
+    let laeufe = if antwort.is_ok() { hole("/api/laeufe").map(|v| freigaben::laufende(&v)).unwrap_or(0) } else { 0 };
     // Zwischenzeitlich anderes Ziel eingestellt: Ergebnis verwerfen
-    if a.ziel(h).map(|z| z.basis != ziel.basis).unwrap_or(true) {
+    if a.ziel(h).map(|z| z.basen() != ziel.basen()).unwrap_or(true) {
         return pause;
+    }
+    // Die Anfrage hat auf die andere Adresse gewechselt: der Tray nennt sie im Tooltip
+    if a.genutzt() != vorher {
+        super::tray::aktualisieren(app);
     }
     match antwort {
         Ok(v) => {

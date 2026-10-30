@@ -7,6 +7,7 @@ use super::{http, merke_fehler, vergiss_fehler, AgentZustand};
 use crate::zustand::Huelle;
 use serde_json::{json, Value};
 use shell_core::agent::adresse::api_url;
+use shell_core::agent::adressfolge::{Fehlschlag, VERBINDEN_MIT_RUECKFALL_MS};
 use shell_core::agent::bruecke::{methode_erlaubt, pfad_erlaubt, pfad_reserviert, strom_pfad_ok, wartezeit_ms, SseLeser};
 use shell_core::{Fehler, Meldung};
 use std::io::{BufRead, BufReader};
@@ -23,6 +24,11 @@ const ANFRAGE_FRIST: Duration = Duration::from_secs(45);
 const LESE_FRIST: Duration = Duration::from_secs(45);
 const ZEILE_MAX: usize = 64 * 1024 * 1024;
 
+/// Kurze Verbindungsfrist (2 s), solange danach noch eine zweite Adresse kommt; sonst gilt die übliche Frist.
+pub(super) fn verbinden_frist(hat_weitere: bool) -> Option<Duration> {
+    hat_weitere.then(|| Duration::from_millis(VERBINDEN_MIT_RUECKFALL_MS))
+}
+
 fn nicht_freigegeben(pfad: &str) -> Meldung {
     Fehler::LinkAbgelehnt { link: pfad.chars().take(80).collect(), grund: "dieser Weg ist für die Seite nicht freigegeben".into() }.meldung()
 }
@@ -37,7 +43,7 @@ pub async fn runner_anfrage(h: H<'_>, a: A<'_>, methode: String, pfad: String, k
     let (h, a): (Arc<Huelle>, Arc<AgentZustand>) = (h.inner().clone(), a.inner().clone());
     tauri::async_runtime::spawn_blocking(move || {
         let ziel = a.ziel(&h)?;
-        let r = http::anfrage(m, &api_url(&ziel.basis, &pfad), &ziel.token, koerper.as_ref(), ANFRAGE_FRIST);
+        let r = a.versuchen(&ziel, |basis, weitere| http::anfrage_folge(m, &api_url(basis, &pfad), &ziel.token, koerper.as_ref(), ANFRAGE_FRIST, verbinden_frist(weitere)));
         if let Err(f) = &r {
             merke_fehler(&h, f);
         }
@@ -97,12 +103,20 @@ fn schlafe(stop: &AtomicBool, ms: u64) {
 fn schleife(app: AppHandle, h: Arc<Huelle>, a: Arc<AgentZustand>, kanal: String, pfad: String, stop: Arc<AtomicBool>) {
     let mut versuch: u32 = 0;
     while !stop.load(Ordering::SeqCst) {
-        let ergebnis = a.ziel(&h).and_then(|ziel| http::strom_verbinden(&api_url(&ziel.basis, &pfad), &ziel.token, LESE_FRIST));
+        // dieselbe Auflösung wie bei den Anfragen: gemerkte Adresse zuerst, bei Verbindungsfehler die andere
+        let ergebnis = a.ziel(&h).and_then(|ziel| {
+            a.versuchen(&ziel, |basis, weitere| {
+                let verbinden = verbinden_frist(weitere).unwrap_or(Duration::from_secs(6));
+                http::strom_verbinden_mit(&api_url(basis, &pfad), &ziel.token, LESE_FRIST, verbinden).map(|l| (basis.to_string(), l)).map_err(Fehlschlag::from)
+            })
+        });
         let grund: Fehler = match ergebnis {
-            Ok(leser) => {
+            Ok((basis, leser)) => {
                 vergiss_fehler(&h);
                 melde(&app, &kanal, &pfad, "verbunden", Value::Null, None, None);
-                let (empfangen, ende) = lies(&app, &kanal, &pfad, leser, &stop);
+                // Wechselt eine Anfrage die Adresse, während dieser Strom noch steht, endet er, und die Schleife öffnet ihn auf der neuen Adresse
+                // neu; die Chat-Seite lädt dabei nicht neu (sie sieht nur „getrennt“ und „verbunden“).
+                let (empfangen, ende) = lies(&app, &kanal, &pfad, leser, &stop, &|| a.strom_veraltet(&basis));
                 if empfangen {
                     versuch = 0;
                 }
@@ -128,7 +142,7 @@ fn schleife(app: AppHandle, h: Arc<Huelle>, a: Arc<AgentZustand>, kanal: String,
 }
 
 /// Liest bis zum Ende oder Fehler. Rückgabe: ob mindestens ein Ereignis ankam, und der Grund des Endes.
-fn lies(app: &AppHandle, kanal: &str, pfad: &str, leser: Box<dyn std::io::Read + Send + Sync>, stop: &AtomicBool) -> (bool, Fehler) {
+fn lies(app: &AppHandle, kanal: &str, pfad: &str, leser: Box<dyn std::io::Read + Send + Sync>, stop: &AtomicBool, veraltet: &dyn Fn() -> bool) -> (bool, Fehler) {
     let mut r = BufReader::new(leser);
     let mut sse = SseLeser::default();
     let mut puffer: Vec<u8> = Vec::with_capacity(4096);
@@ -137,6 +151,9 @@ fn lies(app: &AppHandle, kanal: &str, pfad: &str, leser: Box<dyn std::io::Read +
     loop {
         if stop.load(Ordering::SeqCst) {
             return (empfangen, ende("geschlossen"));
+        }
+        if veraltet() {
+            return (empfangen, ende("die Adresse des Runners hat gewechselt"));
         }
         puffer.clear();
         match r.read_until(b'\n', &mut puffer) {

@@ -63,6 +63,8 @@ AUSNAHMEN = [
      "Dokumentation der Update-Adresse je Profil (siehe app/profile/*.conf.json)"),
     (r"^app/capabilities/os-meldungen\.json$|^app/src/mitteilung\.rs$", "interne-adresse", r"https://fyos\.sirfyyn\.de/\*",
      "Capability des Profils os: der Befehl für Systemmitteilungen gilt nur für Seiten des Servers (Konfiguration und ihr Test)"),
+    (r"^app/ui/index\.html$", "privates-netz", r"z\. B\. der Tailscale-Name, damit der Runner auch unterwegs erreichbar ist",
+     "Hilfetext der Rückfalladresse: nennt das Produkt als Beispiel, keine Adresse und kein privates Netz"),
 ]
 
 SKIP_ORDNER = {".git", "node_modules", "target", "__pycache__", "gen", "dist-linux", "lauf-linux", "daten-linux", "testschluessel"}

@@ -7,6 +7,8 @@ use crate::zustand::{sperre, Huelle};
 use serde_json::{json, Value};
 use shell_core::agent::anzeige::kopf_art;
 use shell_core::agent::runner::{neue_id, token_name, token_verweis, Art, RunnerEintrag};
+use shell_core::agent::adressfolge::{alle_tot, ist_verbindungsfehler};
+use shell_core::agent::runner::adressen_pruefen;
 use shell_core::agent::{adresse, alt_ziel};
 use shell_core::einstellungen;
 use shell_core::{Fehler, Meldung};
@@ -44,7 +46,7 @@ pub(crate) fn nach_aenderung(app: &AppHandle, a: &AgentZustand) {
 /// Prüft die Verbindung (`GET /api/health`) mit den angegebenen oder den gespeicherten Werten eines entfernten Runners. Ändert nichts.
 /// `id`: ein Runner der Liste (Adresse und Token daraus, soweit nicht angegeben).
 #[tauri::command]
-pub async fn agent_verbindung_pruefen(h: H<'_>, id: Option<String>, adresse: Option<String>, token: Option<String>) -> Result<Value, Meldung> {
+pub async fn agent_verbindung_pruefen(h: H<'_>, id: Option<String>, adresse: Option<String>, adresse2: Option<String>, token: Option<String>) -> Result<Value, Meldung> {
     let h: Arc<Huelle> = h.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<Value, Fehler> {
         let eintrag = {
@@ -56,16 +58,39 @@ pub async fn agent_verbindung_pruefen(h: H<'_>, id: Option<String>, adresse: Opt
             Some(a) => a,
             None => eintrag.as_ref().and_then(|r| r.adresse.clone()).unwrap_or_default(),
         };
-        let a = adresse::normalisiere(&roh)?;
+        // Rückfalladresse: die angegebene (auch leer = keine), sonst die gespeicherte des Runners
+        let roh2 = match adresse2 {
+            Some(a) => Some(a),
+            None => eintrag.as_ref().and_then(|r| r.adresse2.clone()),
+        };
+        let (a, a2) = adressen_pruefen(&roh, roh2.as_deref())?;
         let tok = match token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
             Some(t) => t,
             None => token_aufloesen(&h, eintrag.as_ref().map(|r| r.token.as_str()).unwrap_or(""))?,
         };
-        let v = http::gesundheit(&a.basis, &tok)?;
+        let r1 = http::gesundheit(&a.basis, &tok);
+        let r2 = a2.as_ref().map(|n| http::gesundheit(&n.basis, &tok));
+        let ok2 = r2.as_ref().map(|r| r.is_ok());
+        // mit zwei Adressen genügt eine, die antwortet; eine HTTP-Antwort (auch 401) zählt vor einem Verbindungsfehler der anderen
+        let (v, gewaehlt, unsicher) = match (r1, r2) {
+            (Ok(v), _) => (v, a.basis.clone(), a.unsicher),
+            (Err(f), None) => return Err(f),
+            (Err(f), Some(Ok(v))) if ist_verbindungsfehler(&f) => (v, a2.as_ref().map(|n| n.basis.clone()).unwrap_or_default(), a2.as_ref().is_some_and(|n| n.unsicher)),
+            (Err(f), Some(Ok(_))) => return Err(f),
+            (Err(f1), Some(Err(f2))) => {
+                return Err(match (ist_verbindungsfehler(&f1), ist_verbindungsfehler(&f2)) {
+                    (true, true) => alle_tot(&[a.basis.clone(), a2.as_ref().map(|n| n.basis.clone()).unwrap_or_default()], f1),
+                    (true, false) => f2,
+                    _ => f1,
+                })
+            }
+        };
+        let zweite = a2.as_ref().map(|n| json!({"adresse": n.basis, "ok": ok2 == Some(true), "unsicher": n.unsicher}));
         Ok(json!({
             "ok": true,
-            "adresse": a.basis,
-            "unsicher": a.unsicher,
+            "adresse": gewaehlt,
+            "unsicher": unsicher,
+            "zweite": zweite,
             "agent": v.get("agent").and_then(Value::as_str).unwrap_or(""),
             "geraet": v.pointer("/geraet/name").and_then(Value::as_str).unwrap_or(""),
         }))
@@ -90,7 +115,7 @@ pub fn agent_alt_uebernehmen(app: AppHandle, h: H<'_>, a: A<'_>) -> Result<Value
             h.tresor.schreiben(&token_name(&id), t).map_err(|f| m(f.into()))?;
         }
         let verweis = if token.is_some() { token_verweis(&id) } else { String::new() };
-        e.agent.runner_setzen(RunnerEintrag { id: id.clone(), name: alt.name.clone(), art: Art::Entfernt, adresse: Some(neu.basis.clone()), token: verweis });
+        e.agent.runner_setzen(RunnerEintrag { id: id.clone(), name: alt.name.clone(), art: Art::Entfernt, adresse: Some(neu.basis.clone()), adresse2: None, token: verweis });
         let _ = e.agent.aktiv_setzen(&id);
         einstellungen::speichern(&h.pfade, &e).map_err(m)?;
     }

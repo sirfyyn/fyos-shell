@@ -13,8 +13,7 @@ use super::lokal::{start_wurzeln, FEHLER};
 use super::{vergiss_fehler, AgentZustand};
 use crate::zustand::{sperre, Huelle};
 use serde_json::{json, Value};
-use shell_core::agent::adresse;
-use shell_core::agent::runner::{liste_json, neue_id, name_aus_adresse, ordner_name, ordner_pruefen, token_verweis, Art, LokalKonfig, RunnerEintrag, LOKAL_ID};
+use shell_core::agent::runner::{adressen_pruefen, liste_json, neue_id, name_aus_adresse, ordner_name, ordner_pruefen, token_verweis, Art, LokalKonfig, RunnerEintrag, LOKAL_ID};
 use shell_core::einstellungen;
 use shell_core::{Fehler, Meldung};
 use std::sync::Arc;
@@ -52,8 +51,9 @@ pub fn runner_liste(h: H<'_>, a: A<'_>) -> Value {
 
 /// Legt einen entfernten Runner an oder ändert ihn. Das Token (wenn angegeben) geht in den Tresor, in der Liste steht nur der Verweis.
 #[tauri::command]
-pub fn runner_speichern(app: AppHandle, h: H<'_>, a: A<'_>, id: Option<String>, name: Option<String>, adresse: String, token: Option<String>) -> Result<Value, Meldung> {
-    let neu = adresse::normalisiere(&adresse).map_err(m)?;
+pub fn runner_speichern(app: AppHandle, h: H<'_>, a: A<'_>, id: Option<String>, name: Option<String>, adresse: String, adresse2: Option<String>, token: Option<String>) -> Result<Value, Meldung> {
+    // beide Adressen mit denselben Regeln; die zweite ist optional (leer = keine)
+    let (neu, neu2) = adressen_pruefen(&adresse, adresse2.as_deref()).map_err(m)?;
     let token = token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     if let Some(t) = &token {
         if !token_brauchbar(t) {
@@ -85,7 +85,7 @@ pub fn runner_speichern(app: AppHandle, h: H<'_>, a: A<'_>, id: Option<String>, 
             (None, Some(vorhanden)) => vorhanden,
             (None, None) => String::new(),
         };
-        e.agent.runner_setzen(RunnerEintrag { id: rid.clone(), name: anzeige, art: Art::Entfernt, adresse: Some(neu.basis.clone()), token: verweis });
+        e.agent.runner_setzen(RunnerEintrag { id: rid.clone(), name: anzeige, art: Art::Entfernt, adresse: Some(neu.basis.clone()), adresse2: neu2.map(|n| n.basis), token: verweis });
         if alt.is_none() && vorher_aktiv.is_none() {
             let _ = e.agent.aktiv_setzen(&rid);
         }

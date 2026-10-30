@@ -1,7 +1,8 @@
 //! Runner-Adresse: aus Eingaben wie `rechner:18438` oder `runner.example.org/agent` wird eine Basis-URL.
 //!
 //! Regel für das Token: es geht bei jeder Anfrage im Kopf `Authorization` mit. Deshalb ist `http` nur zum eigenen Rechner und im Heimnetz erlaubt
-//! (Loopback, private Adressbereiche, `.local`, Namen ohne Punkt); jede öffentliche Adresse braucht `https` (`RUNNER_ADRESSE_UNSICHER`).
+//! (Loopback, private Adressbereiche, Tunnelnetz 100.64.0.0/10, `.local`, Namen ohne Punkt); jede öffentliche Adresse braucht `https`
+//! (`RUNNER_ADRESSE_UNSICHER`).
 
 use crate::fehler::Fehler;
 use url::Url;
@@ -52,7 +53,15 @@ fn privates_v4(host: &str) -> bool {
     if z.len() != 4 {
         return false;
     }
-    z[0] == 10 || (z[0] == 192 && z[1] == 168) || (z[0] == 172 && (16..=31).contains(&z[1])) || (z[0] == 169 && z[1] == 254)
+    z[0] == 10 || (z[0] == 192 && z[1] == 168) || (z[0] == 172 && (16..=31).contains(&z[1])) || (z[0] == 169 && z[1] == 254) || tunnelnetz_v4(&z)
+}
+
+/// Tunnelnetze mit CGNAT-Adressen (WireGuard-Mesh) vergeben Adressen aus dem CGNAT-Bereich 100.64.0.0/10 (100.64.0.0 bis 100.127.255.255). Das Netz ist ein verschlüsselter, nur für die
+/// eigenen Geräte offener Tunnel (WireGuard) und zählt deshalb wie das Heimnetz; ohne diese Zeile galt z. B. 100.64.0.6 als öffentlich und wurde
+/// ohne `https` abgelehnt, bevor eine Verbindung versucht wurde. Bewusst nur dieser Bereich: MagicDNS-Namen (Endung des Tunnelnetz-Anbieters, `.fyos.net`) sind
+/// kein Heimnetz (kein Wildcard); wer sie braucht, trägt `https` ein oder den Kurznamen ohne Punkt.
+fn tunnelnetz_v4(z: &[u8]) -> bool {
+    z[0] == 100 && (64..=127).contains(&z[1])
 }
 
 /// Rechner im eigenen Netz: Loopback, privates IPv4, `.local`, ein Name ohne Punkt (oder die Endung `.lan`).
@@ -163,6 +172,34 @@ mod tests {
         assert!(!ist_heimnetz(&privat(172, 32, 0, 1)));
         assert!(!ist_heimnetz("runner.example.org"));
         assert!(ist_heimnetz("rechner.local"));
+    }
+
+    #[test]
+    fn tunnelnetz_bereich_gilt_als_heimnetz_aber_nur_genau_dieser() {
+        for ok in ["100.64.0.6", "100.64.0.0", "100.100.1.1", "100.127.255.255"] {
+            assert!(ist_heimnetz(ok), "{ok}");
+            let a = normalisiere(&format!("http://{ok}:18438")).unwrap();
+            assert_eq!(a.basis, format!("http://{ok}:18438"));
+            assert!(a.unsicher, "http außerhalb von Loopback bleibt unsicher (die Oberfläche warnt)");
+            assert_eq!(normalisiere(&format!("{ok}:18438")).unwrap().basis, format!("http://{ok}:18438"), "ohne Schema wird http geraten");
+        }
+        for schlecht in ["100.63.255.255", "100.63.0.1", "100.128.0.0", "100.128.1.1", "100.0.0.1", "101.64.0.1", "99.64.0.1"] {
+            assert!(!ist_heimnetz(schlecht), "{schlecht}");
+            assert_eq!(normalisiere(&format!("http://{schlecht}:1")).unwrap_err().code(), "RUNNER_ADRESSE_UNSICHER", "{schlecht}");
+            assert_eq!(normalisiere(schlecht).unwrap().basis, format!("https://{schlecht}"), "{schlecht}: ohne Schema https");
+        }
+    }
+
+    #[test]
+    fn magicdns_namen_sind_kein_wildcard_fuer_http() {
+        let ts = ["ts", "net"].join(".");
+        for name in [format!("rechner.tailnet-abc.{ts}"), "rechner.fyos.net".to_string(), format!("x.{ts}"), ts.clone(), "fyos.net".to_string()] {
+            assert!(!ist_heimnetz(&name), "{name}");
+            assert_eq!(normalisiere(&format!("http://{name}:18438")).unwrap_err().code(), "RUNNER_ADRESSE_UNSICHER", "{name}");
+            assert!(normalisiere(&format!("https://{name}")).is_ok(), "{name} mit https");
+        }
+        // der Kurzname ohne Punkt bleibt der Weg für MagicDNS
+        assert!(normalisiere("http://fern:18438").is_ok());
     }
 
     #[test]
