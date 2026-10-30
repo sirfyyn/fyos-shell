@@ -179,6 +179,11 @@
         const wert = d.entscheidung === 'erteilt' ? 'erlauben' : 'ablehnen';
         entscheidungen.set(String(d.id), { wert, notiz: d.notiz || '' });
         view.resolveApproval(String(d.id), wert, d.notiz || '');
+      } else if (kind === 'fyos.befehl') {
+        // Ergebnis eines Befehls des Runners (/modell, /sitzung …): nur Anzeige, das Modell sieht es nicht
+        zugZu();
+        const t = String(d.text || '').trim();
+        view.addNote(`/${d.name || ''}${t ? `: ${t}` : ''}`, d.ok === false ? 'befehl fehler' : 'befehl');
       } else if (kind === 'fyos.eingang') {
         view.addNote(`Eingang (${d.quelle || 'hub'}${d.von ? ` von ${d.von}` : ''}): ${kurz(d.text, 200)}`);
       } else if (kind === 'fyos.lauf.auftrag') {

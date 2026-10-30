@@ -156,3 +156,42 @@
 .suche-meta { font-size: 11.5px; color: var(--leise); }
 .suche-leer { margin: 8px 10px; font-size: 12.5px; }
 .treffer-blitz { outline: 2px solid var(--akzent); outline-offset: 2px; border-radius: 4px; transition: outline-color 1.5s; }
+
+/* Eingabe: @Dateien, /Befehle, Anhänge, Modell und Modus (eingabe.js, anhaenge.js, waehler.js, modus.js). Nur Farben aus den Variablen oben. */
+.eingabe-links { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.anhang-knopf { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 0; flex: none; }
+.anhang-knopf svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.eingabe.zieht { border-color: var(--akzent); outline: 2px dashed var(--akzent); outline-offset: 2px; }
+.anhaenge { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.anhaenge[hidden] { display: none; }
+.anhang-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 4px 2px 10px; border: 1px solid var(--linie); border-radius: 999px; background: var(--flaeche2); font-size: 12.5px; }
+.anhang-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; max-width: 28ch; }
+.anhang-groesse { font-size: 11.5px; flex: none; }
+.anhang-weg { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--leise); font-size: 15px; line-height: 1; }
+.anhang-weg:hover:not(:disabled) { color: var(--schlecht); }
+.anhang-meldung { margin: 0 0 8px; font-size: 12.5px; color: var(--warn); overflow-wrap: anywhere; }
+.menue-hinweis { padding: 6px 10px; font-size: 12px; color: var(--leise); }
+.menue-punkt { min-width: 0; }
+.menue-punkt .name { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menue-punkt .hilfe { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menue-punkt .chip { margin-left: auto; flex: none; font-size: 10.5px; }
+.menue-punkt.ordner .name { color: var(--akzent); }
+.notiz.befehl { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; }
+.modell-knopf { cursor: pointer; background: none; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modell-knopf:disabled { opacity: .6; cursor: default; }
+.modell-menue { width: min(420px, 86vw); max-height: min(320px, 60vh); overflow: auto; }
+.modell-fehler { margin: 0; flex-basis: 100%; font-size: 12px; overflow-wrap: anywhere; }
+.waehler-titel { padding: 6px 9px 2px; font-size: 11.5px; letter-spacing: .02em; color: var(--leise); }
+.waehler-punkt { display: flex; gap: 8px; width: 100%; padding: 7px 9px; border-radius: 7px; cursor: pointer; }
+.waehler-punkt.fokus, .waehler-punkt:hover { background: rgba(45, 212, 191, .14); }
+.waehler-punkt[aria-disabled="true"] { opacity: .8; cursor: default; }
+.waehler-punkt[aria-disabled="true"]:hover { background: none; }
+.waehler-punkt .haken { width: 1.1em; color: var(--akzent); flex: none; }
+.waehler-punkt .text { display: flex; flex-direction: column; min-width: 0; font-size: 13px; }
+.waehler-punkt .hilfe { font-size: 12px; color: var(--leise); }
+.modus-menue:focus-visible { outline: 2px solid var(--akzent); outline-offset: 1px; }
+@media (max-width: 560px) {
+  .anhang-name { max-width: 16ch; }
+  .menue-punkt .hilfe { display: none; }
+  .modell-knopf { max-width: 22ch; }
+}

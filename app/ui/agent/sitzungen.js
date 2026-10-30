@@ -183,6 +183,17 @@
         }
         return { archiviert: !!an };
       },
+      /** Modell der Sitzung wechseln (Wähler im Fuß des Eingabefelds): PATCH mit genau einem Feld `modell` (Kennung aus GET /api/modelle, null = Standard des Runners). */
+      async modell(id, modellId) {
+        if (modellId !== null && (typeof modellId !== 'string' || !modellId)) throw new Error('Nicht gewechselt: Kein Modell gewählt.');
+        let r;
+        try {
+          r = await transport.api('PATCH', weg(id), { modell: modellId });
+        } catch (f) {
+          throw melde(f, 'Modell nicht gewechselt:');
+        }
+        return { gespraech: (r && r.gespraech) || null };
+      },
     };
   }
 

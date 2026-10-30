@@ -357,6 +357,66 @@
     const gesperrt = document.querySelector('#aenderungenInhalt .ae-grund[data-grund="gesperrt"]');
     await melde('vorschau-gesperrt', !!gesperrt && !document.querySelector('#aenderungenInhalt .ae-code') && !/Token/i.test($('aenderungenInhalt').textContent), gesperrt ? gesperrt.textContent : 'keine Meldung');
     pa.zeige(false);
+
+    // Eingabe (Abschnitt 9i): @Dateien aus dem Arbeitsordner, /Befehle des Runners, Anhänge, Modell und Modus – in der Sitzung mit Arbeitsordner
+    const ein = $('eingabe');
+    const optionen = () => [...document.querySelectorAll('#menue [role="option"] .name')].map((x) => x.textContent);
+    const tasteEin = (ziel, key) => ziel.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    ein.focus();
+    tippe(ein, 'Lies @');
+    await warte(() => !$('menue').hidden && optionen().length > 0, 15000);
+    await melde('eingabe-at-auswahl', optionen().includes('src/') && optionen().includes('README.md') && !optionen().includes('.env') && !optionen().includes('server.pem') && ein.getAttribute('aria-expanded') === 'true' && $('menue').getAttribute('role') === 'listbox', optionen().join('|'));
+    tippe(ein, 'Lies @readme');
+    await warte(() => optionen()[0] === 'README.md', 10000);
+    tasteEin(ein, 'Enter');
+    await melde('eingabe-at-einsetzen', ein.value === 'Lies @README.md ' && $('menue').hidden, ein.value);
+    tippe(ein, '@');
+    await warte(() => !$('menue').hidden, 10000);
+    tasteEin(ein, 'Escape');
+    await melde('eingabe-at-esc', $('menue').hidden && ein.value === '@', `${ein.value} hidden=${$('menue').hidden}`);
+    tippe(ein, '');
+    tippe(ein, '/');
+    await warte(() => optionen().includes('/hilfe'), 15000);
+    await melde('eingabe-slash-liste', optionen().includes('/verdichten') && optionen().includes('/modell') && !optionen().includes('/settings') && /Verdichtet/.test($('menue').textContent), optionen().join('|'));
+    tippe(ein, '/sitz');
+    await warte(() => optionen()[0] === '/sitzung', 10000);
+    tasteEin(ein, 'Enter'); // ergänzt den Namen
+    const ergaenzt = ein.value === '/sitzung ';
+    tasteEin(ein, 'Enter'); // sendet
+    const befehlDa = await warte(() => !!document.querySelector('.pane.aktiv .notiz.befehl'), 15000);
+    const befehlText = befehlDa ? document.querySelector('.pane.aktiv .notiz.befehl').textContent : '';
+    await melde('eingabe-befehl-ueber-nachricht', ergaenzt && befehlDa && /^\/sitzung: Modell probe-modell/.test(befehlText) && !text().includes('Antwort Teil'), `${ergaenzt} | ${befehlText}`);
+    const textdatei = new File(['Zeile eins\nZeile zwei\n'], 'notiz.txt', { type: 'text/plain' });
+    const bild = new File([new Uint8Array([137, 80, 78, 71])], 'bild.png', { type: 'image/png' });
+    const einfuegen = (dateien) => {
+      const ev = new Event('paste', { bubbles: true, cancelable: true });
+      ev.clipboardData = { files: dateien };
+      ein.dispatchEvent(ev);
+    };
+    einfuegen([textdatei, bild]);
+    await warte(() => document.querySelectorAll('#anhaenge .anhang-chip').length === 1 && !$('anhangMeldung').hidden, 10000);
+    const chipName = (document.querySelector('#anhaenge .anhang-name') || {}).textContent;
+    await melde('eingabe-anhang-chip', chipName === 'notiz.txt' && /bild\.png: Bilder nimmt der Runner heute nicht an/.test($('anhangMeldung').textContent), `${chipName} | ${$('anhangMeldung').textContent}`);
+    document.querySelector('#anhaenge .anhang-weg').click();
+    await melde('eingabe-anhang-entfernen', document.querySelectorAll('#anhaenge .anhang-chip').length === 0 && $('anhaenge').hidden, String(document.querySelectorAll('#anhaenge .anhang-chip').length));
+    einfuegen([textdatei]);
+    await warte(() => document.querySelectorAll('#anhaenge .anhang-chip').length === 1, 10000);
+    tippe(ein, 'Bitte lesen');
+    tasteEin(ein, 'Enter');
+    const eingebettet = await warte(() => text().includes('Angehängte Datei') && text().includes('Zeile zwei'), 15000);
+    await melde('eingabe-anhang-gesendet', eingebettet && text().includes('Datei: notiz.txt') && $('anhaenge').hidden && ein.value === '', text().slice(-160));
+    await warte(() => !window.__chat.view.busy, 30000);
+    $('modell').click();
+    const mOptionen = [...document.querySelectorAll('#modellMenue [role="option"]')];
+    const maxOption = mOptionen.find((o) => o.textContent.includes('Probe-Modell Groß'));
+    if (maxOption) maxOption.click();
+    await warte(() => $('modell').textContent === 'Probe-Modell Groß', 15000);
+    const serverModell = (await api('GET', `/api/gespraech/${nid}`)).agent.model;
+    await melde('eingabe-modellwechsel', mOptionen.length === 3 && !!maxOption && serverModell === 'probe-gross' && $('modell').textContent === 'Probe-Modell Groß', `${mOptionen.length} | ${serverModell} | ${$('modell').textContent}`);
+    $('modus').click();
+    const modi = [...document.querySelectorAll('#modusMenue [role="option"]')].map((o) => o.textContent);
+    await melde('eingabe-modus-echt', modi.length === 3 && !/Jede Aktion fragen/.test(modi.join('')) && $('modus').textContent === 'Zerstörendes fragt', modi.join(' | '));
+    $('modus').click();
     await ap.wechsle(1);
     }
 

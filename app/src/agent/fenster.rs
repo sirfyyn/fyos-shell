@@ -68,6 +68,9 @@ pub fn chat_oeffnen(app: &AppHandle) -> tauri::Result<()> {
         .title(titel)
         .inner_size(1100.0, 820.0)
         .min_inner_size(640.0, 480.0)
+        // Dateien aufs Eingabefeld ziehen: die Seite liest sie über die File-API des WebViews (nur die abgelegten Dateien, keine Pfade).
+        // Mit dem Standard-Handler der Hülle kämen die Ereignisse mit Pfaden nur nach Rust und HTML5-Drop bliebe stumm.
+        .disable_drag_drop_handler()
         .on_navigation(|url| sperre_chat(url))
         .on_new_window(|url, _| {
             sperre_chat(&url);

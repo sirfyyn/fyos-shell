@@ -611,6 +611,15 @@ function arbeitsplatz(opt) {
       return antwort(r[0], r[1]);
     }
     if (methode === 'GET' && /^\/api\/(suche|datei)\?/.test(url)) return antwort(404, { ok: false, fehler: `Unbekannte Route: GET ${url.split('?')[0]}` });
+    // Befehle des Runners (GET /api/befehle?gespraech=): nur mit opt.befehle; sonst wie ein älterer Runner
+    if (methode === 'GET' && /^\/api\/befehle(\?|$)/.test(url)) {
+      if (!opt.befehle) return antwort(404, { ok: false, fehler: 'Unbekannte Route: GET /api/befehle' });
+      return antwort(200, { ok: true, befehle: opt.befehle, anzahl: opt.befehle.length });
+    }
+    if (methode === 'POST' && /^\/api\/gespraech\/\d+\/nachricht$/.test(url)) {
+      const r = opt.nachricht ? opt.nachricht(k, st) : { ok: true, id: 7, art: k.art };
+      return antwort(r.status || 200, r.status ? { ok: false, fehler: r.fehler } : r);
+    }
     if (methode === 'GET' && url === '/api/konfiguration') return antwort(200, { ok: true, arbeitsbereiche: { standard: { titel: 'Standard', pfad: '/probe/standard' } }, modelle: [] });
     if (methode === 'GET' && url === '/api/health') return antwort(200, { ok: true, agent: 'probe' });
     if (methode === 'GET' && /^\/api\/gespraech\/\d+\/ansicht/.test(url)) {
@@ -634,6 +643,14 @@ function arbeitsplatz(opt) {
       if (!g) return antwort(500, { ok: false, fehler: 'Gespräch nicht gefunden' });
       if (k.titel !== undefined) g.titel = k.titel.slice(0, 120) || g.titel;
       if (k.archiviert !== undefined) g.archiviert = !!k.archiviert;
+      if (k.modell !== undefined) {
+        if (opt.modellFehler) return antwort(500, { ok: false, fehler: opt.modellFehler });
+        const m = k.modell === null ? null : (opt.modelle || []).find((x) => x.id === k.modell);
+        if (k.modell !== null && !m) return antwort(500, { ok: false, fehler: 'Unbekanntes Modell' });
+        g.modell = k.modell;
+        const wirksam = m || { provider: 'probe', id: 'probe-standard' };
+        return antwort(200, { ok: true, gespraech: { id: g.id, meta: { titel: g.titel, modell: k.modell }, agent: { model: { provider: wirksam.provider, modelId: wirksam.id }, cwd: '/probe/standard' } } });
+      }
       return antwort(200, { ok: true, gespraech: { id: g.id, meta: { titel: g.titel, archiviert: g.archiviert } } });
     }
     return antwort(404, { fehler: 'unbekannt ' + methode + ' ' + url });
@@ -642,6 +659,7 @@ function arbeitsplatz(opt) {
   const d = new jsdom.JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
   const w = d.window;
   w.fetch = fetchStub;
+  w.TextDecoder = TextDecoder; // jsdom bringt keinen mit; im WebView gibt es ihn
   if (opt.tauri) {
     // Brücke der Anwendung als Attrappe: Anfragen an den Runner gehen an den Speicher-Runner, alles andere an opt.tauri(befehl, argumente)
     st.tauri = [];
@@ -819,11 +837,12 @@ dom('Seite: Archivieren und Wiederherstellen (PATCH archiviert); die offene Sitz
   }
 });
 
-test('Brücke: PATCH ist der einzige Schreibweg der Benennung; die Seite sendet nur titel und archiviert (Quelltext-Prüfung)', () => {
+test('Brücke: PATCH hat genau drei Stellen (umbenennen, archivieren, Modell wechseln) und nur diese Felder (Quelltext-Prüfung)', () => {
   const quelle = lies('sitzungen.js') + lies('leiste.js') + lies('chat.js');
   const patches = quelle.match(/'PATCH'/g) || [];
-  assert.equal(patches.length, 2, 'PATCH steht genau zweimal in der Seite (umbenennen, archivieren)');
+  assert.equal(patches.length, 3, 'PATCH steht genau dreimal in der Seite (umbenennen, archivieren, Modell)');
   assert.ok(/aenderungsKoerper\(\{ titel: p\.titel \}\)/.test(quelle) && /aenderungsKoerper\(\{ archiviert: !!an \}\)/.test(quelle));
+  assert.ok(/transport\.api\('PATCH', weg\(id\), \{ modell: modellId \}\)/.test(quelle), 'der Körper des Modellwechsels trägt nur modell');
   assert.ok(!/'(PUT|DELETE)'/.test(quelle), 'kein PUT oder DELETE in der Seite');
 });
 
@@ -2547,4 +2566,574 @@ test('Quelltext: neue Module neutral formuliert, nur lesende Wege (GET), kein in
   const chat = lies('chat.js');
   assert.match(chat, /key\.toLowerCase\(\) === 'k'/);
   assert.match(chat, /e\.key === '\/'/);
+});
+
+// --- Eingabe: @Dateien, /Befehle, Anhänge, Modell und Modus (eingabe.js, anhaenge.js, waehler.js, modus.js) ---
+function eingabeLogik() {
+  const w = { FyosPrototyp: {} };
+  new Function('window', 'globalThis', lies('eingabe.js'))(w, w);
+  return w.FyosPrototyp.eingabe;
+}
+function anhangLogik() {
+  const w = { FyosPrototyp: {}, TextDecoder };
+  new Function('window', 'globalThis', lies('anhaenge.js'))(w, w);
+  return w.FyosPrototyp.anhaenge;
+}
+const dateiLike = (name, inhalt, extra) => {
+  const bytes = typeof inhalt === 'string' ? new TextEncoder().encode(inhalt) : inhalt;
+  return { name, size: bytes.length, type: '', arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), ...extra };
+};
+
+test('@-Auslöser: nur am Wortanfang, mit Anführungszeichen für Leerzeichen; „/“ nur als erstes Wort', () => {
+  const E = eingabeLogik();
+  const t = (text, c) => E.aktiverToken(text, c);
+  assert.deepEqual({ ...t('@', 1) }, { art: 'datei', start: 0, ende: 1, anfrage: '', gequotet: false });
+  assert.equal(t('Lies @src/ap', 12).anfrage, 'src/ap');
+  assert.equal(t('Lies @src/ap', 12).start, 5);
+  assert.equal(t('mail a@b.de', 11), null, 'ein @ mitten im Wort ist keine Auswahl');
+  assert.equal(t('Lies @a und mehr', 7).anfrage, 'a', 'die Schreibmarke bestimmt das Wort');
+  assert.equal(t('Lies @a und mehr', 16), null);
+  assert.deepEqual({ ...t('Lies @"mein ord', 15) }, { art: 'datei', start: 5, ende: 15, anfrage: 'mein ord', gequotet: true });
+  assert.equal(t('/ver', 4).art, 'befehl');
+  assert.equal(t('/ver', 4).anfrage, 'ver');
+  assert.equal(t('/ver rest', 3).ende, 4, 'ein Befehl wird als ganzes Wort ersetzt');
+  assert.equal(t('/ver rest', 8), null, 'hinter dem Befehlswort ist es Text');
+  assert.equal(t('Pfad /usr', 9), null, 'ein Schrägstrich mitten im Satz ist keiner');
+  assert.equal(t('', 0), null);
+});
+
+test('Unscharf: gleich vor Anfang vor Teilstück vor Reihenfolge; Pfade mit .. und absolute fallen weg', () => {
+  const E = eingabeLogik();
+  const p = (q, t) => E.unscharf(q, t);
+  assert.ok(p('app', 'app') > p('app', 'app.js') && p('app', 'app.js') > p('app', 'x-app.js') && p('app', 'x-app.js') > p('apj', 'app.js'));
+  assert.equal(p('zzz', 'app.js'), -1);
+  assert.ok(p('ReaDme', 'README.md') > 0, 'Groß/Klein egal');
+  assert.ok(p('rm', 'read-me.md') > p('rm', 'xxrxxm.md'), 'Wortanfänge zählen mehr als Lücken');
+  assert.deepEqual({ ...E.pfadTeile('src/ap') }, { ordner: 'src', filter: 'ap' });
+  assert.deepEqual({ ...E.pfadTeile('a/b/') }, { ordner: 'a/b', filter: '' });
+  assert.deepEqual({ ...E.pfadTeile('x') }, { ordner: '', filter: 'x' });
+  assert.equal(E.pfadTeile('../x'), null);
+  assert.equal(E.pfadTeile('/etc/x'), null);
+  assert.equal(E.dateiWert('a b/c.txt'), '@"a b/c.txt"');
+  assert.equal(E.dateiWert('a/c.txt'), '@a/c.txt');
+  const eintr = [{ name: 'util.js', ordner: false, rel: 'src/util.js' }, { name: 'app.js', ordner: false, rel: 'src/app.js' }, { name: 'src', ordner: true, rel: 'src' }];
+  assert.deepEqual(E.rangiere(eintr, '').map((x) => x.rel), ['src', 'src/util.js', 'src/app.js'], 'ohne Anfrage Ordner zuerst, sonst Reihenfolge des Runners');
+  assert.equal(E.rangiere(eintr, 'app')[0].rel, 'src/app.js');
+});
+
+test('Befehlsliste: Pi-Terminalbefehle fallen weg, Namensanfang vor Teilstück, Aliase zählen', () => {
+  const E = eingabeLogik();
+  const b = (name, art, aliase) => ({ name, beschreibung: `Hilfe ${name}`, argumente: '', art: art || 'anzeige', aliase: aliase || [] });
+  const alle = [b('hilfe', 'anzeige', ['help']), b('verdichten', 'verlauf', ['compact']), b('settings', 'terminal'), b('skill:review', 'skill'), b('stopp', 'bruecke', ['abbrechen'])];
+  assert.deepEqual(E.befehlsListe(alle, '').map((x) => x.name), ['hilfe', 'skill:review', 'stopp', 'verdichten'].sort((x, y) => x.localeCompare(y)).filter((n) => n !== 'skill:review').concat(['skill:review']), 'ohne Anfrage: alphabetisch, Skills zuletzt, kein settings');
+  assert.deepEqual(E.befehlsListe(alle, 'ver').map((x) => x.name), ['verdichten']);
+  assert.deepEqual(E.befehlsListe(alle, 'abbr').map((x) => x.name), ['stopp'], 'Alias');
+  assert.deepEqual(E.befehlsListe(alle, 'compact').map((x) => x.name), ['verdichten']);
+  assert.deepEqual(E.befehlsListe(alle, 'review').map((x) => x.name), ['skill:review'], 'Teilstück');
+  assert.deepEqual(E.befehlsListe(alle, 'qq'), []);
+});
+
+test('Anhang prüfen: Text kommt durch, Bild, Binär, zu groß und kein UTF-8 werden mit Grund abgelehnt', async () => {
+  const A = anhangLogik();
+  const ok = await A.pruefeDatei(dateiLike('notiz.txt', 'Hallo Welt\n'));
+  assert.deepEqual({ ...ok }, { ok: true, name: 'notiz.txt', groesse: 11, text: 'Hallo Welt\n' });
+  const bom = await A.pruefeDatei(dateiLike('b.txt', new Uint8Array([0xef, 0xbb, 0xbf, 0x41])));
+  assert.equal(bom.text, 'A', 'Byte-Reihenfolge-Marke fällt weg');
+  const bild = await A.pruefeDatei(dateiLike('foto.png', 'x', { type: 'image/png' }));
+  assert.match(bild.grund, /Bilder nimmt der Runner heute nicht an/);
+  assert.match((await A.pruefeDatei(dateiLike('x.JPG', 'x'))).grund, /Bilder/);
+  assert.equal((await A.pruefeDatei(dateiLike('logo.svg', '<svg/>', { type: 'image/svg+xml' }))).ok, true, 'SVG ist Text');
+  const bin = await A.pruefeDatei(dateiLike('a.bin', new Uint8Array([1, 2, 0, 3])));
+  assert.match(bin.grund, /Binärdatei/);
+  const gross = await A.pruefeDatei(dateiLike('gross.txt', 'a', { size: A.GRENZEN.datei + 1 }));
+  assert.match(gross.grund, /Zu groß/);
+  const latin = await A.pruefeDatei(dateiLike('alt.txt', new Uint8Array([0x63, 0x61, 0x66, 0xe9])));
+  assert.match(latin.grund, /UTF-8/);
+  assert.match((await A.pruefeDatei(dateiLike('kaputt.txt', 'x', { arrayBuffer: async () => { throw new Error('weg'); } }))).grund, /nicht lesbar/);
+});
+
+test('Einbetten: Name, Größe, Hinweis; der Zaun ist länger als jede Rückstrich-Reihe im Inhalt; ohne Anhänge bleibt der Satz unverändert; zu lang wird gemeldet', () => {
+  const A = anhangLogik();
+  assert.equal(A.einbetten('  Hallo  ', []), 'Hallo');
+  const t = A.einbetten('Bitte prüfen', [{ name: 'a.md', groesse: 20, text: 'Text mit ```code``` darin\n\n' }]);
+  assert.match(t, /^Bitte prüfen\n\nAngehängte Datei \(als Text eingebettet, Stand beim Anhängen\):\n\nDatei: a\.md \(20 B\)\n````\nText mit ```code``` darin\n````$/);
+  const zwei = A.einbetten('', [{ name: 'a`\nb', groesse: 2048, text: 'x' }, { name: 'b', groesse: 1, text: 'y' }]);
+  assert.match(zwei, /^Angehängte Dateien \(2, als Text/);
+  assert.match(zwei, /Datei: a b \(2,0 KB\)/, 'Rückstrich und Zeilenumbruch im Namen sind weg');
+  assert.equal(A.gesamtPruefen('kurz', [{ name: 'x', groesse: 1, text: 'y' }]), null);
+  assert.match(A.gesamtPruefen('x'.repeat(A.GRENZEN.nachricht), [{ name: 'x', groesse: 1, text: 'y' }]), /zu lang/);
+});
+
+const ORDNER_WURZEL = [
+  { name: 'src', ordner: true },
+  { name: 'docs', ordner: true },
+  { name: 'node_modules', ordner: true },
+  { name: 'README.md', ordner: false, groesse: 1200 },
+  { name: 'notizen alt.txt', ordner: false, groesse: 10 },
+  { name: '<b>fett</b>.txt', ordner: false, groesse: 5 },
+];
+const ORDNER_RUNNER = (aufrufe) => (sp) => {
+  const pfad = sp.get('pfad');
+  aufrufe.push(pfad);
+  const e = { '/probe/standard': ORDNER_WURZEL, '/probe/standard/src': [{ name: 'app.js', ordner: false, groesse: 2048 }, { name: 'util.js', ordner: false, groesse: 10 }], '/probe/standard/docs': [{ name: 'anleitung.md', ordner: false, groesse: 99 }] }[pfad];
+  return e ? [200, { ok: true, wurzeln: ['/probe'], pfad, eintraege: e, erlaubt: true }] : [404, { ok: false, fehler: 'nicht_gefunden' }];
+};
+const punkteNamen = (d) => [...d.querySelectorAll('#menue [role="option"] .name')].map((x) => x.textContent);
+const POSTS = (st) => st.aufrufe.filter((a) => a.methode === 'POST' && /nachricht$/.test(a.url));
+
+dom('@-Auswahl: Dateien des Arbeitsordners, Ordner zuerst, Pfeile/Enter/Tab/Esc/Maus, Filter, Einsetzen nur des Namens, Rückfall ohne Leserecht', async () => {
+  const gelesen = [];
+  const f = arbeitsplatz({ runner: { ordner: ORDNER_RUNNER(gelesen) } });
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    const e = g('eingabe');
+    tippe(w, e, 'Lies @');
+    await bis(() => !g('menue').hidden && punkteNamen(d).length === 9 - 0 || punkteNamen(d).length > 0);
+    assert.deepEqual(punkteNamen(d), ['src/', 'docs/', 'node_modules/', 'README.md', 'notizen alt.txt', '<b>fett</b>.txt'], 'Ordner zuerst, dann Dateien, in der Reihenfolge des Runners');
+    assert.ok(st.aufrufe.some((a) => a.url === '/api/ordner?pfad=%2Fprobe%2Fstandard&dateien=1'), 'GET /api/ordner?pfad=<Arbeitsordner>&dateien=1');
+    assert.equal(g('menue').getAttribute('role'), 'listbox');
+    assert.equal(e.getAttribute('role'), 'combobox');
+    assert.equal(e.getAttribute('aria-expanded'), 'true');
+    assert.equal(e.getAttribute('aria-activedescendant'), 'mp0');
+    assert.equal(d.querySelector('#menue [role="option"][aria-selected="true"]').id, 'mp0');
+    // Namen nur als Text: kein Element aus einem Dateinamen
+    assert.equal(g('menue').querySelector('b'), null);
+    assert.ok(punkteNamen(d).includes('<b>fett</b>.txt'));
+    // Pfeile, rundum
+    taste(w, e, 'ArrowDown');
+    assert.equal(e.getAttribute('aria-activedescendant'), 'mp1');
+    taste(w, e, 'ArrowUp');
+    taste(w, e, 'ArrowUp');
+    assert.equal(e.getAttribute('aria-activedescendant'), 'mp5', 'von oben rundum nach unten');
+    // Esc schließt, ohne den Text zu ändern
+    taste(w, e, 'Escape');
+    assert.equal(g('menue').hidden, true);
+    assert.equal(e.getAttribute('aria-expanded'), 'false');
+    assert.equal(e.value, 'Lies @');
+    // Filter durch Weitertippen (unscharf, Groß/Klein egal), Enter setzt @Name und ein Leerzeichen
+    tippe(w, e, 'Lies @readme');
+    await bis(() => punkteNamen(d)[0] === 'README.md');
+    taste(w, e, 'Enter');
+    assert.equal(e.value, 'Lies @README.md ');
+    assert.equal(g('menue').hidden, true);
+    assert.equal(POSTS(st).length, 0, 'Enter in der Auswahl sendet nicht');
+    // Leerzeichen im Namen: Anführungszeichen
+    tippe(w, e, '@notizen');
+    await bis(() => punkteNamen(d)[0] === 'notizen alt.txt');
+    taste(w, e, 'Tab');
+    assert.equal(e.value, '@"notizen alt.txt" ');
+    // ein Ordner: hinein statt einsetzen, die Liste bleibt offen und lädt den Inhalt (lazy)
+    tippe(w, e, '@sr');
+    await bis(() => punkteNamen(d)[0] === 'src/');
+    taste(w, e, 'Enter');
+    assert.equal(e.value, '@src/');
+    await bis(() => punkteNamen(d).join() === 'src/app.js,src/util.js');
+    assert.ok(gelesen.includes('/probe/standard/src'));
+    const mp = d.querySelector('#menue [role="option"]:nth-of-type(2)');
+    mp.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    assert.equal(e.value, '@src/util.js ', 'Maus wählt');
+    // Suche über Unterordner ohne Schrägstrich: die Unterordner werden nachgeladen (node_modules nie)
+    tippe(w, e, 'Sieh @anleit');
+    await bis(() => punkteNamen(d).includes('docs/anleitung.md'));
+    assert.ok(!gelesen.includes('/probe/standard/node_modules'), 'node_modules wird nie von selbst geladen');
+    taste(w, e, 'Escape');
+    // ein @ mitten im Wort öffnet nichts
+    tippe(w, e, 'mail a@b');
+    assert.equal(g('menue').hidden, true);
+    // Senden: nur der Name geht mit, kein Dateiinhalt, kein Lesen der Datei
+    tippe(w, e, 'Lies @readme');
+    await bis(() => punkteNamen(d)[0] === 'README.md');
+    taste(w, e, 'Enter');
+    taste(w, e, 'Enter');
+    await bis(() => POSTS(st).length === 1);
+    assert.equal(POSTS(st)[0].koerper.text, 'Lies @README.md');
+    assert.ok(!st.aufrufe.some((a) => /\/api\/datei/.test(a.url)), 'die Auswahl liest keine Dateien');
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('@-Auswahl: kann der Runner den Ordner nicht lesen (außerhalb der Wurzeln), kommen die berührten Dateien der Sitzung mit Hinweis', async () => {
+  const entries = verlaufMit(['write', { path: '/probe/standard/neu.txt', content: 'a\n' }], ['read', { path: 'src/x.js' }, 'eins\n']);
+  const f = arbeitsplatz({ runner: { ordner: () => [403, { ok: false, fehler: 'ausserhalb' }] }, ansicht: (id) => ({ entries: id === 1 ? entries : [] }) });
+  const { w, d, g } = f;
+  try {
+    await bis(() => !g('aenderungenKnopf').hidden);
+    tippe(w, g('eingabe'), '@');
+    await bis(() => !g('menue').hidden && punkteNamen(d).length === 2);
+    assert.deepEqual(punkteNamen(d), ['neu.txt', 'src/x.js']);
+    assert.match(g('menue').querySelector('.menue-hinweis').textContent, /außerhalb dessen, was der Runner freigibt.*berührt/);
+    tippe(w, g('eingabe'), '@x.js');
+    await bis(() => punkteNamen(d).join() === 'src/x.js').catch((x) => { throw new Error(x.message + g('menue').textContent + '|' + g('menue').hidden); });
+    taste(w, g('eingabe'), 'Enter');
+    assert.equal(g('eingabe').value, '@src/x.js ');
+    // ohne jede Datei: nur der Hinweis, kein Absturz
+    const f2 = arbeitsplatz({ runner: { ordner: () => [404, { ok: false, fehler: 'unbekannt' }] } });
+    try {
+      await bis(() => f2.g('titel').textContent === 'Haupt');
+      tippe(f2.w, f2.g('eingabe'), '@');
+      await bis(() => !f2.g('menue').hidden);
+      assert.equal(punkteNamen(f2.d).length, 0);
+      assert.match(f2.g('menue').textContent, /nicht lesen/);
+      assert.equal(f2.g('eingabe').hasAttribute('aria-activedescendant'), false);
+    } finally {
+      f2.schliesse();
+    }
+  } finally {
+    f.schliesse();
+  }
+});
+
+const BEFEHLE = [
+  { name: 'hilfe', beschreibung: 'Zeigt die Befehle dieses Gesprächs', argumente: null, art: 'anzeige', aliase: ['help'] },
+  { name: 'verdichten', beschreibung: 'Verdichtet den Kontext', argumente: '[Hinweis]', art: 'verlauf', aliase: ['compact'] },
+  { name: 'modell', beschreibung: 'Zeigt die Modelle oder wechselt das Modell', argumente: '[modell|standard]', art: 'modell', aliase: [] },
+  { name: 'stopp', beschreibung: 'Bricht den laufenden Zug ab', argumente: null, art: 'bruecke', aliase: ['abbrechen'] },
+  { name: 'settings', beschreibung: 'Pi: Einstellungsmenü', argumente: null, art: 'terminal', aliase: [] },
+  { name: 'skill:pruefen', beschreibung: 'Prüft etwas', argumente: '[Text]', art: 'skill', aliase: [] },
+];
+
+dom('/-Liste: die Befehle des Runners (GET /api/befehle) mit Beschreibung, Filter, Tab/Enter, Terminalbefehle fehlen; Befehle gehen als Nachricht an den Runner, Unbekanntes als Text', async () => {
+  const f = arbeitsplatz({
+    befehle: BEFEHLE,
+    nachricht: (k) => (/^\/stopp$/.test(k.text) ? { ok: true, id: null, art: k.art, befehl: { name: 'stopp', ok: true, text: 'Kein Zug läuft.', aktion: null } } : { ok: true, id: 7, art: k.art }),
+  });
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    const e = g('eingabe');
+    tippe(w, e, '/');
+    await bis(() => !g('menue').hidden && punkteNamen(d).length > 0);
+    assert.deepEqual(punkteNamen(d), ['/hilfe', '/modell', '/stopp', '/verdichten', '/skill:pruefen'], 'alphabetisch, Skills zuletzt, kein /settings');
+    assert.ok(st.aufrufe.some((a) => a.url === '/api/befehle?gespraech=1'), 'die Befehle gehören zur Sitzung');
+    const hilfe = [...d.querySelectorAll('#menue [role="option"]')].map((x) => x.textContent);
+    assert.match(hilfe[3], /\[Hinweis\].*Verdichtet den Kontext/);
+    assert.match(hilfe[4], /Skill/);
+    assert.equal(g('menue').getAttribute('aria-label'), 'Befehle');
+    // Tippen filtert
+    tippe(w, e, '/ver');
+    await bis(() => punkteNamen(d).join() === '/verdichten');
+    taste(w, e, 'Tab');
+    assert.equal(e.value, '/verdichten ');
+    // Enter bei einem Befehl mit Argument ergänzt nur
+    tippe(w, e, '/modell');
+    await bis(() => punkteNamen(d)[0] === '/modell');
+    taste(w, e, 'Enter');
+    assert.equal(e.value, '/modell ');
+    assert.equal(POSTS(st).length, 0);
+    // ein vollständig getippter Befehl ohne Argument wird gesendet, über denselben Weg wie jede Nachricht
+    tippe(w, e, '/stopp');
+    await bis(() => punkteNamen(d)[0] === '/stopp');
+    taste(w, e, 'Enter');
+    await bis(() => POSTS(st).length === 1);
+    assert.equal(POSTS(st)[0].url, '/api/gespraech/1/nachricht');
+    assert.equal(POSTS(st)[0].koerper.text, '/stopp');
+    assert.equal(e.value, '');
+    assert.equal(d.querySelectorAll('.mensch.queued, .user.queued').length, 0);
+    // Alias findet den Befehl
+    tippe(w, e, '/compact');
+    await bis(() => punkteNamen(d).join() === '/verdichten');
+    taste(w, e, 'Escape');
+    // Unbekannter Befehl: Text wie jeder andere
+    tippe(w, e, '/gibtsnicht hallo');
+    assert.equal(g('menue').hidden, true);
+    taste(w, e, 'Enter');
+    await bis(() => POSTS(st).length === 2);
+    assert.equal(POSTS(st)[1].koerper.text, '/gibtsnicht hallo');
+    // /verdichten geht NICHT über den alten Sonderweg
+    tippe(w, e, '/verdichten');
+    await bis(() => punkteNamen(d)[0] === '/verdichten');
+    taste(w, e, 'Enter');
+    taste(w, e, 'Enter');
+    await bis(() => POSTS(st).length === 3);
+    assert.ok(!st.aufrufe.some((a) => a.url === '/api/gespraech/1/verdichten'), 'der Runner wertet den Befehl aus');
+    // mitten im Satz kein Menü
+    tippe(w, e, 'der Pfad /usr');
+    assert.equal(g('menue').hidden, true);
+    // das Ergebnis eines Befehls steht als Hinweis im Verlauf (Eintrag fyos.befehl)
+    w.__chat.adapter.replay([{ id: 900, kind: 'fyos.befehl', data: { name: 'stopp', ok: false, text: 'Kein Zug läuft.\nZweite Zeile' } }], false);
+    await bis(() => d.querySelector('.notiz.befehl.fehler'));
+    assert.equal(d.querySelector('.notiz.befehl.fehler').textContent, '/stopp: Kein Zug läuft.\nZweite Zeile');
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('/-Liste bei einem älteren Runner (kein GET /api/befehle): die vier Grundbefehle, ausgeführt über die alten Wege', async () => {
+  const f = arbeitsplatz({});
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    tippe(w, g('eingabe'), '/');
+    await bis(() => punkteNamen(d).length === 4);
+    assert.deepEqual(punkteNamen(d), ['/abbrechen', '/abzweigen', '/leeren', '/verdichten']);
+    tippe(w, g('eingabe'), '/verdichten');
+    await bis(() => punkteNamen(d)[0] === '/verdichten');
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => st.aufrufe.some((a) => a.url === '/api/gespraech/1/verdichten'));
+    assert.equal(POSTS(st).length, 0, 'kein Befehl als Nachricht an einen Runner, der sie nicht kennt');
+  } finally {
+    f.schliesse();
+  }
+});
+
+const dateiMit = (w, name, inhalt, extra) => {
+  const f = new w.File([inhalt], name, extra);
+  return f;
+};
+const wahlDateien = (w, d, dateien) => {
+  const wahl = d.getElementById('anhangWahl');
+  Object.defineProperty(wahl, 'files', { configurable: true, value: dateien });
+  wahl.dispatchEvent(new w.Event('change', { bubbles: true }));
+};
+
+dom('Anhänge: Büroklammer, Einfügen und Ziehen; Chips mit Entfernen; Textdatei wird eingebettet, Binär/Bild/zu groß abgelehnt; Namen nur als Text', async () => {
+  const f = arbeitsplatz({});
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    assert.equal(g('anhaenge').hidden, true);
+    assert.equal(g('anhangKnopf').getAttribute('aria-label'), 'Datei anhängen');
+    // Büroklammer öffnet den Dialog des Systems (das <input type="file">)
+    let geklickt = 0;
+    g('anhangWahl').addEventListener('click', () => (geklickt += 1));
+    g('anhangKnopf').click();
+    assert.equal(geklickt, 1);
+    wahlDateien(w, d, [dateiMit(w, '<img src=x onerror=alert(1)>.txt', 'Zeile eins\n```\nZaun\n```\n'), dateiMit(w, 'foto.png', 'x', { type: 'image/png' }), dateiMit(w, 'roh.bin', new Uint8Array([1, 0, 2])), dateiMit(w, 'gross.txt', 'a'.repeat(110 * 1024))]);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 1);
+    assert.equal(g('anhaenge').hidden, false);
+    assert.equal(g('anhaenge').querySelector('img'), null, 'ein Dateiname wird nie zu HTML');
+    assert.equal(g('anhaenge').querySelector('.anhang-name').textContent, '<img src=x onerror=alert(1)>.txt');
+    await bis(() => !g('anhangMeldung').hidden);
+    const meldung = g('anhangMeldung').textContent;
+    assert.match(meldung, /foto\.png: Bilder nimmt der Runner heute nicht an/);
+    assert.match(meldung, /roh\.bin: Das ist eine Binärdatei/);
+    assert.match(meldung, /gross\.txt: Zu groß/);
+    // Einfügen aus der Zwischenablage (Datei), Text bleibt gewöhnliches Einfügen
+    const einfuegen = (dateien) => {
+      const ev = new w.Event('paste', { bubbles: true, cancelable: true });
+      ev.clipboardData = { files: dateien };
+      g('eingabe').dispatchEvent(ev);
+      return ev;
+    };
+    assert.equal(einfuegen([]).defaultPrevented, false, 'ohne Datei bleibt es gewöhnliches Einfügen');
+    const ev = einfuegen([dateiMit(w, 'zweite.md', '# Titel')]);
+    assert.equal(ev.defaultPrevented, true);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 2);
+    // Ziehen: nur Dateien, der Rahmen zeigt es an
+    const ziehen = (art, dateien, typen) => {
+      const e = new w.Event(art, { bubbles: true, cancelable: true });
+      e.dataTransfer = { types: typen || ['Files'], files: dateien || [] };
+      g('eingabeForm').dispatchEvent(e);
+      return e;
+    };
+    assert.equal(ziehen('dragover').defaultPrevented, true);
+    assert.equal(g('eingabeForm').classList.contains('zieht'), true);
+    assert.equal(ziehen('dragover', [], ['text/plain']).defaultPrevented, false, 'Text ziehen bleibt wie es war');
+    ziehen('drop', [dateiMit(w, 'dritte.txt', 'drei')]);
+    assert.equal(g('eingabeForm').classList.contains('zieht'), false);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 3);
+    // Entfernen
+    const weg = g('anhaenge').querySelector('.anhang-chip[data-id="2"] .anhang-weg');
+    assert.equal(weg.getAttribute('aria-label'), 'Anhang zweite.md entfernen');
+    weg.click();
+    assert.deepEqual([...g('anhaenge').querySelectorAll('.anhang-name')].map((x) => x.textContent), ['<img src=x onerror=alert(1)>.txt', 'dritte.txt']);
+    // Senden: Satz plus eingebettete Dateien in EINER Nachricht, danach sind die Chips weg
+    tippe(w, g('eingabe'), 'Bitte lesen');
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => POSTS(st).length === 1);
+    const text = POSTS(st)[0].koerper.text;
+    assert.match(text, /^Bitte lesen\n\nAngehängte Dateien \(2, als Text eingebettet, Stand beim Anhängen\):/);
+    assert.match(text, /Datei: dritte\.txt \(4 B\)\n```\ndrei\n```/);
+    assert.match(text, /````\nZeile eins\n```\nZaun\n```\n````/, 'der Zaun ist länger als die Zäune im Inhalt');
+    assert.equal(g('anhaenge').hidden, true);
+    assert.equal(g('eingabe').value, '');
+    // nur Anhang, kein Satz: geht auch
+    wahlDateien(w, d, [dateiMit(w, 'allein.txt', 'nur Datei')]);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 1);
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => POSTS(st).length === 2);
+    assert.match(POSTS(st)[1].koerper.text, /^Angehängte Datei \(als Text eingebettet/);
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Anhänge: höchstens 5 und 30 000 Zeichen zusammen; ein Fehler beim Senden stellt Text und Chips wieder her; ein Chip gehört zur Sitzung', async () => {
+  const f = arbeitsplatz({ nachricht: () => ({ status: 500, fehler: 'kaputt' }) });
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    wahlDateien(w, d, ['1', '2', '3', '4', '5', '6'].map((n) => dateiMit(w, `d${n}.txt`, `Inhalt ${n}`)));
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 5);
+    assert.match(g('anhangMeldung').textContent, /d6\.txt: Höchstens 5 Anhänge/);
+    g('anhaenge').querySelectorAll('.anhang-weg').forEach((b) => b.click());
+    assert.equal(g('anhaenge').querySelectorAll('.anhang-chip').length, 0);
+    wahlDateien(w, d, [dateiMit(w, 'a.txt', 'a'.repeat(20000)), dateiMit(w, 'b.txt', 'b'.repeat(20000))]);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 1 && /b\.txt/.test(g('anhangMeldung').textContent));
+    assert.match(g('anhangMeldung').textContent, /b\.txt: Alle Anhänge zusammen dürfen höchstens/);
+    // Satz so lang, dass es mit dem Anhang nicht mehr in eine Nachricht passt: nichts wird gesendet, nichts geht verloren
+    tippe(w, g('eingabe'), 'x'.repeat(19000));
+    taste(w, g('eingabe'), 'Enter');
+    assert.match(g('anhangMeldung').textContent, /zu lang/);
+    assert.equal(POSTS(st).length, 0);
+    assert.equal(g('eingabe').value.length, 19000);
+    // Fehler beim Senden: Text und Chip kommen zurück
+    tippe(w, g('eingabe'), 'kurz');
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => POSTS(st).length === 1);
+    await bis(() => g('eingabe').value === 'kurz');
+    assert.equal(g('anhaenge').querySelectorAll('.anhang-chip').length, 1, 'der Anhang ist wieder da');
+    // Sitzungswechsel: der Chip bleibt bei seiner Sitzung
+    await w.__arbeitsplatz.wechsle(2);
+    await bis(() => g('titel').textContent === 'Zweite');
+    assert.equal(g('anhaenge').querySelectorAll('.anhang-chip').length, 0);
+    await w.__arbeitsplatz.wechsle(1);
+    await bis(() => g('titel').textContent === 'Haupt');
+    assert.equal(g('anhaenge').querySelectorAll('.anhang-chip').length, 1);
+  } finally {
+    f.schliesse();
+  }
+});
+
+const MODELLE = [
+  { id: 'rhea', provider: 'probe', name: 'Modell A (rhea)', max: false, contextWindow: 262144 },
+  { id: 'rhea-max', provider: 'probe', name: 'Modell A (rhea-max, Vorfahrt)', max: true, contextWindow: 262144 },
+];
+const mitModell = { modelle: MODELLE, ansicht: (id) => ({ entries: [], agent: { model: { provider: 'probe', modelId: 'rhea' } } }) };
+
+dom('Modell-Wähler: zeigt das Modell der Sitzung, die Liste kommt aus GET /api/modelle, Wechsel per PATCH mit modell, Anzeige zieht nach, Tastatur und Esc', async () => {
+  const f = arbeitsplatz(mitModell);
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('modell').textContent === 'Modell A (rhea)');
+    assert.equal(g('modell').getAttribute('aria-haspopup'), 'listbox');
+    assert.equal(g('modell').disabled, false);
+    g('modell').click();
+    assert.equal(g('modellMenue').hidden, false);
+    assert.equal(g('modell').getAttribute('aria-expanded'), 'true');
+    const opts = [...g('modellMenue').querySelectorAll('[role="option"]')];
+    assert.deepEqual(opts.map((o) => o.querySelector('.text').firstChild.textContent), ['Modell A (rhea)', 'Modell A (rhea-max, Vorfahrt)', 'Standard des Runners']);
+    assert.deepEqual(opts.map((o) => o.getAttribute('aria-selected')), ['true', 'false', 'false']);
+    assert.equal(d.activeElement, g('modellMenue'), 'der Fokus liegt in der Liste');
+    taste(w, g('modellMenue'), 'ArrowDown');
+    assert.equal(g('modellMenue').getAttribute('aria-activedescendant'), opts[1].id);
+    taste(w, g('modellMenue'), 'Escape');
+    assert.equal(g('modellMenue').hidden, true);
+    assert.equal(d.activeElement, g('modell'), 'Esc gibt den Fokus zurück');
+    assert.equal(st.aufrufe.filter((a) => a.methode === 'PATCH').length, 0);
+    // Pfeil unten am Knopf öffnet; Enter wählt
+    taste(w, g('modell'), 'ArrowDown');
+    assert.equal(g('modellMenue').hidden, false);
+    taste(w, g('modellMenue'), 'ArrowDown');
+    taste(w, g('modellMenue'), 'Enter');
+    await bis(() => st.aufrufe.some((a) => a.methode === 'PATCH'));
+    const patch = st.aufrufe.find((a) => a.methode === 'PATCH');
+    assert.equal(patch.url, '/api/gespraech/1');
+    assert.deepEqual(patch.koerper, { modell: 'rhea-max' });
+    await bis(() => g('modell').textContent === 'Modell A (rhea-max, Vorfahrt)');
+    assert.equal(g('modellFehler').hidden, true);
+    // die Liste zeigt den neuen Stand
+    g('modell').click();
+    assert.deepEqual([...g('modellMenue').querySelectorAll('[role="option"]')].map((o) => o.getAttribute('aria-selected')), ['false', 'true', 'false']);
+    // „Standard des Runners“: modell null
+    [...g('modellMenue').querySelectorAll('[role="option"]')][2].click();
+    await bis(() => st.aufrufe.filter((a) => a.methode === 'PATCH').length === 2);
+    assert.deepEqual(st.aufrufe.filter((a) => a.methode === 'PATCH')[1].koerper, { modell: null });
+    await bis(() => !g('modell').disabled);
+    await warte(150);
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Modell-Wähler: Fehler des Runners erscheinen als Meldung, das Modell bleibt; ohne Modellliste ist der Knopf gesperrt', async () => {
+  const f = arbeitsplatz({ ...mitModell, modellFehler: 'Unbekanntes Modell' });
+  const { w, d, g } = f;
+  try {
+    await bis(() => g('modell').textContent === 'Modell A (rhea)');
+    g('modell').click();
+    [...g('modellMenue').querySelectorAll('[role="option"]')][1].click();
+    await bis(() => !g('modellFehler').hidden);
+    assert.match(g('modellFehler').textContent, /Modell nicht gewechselt:.*Unbekanntes Modell/);
+    assert.equal(g('modell').textContent, 'Modell A (rhea)');
+    assert.equal(g('modell').disabled, false);
+  } finally {
+    f.schliesse();
+  }
+  const leer = arbeitsplatz({ ansicht: () => ({ entries: [], agent: { model: { provider: 'probe', modelId: 'rhea' } } }) });
+  try {
+    await bis(() => leer.g('titel').textContent === 'Haupt' && leer.g('modell').disabled);
+    assert.match(leer.g('modell').title, /nennt keine Modelle/);
+    leer.g('modell').click();
+    assert.equal(leer.g('modellMenue').hidden, true);
+  } finally {
+    leer.schliesse();
+  }
+});
+
+dom('Modus-Wähler: nur echte Modi – die Freigabe des Runners als Anzeige, die Art der Nachricht während der Arbeit (Einreihen/Eingreifen) je Sitzung', async () => {
+  const f = arbeitsplatz({});
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    assert.equal(g('modus').textContent, 'Zerstörendes fragt');
+    g('modus').click();
+    assert.equal(g('modusMenue').hidden, false);
+    assert.equal(g('modusMenue').getAttribute('role'), 'listbox');
+    const opts = [...g('modusMenue').querySelectorAll('[role="option"]')];
+    assert.equal(opts.length, 3);
+    assert.match(opts[0].textContent, /nur Zerstörendes fragt/);
+    assert.equal(opts[0].getAttribute('aria-disabled'), 'true', 'die Freigabe ist Konfiguration des Runners, hier nicht wählbar');
+    assert.ok(!/Jede Aktion fragen|umgehen/i.test(g('modusMenue').textContent), 'kein erfundener Modus');
+    assert.deepEqual(opts.map((o) => o.getAttribute('aria-selected')), ['true', 'true', 'false']);
+    // ein gesperrter Punkt lässt sich nicht wählen
+    opts[0].click();
+    assert.equal(g('modusMenue').hidden, false);
+    opts[2].click();
+    assert.equal(g('modusMenue').hidden, true);
+    assert.match(g('modus').textContent, /greift ein/);
+    // Nachricht in dieser Sitzung geht als „steuern“, in der anderen weiter als „folgen“
+    tippe(w, g('eingabe'), 'jetzt');
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => POSTS(st).length === 1);
+    assert.equal(POSTS(st)[0].koerper.art, 'steuern');
+    await w.__arbeitsplatz.wechsle(2);
+    await bis(() => g('titel').textContent === 'Zweite');
+    assert.equal(g('modus').textContent, 'Zerstörendes fragt');
+    tippe(w, g('eingabe'), 'später');
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => POSTS(st).length === 2);
+    assert.equal(POSTS(st)[1].koerper.art, 'folgen');
+    // Esc schließt
+    g('modus').click();
+    taste(w, g('modusMenue'), 'Escape');
+    assert.equal(g('modusMenue').hidden, true);
+    await warte(250);
+  } finally {
+    f.schliesse();
+  }
+});
+
+test('Eingabe: Quelltext – Namen nur über textContent, neutral formuliert, jede Brücken-Anfrage kommt aus der Liste der erlaubten Befehle der Seite', () => {
+  const neu = ['eingabe.js', 'anhaenge.js', 'waehler.js', 'modus.js'].map(lies).join('\n');
+  assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(neu), 'Namen und Inhalte nur über textContent');
+  const verboten = new RegExp(['gin', 'ny|perse', 'phone|ti', 'tan|rh', 'ea|sirf', 'yyn|/Users/'].join(''), 'i');
+  const html = lies('chat.html');
+  assert.ok(!verboten.test(neu + html + lies('arbeitsplatz.css')), 'kein Agenten-, Rechner- oder Pfadname im Quelltext');
+  // Die Seite hat nur die Befehle ihrer Capability (Datei lesen geht über die File-API des WebViews, nicht über Rust)
+  const kap = JSON.parse(fs.readFileSync(path.join(HIER, '..', 'app', 'capabilities', 'agent-chat.json'), 'utf8'));
+  const erlaubt = new Set(kap.permissions.filter((p) => p.startsWith('allow-')).map((p) => p.slice(6).replace(/-/g, '_')));
+  const alle = fs.readdirSync(UI).filter((n) => n.endsWith('.js') && !/^e2e/.test(n)).map(lies).join('\n');
+  const benutzt = new Set([...alle.matchAll(/invoke\('([a-z_]+)'/g)].map((m) => m[1]).concat([...alle.matchAll(/tauriInvoke\('([a-z_]+)'/g)].map((m) => m[1])));
+  for (const b of benutzt) assert.ok(erlaubt.has(b), `Befehl ${b} steht nicht in der Capability agent-chat`);
+  assert.ok(!/plugin:dialog|plugin-dialog|plugin:fs|__TAURI_PLUGIN|readFile|readTextFile/.test(alle), 'kein Dialog- oder Dateisystem-Plugin');
+  assert.ok(!kap.permissions.some((p) => /dialog|fs:|shell|opener/.test(p)), 'die Capability bekommt keine Datei- oder Dialogrechte');
+  // eingebunden, in der richtigen Reihenfolge
+  for (const n of ['waehler.js', 'modus.js', 'eingabe.js', 'anhaenge.js']) assert.ok(html.includes(`src="${n}"`), n);
+  assert.ok(html.indexOf('src="waehler.js"') < html.indexOf('src="modus.js"') && html.indexOf('src="anhaenge.js"') < html.indexOf('src="chat.js"'));
+  for (const id of ['anhaenge', 'anhangKnopf', 'anhangWahl', 'anhangMeldung', 'modellMenue', 'modellFehler', 'modusMenue']) assert.ok(html.includes(`id="${id}"`), id);
+  // das Aufrufen von Befehlen geht nur durch die Nachricht
+  assert.ok(!/\/api\/befehle'[^)]*'POST'/.test(lies('echt.js')), 'Befehle werden nicht an einen eigenen Weg geschickt');
 });

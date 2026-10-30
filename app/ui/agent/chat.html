@@ -114,9 +114,15 @@
       <footer class="unten">
         <form id="eingabeForm" class="eingabe" autocomplete="off">
           <div id="menue" class="menue" role="listbox" aria-label="Vorschläge" hidden></div>
-          <textarea id="eingabe" rows="1" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="menue" aria-label="Nachricht an den Agenten" placeholder="Nachricht …  /  für Befehle"></textarea>
+          <div id="anhaenge" class="anhaenge" role="list" aria-label="Anhänge" hidden></div>
+          <p id="anhangMeldung" class="anhang-meldung" role="alert" hidden></p>
+          <textarea id="eingabe" rows="1" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="menue" aria-haspopup="listbox" aria-label="Nachricht an den Agenten" placeholder="Nachricht …  @ für Dateien, / für Befehle"></textarea>
           <div class="eingabe-zeile">
-            <span class="hinweis">Enter sendet · Umschalt+Enter neue Zeile · Strg/Cmd+Enter greift ein</span>
+            <span class="eingabe-links">
+              <button id="anhangKnopf" type="button" class="leise-knopf anhang-knopf" aria-label="Datei anhängen" title="Textdatei anhängen (auch per Ziehen oder Einfügen); sie wird als Text in die Nachricht eingebettet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 7.5l-5 5a3 3 0 0 1-4.2-4.2l5.4-5.4a2 2 0 0 1 2.8 2.8L6.6 11.1a1 1 0 0 1-1.4-1.4L10 4.9" /></svg></button>
+              <input id="anhangWahl" type="file" multiple hidden tabindex="-1" aria-hidden="true">
+              <span class="hinweis">Enter sendet · Umschalt+Enter neue Zeile · Strg/Cmd+Enter greift ein</span>
+            </span>
             <span class="rechts">
               <button id="stopp" type="button" class="gefahr" hidden aria-keyshortcuts="Escape">Stopp <kbd>Esc</kbd></button>
               <button id="senden" type="submit" class="primaer">Senden</button>
@@ -125,10 +131,14 @@
         </form>
         <div class="statuszeile" aria-label="Status">
           <span class="modus-wrap">
-            <button id="modus" type="button" class="modus-knopf" aria-haspopup="menu" aria-expanded="false">Berechtigungen umgehen</button>
-            <div id="modusMenue" class="modus-menue" role="menu" aria-label="Modus" hidden></div>
+            <button id="modus" type="button" class="modus-knopf" aria-label="Modus der Sitzung" aria-haspopup="listbox" aria-expanded="false">Modus</button>
+            <div id="modusMenue" class="modus-menue" role="listbox" aria-label="Modus" hidden></div>
           </span>
-          <span id="modell" class="modell-knopf" title="Modell">–</span>
+          <span class="modus-wrap">
+            <button id="modell" type="button" class="modell-knopf" aria-label="Modell der Sitzung" aria-haspopup="listbox" aria-expanded="false" title="Modell dieser Sitzung wechseln">–</button>
+            <div id="modellMenue" class="modus-menue modell-menue" role="listbox" aria-label="Modell" hidden></div>
+          </span>
+          <span id="modellFehler" class="neu-fehler modell-fehler" role="alert" hidden></span>
           <span id="kontext" class="kontext" role="meter" aria-label="Kontextfüllung" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-stufe="ok">
             <span class="balken" aria-hidden="true"><i></i></span>
             <span id="kontextText">–</span>
@@ -148,6 +158,7 @@
   <script src="runner-adapter.js"></script>
   <script src="runner-wege.js"></script>
   <script src="echt.js"></script>
+  <script src="waehler.js"></script>
   <script src="modus.js"></script>
   <script src="sitzungen.js"></script>
   <script src="leiste.js"></script>
@@ -155,6 +166,8 @@
   <script src="freigaben.js"></script>
   <script src="aenderungen.js"></script>
   <script src="ordner.js"></script>
+  <script src="eingabe.js"></script>
+  <script src="anhaenge.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

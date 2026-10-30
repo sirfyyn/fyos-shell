@@ -12,12 +12,6 @@
   const mq = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
   const eingabe = $('eingabe');
   const menue = $('menue');
-  const BEFEHLE = [
-    { name: '/verdichten', hilfe: 'Verlauf verdichten' },
-    { name: '/leeren', hilfe: 'Neuer Kontext, der Verlauf bleibt sichtbar' },
-    { name: '/abzweigen', hilfe: 'Neues Gespräch ab dieser Stelle' },
-    { name: '/abbrechen', hilfe: 'Laufenden Zug stoppen' },
-  ];
   const MAX_ANSICHTEN = 8; // so viele Sitzungen bleiben aufgebaut; die am längsten nicht benutzte wird abgebaut (ihr Verlauf kommt beim Öffnen vom Runner zurück)
   const MERKE = 'fyos-agent-sitzung';
 
@@ -26,14 +20,21 @@
   // Rust meldet Fehler als Katalogmeldung { code, ursache, abhilfe }: für die Anzeige ein Error mit beidem im Text
   const alsFehler = (m) => (m && m.ursache ? Object.assign(new Error(`${m.ursache} ${m.abhilfe || ''}`.trim()), { code: m.code }) : m);
   let runnerArt = 'entfernt';
-  const modus = FP.startModus($('modus'), $('modusMenue'), {});
+  // Modus: Freigabe (Anzeige des Runner-Zustands) und die Art der Nachricht, während der Agent arbeitet (je Sitzung in diesem Fenster)
+  const modus = FP.startModus($('modus'), $('modusMenue'), {
+    beiSendeArt: (art) => {
+      if (!aktiv) return;
+      aktiv.sendeArt = art === 'steuern' ? 'steuern' : 'folgen';
+      zeigeAktiv();
+    },
+  });
   const aktivitaet = FP.sitzungen.createAktivitaet();
 
   let startFehler = '';
   let gespraeche = [];
   let bereiche = {};
   let modelle = [];
-  const ansichten = new Map(); // String(id) → { id, chat, pane, benutzt, entwurf, cwd }
+  const ansichten = new Map(); // String(id) → { id, chat, pane, benutzt, entwurf, anhaenge, sendeArt, wechselt, cwd }
   let aktiv = null;
   let wechselKette = Promise.resolve();
   let stromBesitzer = null; // Id der Sitzung, deren Ereignisstrom offen ist
@@ -79,7 +80,10 @@
     b.textContent = text;
     $('stopp').hidden = !s.busy;
     $('senden').textContent = s.busy ? 'Einreihen' : 'Senden';
-    $('modell').textContent = s.modell || '–';
+    // Anzeigename aus der Modellliste des Runners (GET /api/modelle), sonst, was die Sitzung meldet
+    const modellEintrag = aktiv ? FP.wege.modellEintrag(modelle, aktiv.chat.modellRoh() || s.modell) : null;
+    $('modell').textContent = aktiv && aktiv.wechselt ? 'wechsle …' : (modellEintrag && (modellEintrag.name || modellEintrag.id)) || s.modell || '–';
+    zeichneModellWahl();
     const m = $('kontext');
     // Nur ein plausibler Wert (bekannt, höchstens so groß wie das Fenster) wird gezeigt, sonst „–“ (FP.kontextAnzeige)
     const k = FP.kontextAnzeige(s.ctx, s.fenster);
@@ -94,7 +98,7 @@
     $('tokens').textContent = s.tokIn != null || s.tokOut != null ? `gesamt ${zahl(s.tokIn || 0)} ein · ${zahl(s.tokOut || 0)} aus` : '';
     $('tokens').title = 'Summe der ganzen Sitzung: gesendete Token (mit Cache-Lesen) und erzeugte Token. Das ist nicht der aktuelle Kontext.';
     $('kosten').textContent = s.kosten != null ? `≈ ${s.kosten.toFixed(2).replace('.', ',')} €` : '';
-    modus.zeichne(s.modus);
+    modus.zeichne({ ...s.modus, sendeArt: aktiv ? aktiv.sendeArt : 'folgen' });
   }
   function zeigeAktiv() {
     if (!aktiv) return;
@@ -168,6 +172,7 @@
   let aenderungenGeplant = false;
   function aenderungenNachziehen() {
     aenderungenGeplant = false;
+    eingabeHilfe.vergiss(); // der Agent hat Dateien berührt: die gemerkten Ordnerlisten der @-Auswahl sind veraltet
     if (!aktiv || !aktiv.chat.adapter) return;
     aenderungen.setze(aktiv.chat.adapter.aufrufe(), ordnerPfad(aktiv), aktiv.id);
   }
@@ -408,7 +413,7 @@
 
   function ansichtErzeugen(id) {
     const d = paneBauen(id);
-    const rec = { id, pane: d.pane, chat: null, benutzt: Date.now(), entwurf: '', cwd: undefined };
+    const rec = { id, pane: d.pane, chat: null, benutzt: Date.now(), entwurf: '', anhaenge: [], sendeArt: 'folgen', wechselt: false, cwd: undefined };
     rec.chat = FP.createEchtChat(transport, {
       modelle: () => modelle, // contextWindow je Modell (GET /api/modelle): Fenster der Kontextanzeige
       spalte: d.spalte,
@@ -485,6 +490,7 @@
     const alt = aktiv;
     if (alt) {
       alt.entwurf = eingabe.value;
+      alt.anhaenge = anhaenge.nimm();
       alt.chat.ruhen();
       alt.pane.classList.remove('aktiv');
       alt.pane.setAttribute('aria-hidden', 'true');
@@ -496,6 +502,9 @@
     rec.pane.setAttribute('aria-hidden', 'false');
     rec.pane.inert = false;
     eingabe.value = rec.entwurf || '';
+    anhaenge.setze(rec.anhaenge || []);
+    eingabeHilfe.schliesse();
+    eingabeHilfe.vergiss();
     waechst();
     merken.schreibe(rec.id);
     window.__aktuelleId = rec.id;
@@ -727,88 +736,112 @@
     eingabe.style.height = 'auto';
     eingabe.style.height = `${Math.min(200, eingabe.scrollHeight)}px`;
   }
+  // @Dateien und /Befehle: Vorschläge aus dem Arbeitsordner der Sitzung und den Befehlen des Runners (eingabe.js)
+  const eingabeHilfe = FP.createEingabe(
+    { feld: eingabe, liste: menue, ansage: $('ansage') },
+    {
+      basis: () => (aktiv ? ordnerPfad(aktiv) : ''),
+      ordner: (abs) => wege.ordner(abs),
+      beruehrt: () => {
+        if (!aktiv || !aktiv.chat.adapter) return [];
+        return FP.aenderungen.sammle(aktiv.chat.adapter.aufrufe(), ordnerPfad(aktiv)).beruehrt.map((d) => d.pfad).filter((p) => p && !p.startsWith('/'));
+      },
+      befehle: () => (aktiv ? aktiv.chat.befehle() : Promise.resolve(null)),
+      beiAenderung: waechst,
+    }
+  );
+  // Anhänge: Textdateien werden in die Nachricht eingebettet (der Runner nimmt nur Text an), Bilder und Binärdateien abgelehnt (anhaenge.js)
+  const anhaenge = FP.createAnhaenge(
+    { leiste: $('anhaenge'), knopf: $('anhangKnopf'), wahl: $('anhangWahl'), zone: $('eingabeForm'), meldung: $('anhangMeldung'), feld: eingabe, dokument: document, fokus: () => eingabe.focus() },
+    { beiAenderung: () => {} }
+  );
   async function senden(sofort) {
-    const t = eingabe.value.trim();
-    if (!t || !aktiv) return;
+    const satz = eingabe.value.trim();
+    if ((!satz && !anhaenge.anzahl()) || !aktiv) return;
+    const zuLang = anhaenge.pruefen(satz);
+    if (zuLang) {
+      anhaenge.meldung(zuLang);
+      return;
+    }
     const rec = aktiv;
+    const text = anhaenge.text(satz);
+    const angehaengt = anhaenge.nimm();
     eingabe.value = '';
     rec.entwurf = '';
+    rec.anhaenge = [];
+    anhaenge.leere();
     waechst();
-    schliesse();
-    const r = await rec.chat.sende(t, sofort);
-    if (r && r.ok === false && !r.befehl && aktiv === rec) eingabe.value = t;
+    eingabeHilfe.schliesse();
+    const r = await rec.chat.sende(text, sofort || rec.sendeArt === 'steuern');
+    if (r && r.ok === false && !r.befehl && aktiv === rec) {
+      eingabe.value = satz;
+      anhaenge.setze(angehaengt);
+      waechst();
+    }
   }
 
-  // Schnellbefehle als Menü
-  let m = null;
-  function schliesse() {
-    m = null;
-    menue.hidden = true;
-    menue.textContent = '';
-    eingabe.setAttribute('aria-expanded', 'false');
-    eingabe.removeAttribute('aria-activedescendant');
+  // --- Modell der Sitzung wählen (GET /api/modelle, PATCH /api/gespraech/:id mit modell) ---
+  const modellWahl = FP.createWaehler($('modell'), $('modellMenue'), {
+    beschriftung: 'Modell der Sitzung',
+    beiWahl: (wert) => modellWechseln(wert === '' ? null : wert),
+  });
+  let modellSchluessel = '';
+  let modellFehlerUhr = null;
+  function modellFehler(text) {
+    const p = $('modellFehler');
+    p.hidden = !text;
+    p.textContent = text || '';
+    if (modellFehlerUhr) clearTimeout(modellFehlerUhr);
+    if (text) modellFehlerUhr = setTimeout(() => modellFehler(''), 9000);
   }
-  function zeichneMenue() {
-    menue.textContent = '';
-    m.items.forEach((it, i) => {
-      const o = document.createElement('div');
-      o.className = 'menue-punkt';
-      o.id = `mp${i}`;
-      o.setAttribute('role', 'option');
-      o.setAttribute('aria-selected', i === m.index ? 'true' : 'false');
-      const a = document.createElement('span');
-      a.className = 'name';
-      a.textContent = it.name;
-      const b = document.createElement('span');
-      b.className = 'hilfe';
-      b.textContent = it.hilfe;
-      o.append(a, b);
-      o.addEventListener('mousedown', (ev) => {
-        ev.preventDefault();
-        m.index = i;
-        uebernimm();
-      });
-      menue.appendChild(o);
-    });
-    menue.hidden = false;
-    eingabe.setAttribute('aria-expanded', 'true');
-    eingabe.setAttribute('aria-activedescendant', `mp${m.index}`);
+  /** Die Liste des Wählers nur neu bauen, wenn sich etwas geändert hat (die Statuszeile ruft jede Sekunde). */
+  function zeichneModellWahl() {
+    if (!aktiv) return;
+    const eintrag = FP.wege.modellEintrag(modelle, aktiv.chat.modellRoh() || aktiv.chat.S.modell);
+    const schluessel = `${aktiv.id}|${eintrag ? eintrag.id : ''}|${modelle.map((x) => x && x.id).join(',')}`;
+    const aus = modelle.length === 0;
+    $('modell').disabled = aus || aktiv.wechselt;
+    $('modell').title = aus ? 'Der Runner nennt keine Modelle.' : 'Modell dieser Sitzung wechseln';
+    if (schluessel === modellSchluessel) return;
+    modellSchluessel = schluessel;
+    modellWahl.setze([
+      {
+        id: 'modell',
+        punkte: [
+          ...modelle
+            .filter((x) => x && x.id)
+            .map((x) => ({ wert: x.id, text: x.name || x.id, hilfe: typeof x.contextWindow === 'number' ? `Kontextfenster ${zahl(x.contextWindow)}` : '', gewaehlt: !!eintrag && eintrag.id === x.id && eintrag.provider === x.provider })),
+          { wert: '', text: 'Standard des Runners', hilfe: 'Das Modell, das der Runner ohne eigene Wahl nimmt.', gewaehlt: false },
+        ],
+      },
+    ]);
   }
-  function uebernimm() {
-    eingabe.value = `${m.items[m.index].name} `;
-    schliesse();
-    waechst();
-    eingabe.focus();
+  async function modellWechseln(modellId) {
+    const rec = aktiv;
+    if (!rec || rec.wechselt) return;
+    rec.wechselt = true;
+    modellFehler('');
+    zeigeAktiv();
+    try {
+      const r = await aenderung.modell(rec.id, modellId);
+      rec.chat.setzeModell(r.gespraech);
+      modellSchluessel = '';
+    } catch (f) {
+      modellFehler((f && f.message) || String(f));
+    } finally {
+      rec.wechselt = false;
+      zeigeAktiv();
+      if (aktiv === rec) eingabe.focus();
+    }
   }
+
+  // Menü für @Dateien und /Befehle
   eingabe.addEventListener('input', () => {
     waechst();
-    if (/^\/[a-zäöüß]*$/i.test(eingabe.value)) {
-      const items = BEFEHLE.filter((b) => b.name.startsWith(eingabe.value.toLowerCase()));
-      if (items.length) {
-        m = { items, index: 0 };
-        return zeichneMenue();
-      }
-    }
-    schliesse();
+    eingabeHilfe.beiInput();
   });
-  eingabe.addEventListener('blur', schliesse);
   eingabe.addEventListener('keydown', (e) => {
-    if (m) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        m.index = (m.index + (e.key === 'ArrowDown' ? 1 : m.items.length - 1)) % m.items.length;
-        return zeichneMenue();
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        return uebernimm();
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        return schliesse();
-      }
-    }
+    if (eingabeHilfe.beiTaste(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       senden(e.metaKey || e.ctrlKey);
@@ -901,7 +934,7 @@
     $('avatar').textContent = FP.anzeigename.charAt(0);
     document.title = FP.anzeigename;
     eingabe.setAttribute('aria-label', `Nachricht an ${FP.anzeigename}`);
-    eingabe.placeholder = `Nachricht an ${FP.anzeigename} …  /  für Befehle`;
+    eingabe.placeholder = `Nachricht an ${FP.anzeigename} …  @ für Dateien, / für Befehle`;
     $('leisteFuss').textContent = h.geraet && h.geraet.name ? `${FP.anzeigename} auf ${h.geraet.name}` : '';
   }
 

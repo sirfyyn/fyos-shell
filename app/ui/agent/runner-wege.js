@@ -179,10 +179,10 @@
   }
 
   /**
-   * Fenstergröße des Modells aus der Liste von GET /api/modelle. `modell`: Text ("anbieter/id", "id" oder Name) oder Objekt ({ provider, modelId | id, name }).
-   * → Zahl oder null.
+   * Der Eintrag der Modellliste (GET /api/modelle), der zu `modell` gehört. `modell`: Text ("anbieter/id", "id" oder Name) oder Objekt
+   * ({ provider, modelId | id, name }). → Eintrag oder null. `nurMitFenster`: nur Einträge mit contextWindow.
    */
-  function fensterAusModellen(modelle, modell) {
+  function modellEintrag(modelle, modell, nurMitFenster) {
     if (!Array.isArray(modelle) || !modell) return null;
     const ids = [];
     let anbieter = '';
@@ -197,12 +197,17 @@
       for (const k of ['id', 'modelId', 'name']) if (typeof modell[k] === 'string' && modell[k]) ids.push(modell[k]);
       if (typeof modell.provider === 'string') anbieter = modell.provider;
     }
-    const gut = (m) => m && typeof m.contextWindow === 'number' && Number.isFinite(m.contextWindow) && m.contextWindow > 0;
+    const gut = (m) => m && (!nurMitFenster || (typeof m.contextWindow === 'number' && Number.isFinite(m.contextWindow) && m.contextWindow > 0));
     const passt = (m) => ids.includes(m.id) || ids.includes(m.name) || ids.includes(`${m.provider}/${m.id}`);
     const treffer = modelle.filter((m) => gut(m) && passt(m));
-    const genau = treffer.find((m) => anbieter && m.provider === anbieter) || treffer[0];
-    return genau ? genau.contextWindow : null;
+    return treffer.find((m) => anbieter && m.provider === anbieter) || treffer[0] || null;
   }
 
-  FP.wege = { createWege, klassifiziere, fehlerTeile, wegFehlt, kodiere, markierungenPruefen, trefferBereinigen, archivListePruefen, fensterAusModellen, MELDUNG };
+  /** Fenstergröße des Modells aus der Liste von GET /api/modelle (siehe modellEintrag). → Zahl oder null. */
+  function fensterAusModellen(modelle, modell) {
+    const m = modellEintrag(modelle, modell, true);
+    return m ? m.contextWindow : null;
+  }
+
+  FP.wege = { createWege, klassifiziere, fehlerTeile, wegFehlt, kodiere, markierungenPruefen, trefferBereinigen, archivListePruefen, fensterAusModellen, modellEintrag, MELDUNG };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

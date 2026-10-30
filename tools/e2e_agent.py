@@ -37,6 +37,7 @@ Aufruf (aus apps/fyos-shell):  python3 tools/e2e_agent.py [--ohne-bau]
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -70,7 +71,9 @@ ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz
             "laufende-sitzung-markiert", "markierung-endet", "wechsel-erhaelt-sitzung", "wechsel-nichts-doppelt", "neue-sitzung",
             "neue-sitzung-mit-namen", "umbenennen-kopf", "umbenennen-ohne-neuaufbau", "umbenennen-esc", "umbenennen-leiste", "umbenennen-fehler-klar",
             "archivieren", "wiederherstellen", "archiv-vom-runner", "suche-treffer", "suche-archiv-treffer", "suche-esc", "kuerzel-suche", "baum-mit-dateien",
-            "vorschau-ueber-weg", "vorschau-geschwaerzt", "vorschau-gekuerzt", "vorschau-binaer", "vorschau-gesperrt", "ende"]
+            "vorschau-ueber-weg", "vorschau-geschwaerzt", "vorschau-gekuerzt", "vorschau-binaer", "vorschau-gesperrt",
+            "eingabe-at-auswahl", "eingabe-at-einsetzen", "eingabe-at-esc", "eingabe-slash-liste", "eingabe-befehl-ueber-nachricht", "eingabe-anhang-chip",
+            "eingabe-anhang-entfernen", "eingabe-anhang-gesendet", "eingabe-modellwechsel", "eingabe-modus-echt", "ende"]
 
 
 def bauen(ausgabe):
@@ -180,6 +183,12 @@ def pruefe(app, arbeit):
                     and any(x["pfad"].startswith("/api/datei?pfad=%2Fprobe%2Fordner-a%2Fprojekt-eins%2FREADME%2Emd&gespraech=") and x["pfad"].endswith("&max=200000") and x["auth"] for x in wege)
                     and any(x["pfad"].startswith("/api/ordner?pfad=%2Fprobe%2Fordner-a%2Fprojekt-eins&dateien=1") and x["auth"] for x in wege),
                     json.dumps(sorted({x["pfad"][:90] for x in wege if x["pfad"].startswith(("/api/suche", "/api/datei", "/api/ordner", "/api/gespraeche?"))})[:12]))
+            nachrichten = [x for x in z if "pfad" in x and x["methode"] == "POST" and x["pfad"].endswith("/nachricht")]
+            e.melde("A3", "Eingabe: Befehlsliste, Dateiliste und Modellwechsel kamen mit Token durch die Brücke (GET /api/befehle, GET /api/ordner, PATCH modell), Befehle als Nachricht",
+                    any(x["pfad"].startswith("/api/befehle?gespraech=") and x["auth"] for x in wege)
+                    and any(x["methode"] == "PATCH" and x["auth"] and re.fullmatch(r"/api/gespraech/\d+", x["pfad"]) for x in z if "pfad" in x)
+                    and len(nachrichten) >= 2 and all(x["auth"] for x in nachrichten),
+                    json.dumps(sorted({x["pfad"][:60] for x in z if "pfad" in x and x["pfad"].startswith("/api/befehle")})))
             e.melde("A3", "Suche und Datei lesen kamen nie mit einem anderen Verb als GET", all(x["methode"] == "GET" for x in z if "pfad" in x and x["pfad"].startswith(("/api/suche", "/api/datei"))))
             print("A4 Token")
             anfragen = [x for x in z if "pfad" in x]

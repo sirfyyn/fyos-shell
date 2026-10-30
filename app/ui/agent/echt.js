@@ -168,7 +168,7 @@
   function modellName(agent) {
     const m = agent && agent.model;
     if (!m) return '';
-    return typeof m === 'string' ? m : String(m.name || m.id || '');
+    return typeof m === 'string' ? m : String(m.name || m.id || m.modelId || '');
   }
 
   // --- Regler -----------------------------------------------------------------------------
@@ -402,8 +402,13 @@
       if (!text || S.id === null) return { ok: false };
       const b = /^\/([a-zäöüß]+)(?:\s+(\S+))?$/i.exec(text);
       if (b) {
-        const r = await befehl(b[1].toLowerCase(), b[2]);
-        if (r !== null) return r;
+        // Befehle des Runners gehen wie jede Nachricht durch POST …/nachricht (der Runner wertet sie aus). Nur was er nicht kennt, macht die Seite selbst:
+        // /leeren und /abzweigen (Anzeigenamen der Seite) und alle Befehle bei einem älteren Runner ohne GET /api/befehle.
+        const n = b[1].toLowerCase();
+        if (n === 'leeren' || n === 'abzweigen' || (await alteBefehle())) {
+          const r = await befehl(n, b[2]);
+          if (r !== null) return r;
+        }
       }
       const lauftSchon = view.busy;
       let handle = null;
@@ -412,8 +417,18 @@
         eingereiht.push({ text, handle });
       }
       try {
-        await transport.api('POST', `/api/gespraech/${encodeURIComponent(S.id)}/nachricht`, { text, art: sofort ? 'steuern' : 'folgen', requestId: `agent-chat:${jetzt()}:${Math.random().toString(36).slice(2, 8)}` });
+        const antwort = await transport.api('POST', `/api/gespraech/${encodeURIComponent(S.id)}/nachricht`, { text, art: sofort ? 'steuern' : 'folgen', requestId: `agent-chat:${jetzt()}:${Math.random().toString(36).slice(2, 8)}` });
         S.letzteAktivitaet = jetzt();
+        if (antwort && antwort.befehl && typeof antwort.befehl === 'object') {
+          // Ein Befehl erreicht das Modell nicht: keine eingereihte Blase. Sein Ergebnis steht als Eintrag fyos.befehl im Verlauf (der Adapter zeigt es als Hinweis).
+          if (handle) {
+            handle.entfernen();
+            eingereiht.pop();
+          }
+          const a = antwort.befehl.aktion;
+          if (a && a.art === 'fokus' && a.gespraech !== undefined && a.gespraech !== null && opts.beiNeueSitzung) opts.beiNeueSitzung(a.gespraech);
+          return { ok: true, befehl: String(antwort.befehl.name || '') };
+        }
       } catch (f) {
         if (handle) {
           handle.entfernen();
@@ -423,6 +438,54 @@
         return { ok: false, fehler: String(f.message || f) };
       }
       return { ok: true };
+    }
+    /**
+     * Befehle des Runners für diese Sitzung (GET /api/befehle?gespraech=<id>): [{ name, beschreibung, argumente, art, aliase }].
+     * Ein älterer Runner kennt den Weg nicht: dann `null` und S.befehleAlt = true (die Seite führt die Grundbefehle selbst aus).
+     * Je Sitzung einmal geladen (`neu` holt noch einmal, etwa nach /reload).
+     */
+    const befehleSpeicher = new Map();
+    async function befehle(neu) {
+      if (S.id === null) return null;
+      const schluessel = String(S.id);
+      if (!neu && befehleSpeicher.has(schluessel)) return befehleSpeicher.get(schluessel);
+      let liste = null;
+      try {
+        const r = await transport.api('GET', `/api/befehle?gespraech=${encodeURIComponent(S.id)}`);
+        liste = Array.isArray(r.befehle)
+          ? r.befehle
+              .filter((x) => x && typeof x.name === 'string' && x.name)
+              .map((x) => ({
+                name: x.name,
+                beschreibung: typeof x.beschreibung === 'string' ? x.beschreibung : '',
+                argumente: typeof x.argumente === 'string' ? x.argumente : '',
+                art: typeof x.art === 'string' ? x.art : '',
+                aliase: Array.isArray(x.aliase) ? x.aliase.filter((a) => typeof a === 'string') : [],
+              }))
+          : null;
+        S.befehleAlt = liste === null;
+      } catch (f) {
+        const t = FP.wege ? FP.wege.fehlerTeile(f) : { status: null };
+        if (FP.wege && FP.wege.wegFehlt(t)) S.befehleAlt = true;
+        liste = null;
+      }
+      if (liste !== null || S.befehleAlt === true) befehleSpeicher.set(schluessel, liste);
+      return liste;
+    }
+    async function alteBefehle() {
+      if (S.befehleAlt === undefined) await befehle(false);
+      return S.befehleAlt === true;
+    }
+    /** Nach einem Modellwechsel (PATCH): die Antwort des Runners nennt agent.model; die Anzeige zieht nach. */
+    function setzeModell(gespraech) {
+      const a = gespraech && gespraech.agent;
+      if (a && a.model) {
+        modellRoh = a.model;
+        S.modell = modellName(a) || S.modell;
+      } else {
+        modellRoh = null; // ohne eigenes Modell gilt der Standard des Runners
+      }
+      status();
     }
     async function befehl(name, arg) {
       const pfad = (s) => `/api/gespraech/${encodeURIComponent(S.id)}/${s}`;
@@ -501,7 +564,7 @@
       abmelden = null;
     }
 
-    return { start, ende, aktiviere, ruhen, oeffne, sende, stopp, view, S, entscheide, stilleTakt, beiStrom, get adapter() { return adapter; }, warteAuf: () => kette };
+    return { start, ende, aktiviere, ruhen, oeffne, sende, stopp, view, S, entscheide, stilleTakt, beiStrom, befehle, setzeModell, modellRoh: () => modellRoh, get adapter() { return adapter; }, warteAuf: () => kette };
   }
 
   Object.assign(FP, { tauriTransport, httpTransport, createEchtChat, usageSicht, kontextAnzeige, modellName });

@@ -9,6 +9,9 @@ Spricht den Teil der Runner-Schnittstelle, den die Chat-Seite und die Seitenleis
                                           ?archiv=1 nur Archivierte, ?archiv=alle beide; jedes Gespräch trägt `archiviert`
   GET  /api/suche?q=&limit=&archiv=       Suche über Titel und sichtbaren Verlauf: {ok, treffer: [{id, titel, archiviert, aktualisiert, ausschnitt, start, laenge,
                                           markierungen, zahl, quelle}], abgeschnitten, durchsucht, gesamt}; q mindestens 2 Zeichen (sonst 400 {ok: false, fehler})
+  GET  /api/befehle?gespraech=<id>        Befehle wie src/befehle.js (name, beschreibung, argumente, art, aliase); /hilfe, /sitzung, /modell, /stopp, /neu, /verdichten laufen über
+                                          POST …/nachricht (Antwort `befehl`, Eintrag `fyos.befehl`), erreichen kein Szenario; unbekannte „/…“ sind Text (Szenario)
+  PATCH /api/gespraech/<id>               auch {modell}: Kennung aus GET /api/modelle oder null (Standard); Unbekanntes → 500 „Unbekanntes Modell“
   GET  /api/modelle                       je Modell `contextWindow`; usage.context = {tokens, window} in /ansicht und im Snapshot des Stroms (tokens null nach Reset)
   POST /api/gespraeche                    neue Sitzung {titel, arbeitsbereich, modell} → 201 {gespraech: {id, meta, agent}}; ohne titel „Neuer Agent“, bis 120 Zeichen
   PATCH /api/gespraech/<id>               {titel, archiviert} → 200 {gespraech: {id, meta, agent}}; archivierte Sitzungen fehlen in GET /api/gespraeche (wie beim Runner)
@@ -63,7 +66,25 @@ BEREICHE = {
 }
 # `contextWindow` wie GET /api/modelle des Runners (Rhea: 262144); die Attrappe nimmt dieselbe Zahl, damit die Oberfläche nicht auf 128000 fällt
 KONTEXT_FENSTER = 262144
-MODELLE = [{"id": "probe-modell", "name": "Probe-Modell", "provider": "probe", "max": False, "contextWindow": KONTEXT_FENSTER}]
+MODELLE = [
+    {"id": "probe-modell", "name": "Probe-Modell", "provider": "probe", "max": False, "contextWindow": KONTEXT_FENSTER},
+    {"id": "probe-gross", "name": "Probe-Modell Groß", "provider": "probe", "max": True, "contextWindow": KONTEXT_FENSTER},
+]
+MODELL_STANDARD = "probe-modell"
+
+# Befehle wie GET /api/befehle des Runners (src/befehle.js, liste()): Name, Beschreibung, Argumente, Art, Aliase. Die Pi-Terminalbefehle (Art `terminal`) gibt es
+# mit einer Erklärung, sie sind hier nur mit einem Vertreter dabei. Ausgeführt werden sie über POST …/nachricht (Antwort `befehl`, Eintrag `fyos.befehl`).
+BEFEHLE = [
+    {"name": "hilfe", "beschreibung": "Zeigt die Befehle dieses Gesprächs", "argumente": None, "art": "anzeige", "aliase": ["help"], "ginny_bestaetigung": False},
+    {"name": "neu", "beschreibung": "Beginnt im Gespräch einen neuen Kontext (Verlauf bleibt sichtbar)", "argumente": "[Übergabe]", "art": "sitzung", "aliase": ["new"], "ginny_bestaetigung": True},
+    {"name": "verdichten", "beschreibung": "Verdichtet den Kontext (Zusammenfassung)", "argumente": "[Hinweis]", "art": "verlauf", "aliase": ["compact"], "ginny_bestaetigung": True},
+    {"name": "modell", "beschreibung": "Zeigt die Modelle oder wechselt das Modell dieses Gesprächs", "argumente": "[modell|standard]", "art": "modell", "aliase": ["model"], "ginny_bestaetigung": True},
+    {"name": "sitzung", "beschreibung": "Zeigt Modell, Verlauf, Token und Kosten dieses Gesprächs", "argumente": None, "art": "anzeige", "aliase": ["session"], "ginny_bestaetigung": False},
+    {"name": "stopp", "beschreibung": "Bricht den laufenden Zug dieses Gesprächs ab", "argumente": None, "art": "bruecke", "aliase": ["abbrechen"], "ginny_bestaetigung": False},
+    {"name": "settings", "beschreibung": "Pi: Einstellungsmenü", "argumente": None, "art": "terminal", "aliase": [], "ginny_bestaetigung": False},
+    {"name": "skill:pruefen", "beschreibung": "Prüft etwas nach einer Arbeitsanleitung", "argumente": "[Text]", "art": "skill", "aliase": [], "ginny_bestaetigung": False},
+]
+BEFEHL_ALIASE = {a: b["name"] for b in BEFEHLE for a in b["aliase"]}
 
 # "Ordner je Sitzung": ein erfundener Ordnerbaum im Speicher (kein Dateisystem). Wörterbuch = Ordner, Text = Textdatei, bytes = Datei mit Rohdaten.
 # Dieselben Wege wie der echte Runner (GET /api/ordner mit `dateien=1`, GET /api/datei, POST /api/gespraeche mit `ordner`), gleiche Fehlerbilder.
@@ -368,6 +389,7 @@ class Sitzung:
         self.id = sid
         self.titel = titel
         self.archiviert = False
+        self.modell = None  # eigenes Modell der Sitzung (PATCH modell); None = Standard
         self.art = art
         self.bereich = bereich
         self.erstellt = erstellt
@@ -382,11 +404,51 @@ class Sitzung:
     def cwd(self):
         return self.ordner or BEREICHE[self.bereich]["pfad"]
 
+    def agent_modell(self):
+        return self.modell or MODELL_STANDARD
+
+    def befehl(self, text):
+        """Führt einen Befehl der Liste aus (wie Befehle.versuche des Runners): → {name, ok, text, aktion} oder None, wenn es keiner ist.
+        Das Ergebnis steht als Eintrag `fyos.befehl` im Verlauf (nur Anzeige); das Modell sieht es nicht."""
+        m = re.fullmatch(r"/([^\s]+)(?:\s+([\s\S]*))?", text.strip())
+        if not m:
+            return None
+        name = BEFEHL_ALIASE.get(m.group(1).lower(), m.group(1).lower())
+        arg = (m.group(2) or "").strip()
+        b = next((x for x in BEFEHLE if x["name"] == name), None)
+        if not b or b["art"] in ("terminal", "skill"):
+            return None
+        ok, antwort = True, ""
+        if name == "hilfe":
+            antwort = "Befehle: " + ", ".join("/" + x["name"] for x in BEFEHLE if x["art"] != "terminal")
+        elif name == "sitzung":
+            antwort = f"Modell {self.agent_modell()}, {len(self.eintraege)} Einträge"
+        elif name == "modell":
+            if not arg:
+                antwort = "Modelle: " + ", ".join(x["id"] for x in MODELLE) + f" (jetzt {self.agent_modell()})"
+            elif arg == "standard":
+                self.modell = None
+                antwort = f"Modell: {self.agent_modell()} (Standard)"
+            elif any(x["id"] == arg for x in MODELLE):
+                self.modell = arg
+                antwort = f"Modell: {arg}"
+            else:
+                ok, antwort = False, f"Unbekanntes Modell: {arg}"
+        elif name == "stopp":
+            self.abbruch.set()
+            antwort = "Kein Zug läuft." if not self.laeuft else "Zug abgebrochen."
+        else:
+            antwort = f"/{name} ausgeführt (Attrappe)."
+        erg = {"name": name, "ok": ok, "text": antwort, "aktion": None}
+        e = self.eintrag("fyos.befehl", {**erg, "eingabe": text[:400], "requestId": None, "zeit": int(time.time() * 1000)})
+        self.senden([{"type": "entry_appended", "entry": e}])
+        return erg
+
     def liste(self):
-        return {"id": self.id, "art": self.art, "titel": self.titel, "arbeitsbereich": self.bereich, "ordner": self.ordner, "agent": {"cwd": self.cwd()}, "erstellt": self.erstellt, "modell": None, "archiviert": self.archiviert}
+        return {"id": self.id, "art": self.art, "titel": self.titel, "arbeitsbereich": self.bereich, "ordner": self.ordner, "agent": {"cwd": self.cwd()}, "erstellt": self.erstellt, "modell": self.modell, "archiviert": self.archiviert}
 
     def meta(self):
-        return {"id": self.id, "titel": self.titel, "modell": "probe-modell", "arbeitsbereich": self.bereich, "ordner": self.ordner, "erstellt": self.erstellt, "art": self.art, "archiviert": self.archiviert}
+        return {"id": self.id, "titel": self.titel, "modell": self.agent_modell(), "arbeitsbereich": self.bereich, "ordner": self.ordner, "erstellt": self.erstellt, "art": self.art, "archiviert": self.archiviert}
 
     def senden(self, ereignisse):
         with self.z.sperre:
@@ -418,7 +480,7 @@ class Sitzung:
 
     def snapshot(self):
         with self.z.sperre:
-            s = {"entries": list(self.eintraege), "agent": {"model": "probe-modell"}, "usage": {"models": {"probe/probe": USAGE_LEBENSZEIT}, "tools": {}, "context": self.kontext()}}
+            s = {"entries": list(self.eintraege), "agent": {"model": self.agent_modell()}, "usage": {"models": {"probe/probe": USAGE_LEBENSZEIT}, "tools": {}, "context": self.kontext()}}
             if self.laeuft:
                 s["run"] = True
                 s["generation"] = {"message": {"role": "assistant", "content": [{"type": "text", "text": self.teil}]}}
@@ -698,6 +760,13 @@ def handler(z):
                 return self._json(200, {"ok": True, "arbeitsbereiche": BEREICHE, "modelle": MODELLE, "version": 1})
             if p == "/api/modelle":
                 return self._json(200, {"ok": True, "modelle": MODELLE})
+            if p == "/api/befehle":
+                roh = parse_qs(urlparse(self.path).query).get("gespraech", [None])[0]
+                if roh and not roh.isdigit():
+                    return self._json(400, {"ok": False, "fehler": "gespraech muss eine Nummer sein"})
+                if roh and not z.sitzung(roh):
+                    return self._json(404, {"ok": False, "fehler": "Gespräch nicht gefunden"})
+                return self._json(200, {"ok": True, "befehle": BEFEHLE, "anzahl": len(BEFEHLE)})
             if p == "/api/ordner":
                 abfrage = parse_qs(urlparse(self.path).query)
                 pfad = abfrage.get("pfad", [None])[0]
@@ -740,7 +809,7 @@ def handler(z):
                     return self._json(200, {"entries": list(s.eintraege), "meta": s.meta(), "usage": s.snapshot()["usage"]})
                 if m.group(2) == "ereignisse":
                     return self._strom(s)
-                return self._json(200, {"ok": True, "id": s.id, "meta": s.meta(), "agent": {"model": "probe-modell", "cwd": s.cwd(), "tools": ["read", "bash", "edit", "write"]}})
+                return self._json(200, {"ok": True, "id": s.id, "meta": s.meta(), "agent": {"model": s.agent_modell(), "cwd": s.cwd(), "tools": ["read", "bash", "edit", "write"]}})
             self._json(404, {"fehler": "unbekannt"})
 
         def _sse_kopf(self):
@@ -812,7 +881,12 @@ def handler(z):
                     s.titel = neu or s.titel
                 if "archiviert" in k:
                     s.archiviert = bool(k["archiviert"])
-            return self._json(200, {"ok": True, "gespraech": {"id": s.id, "meta": s.meta(), "agent": {"model": "probe-modell", "cwd": s.cwd(), "tools": []}, "usage": None}})
+                if "modell" in k:
+                    # wie aendereGespraech: null = Standard, sonst muss die Kennung in GET /api/modelle stehen („Unbekanntes Modell“ → 500)
+                    if k["modell"] is not None and not any(x["id"] == k["modell"] for x in MODELLE):
+                        return self._json(500, {"ok": False, "fehler": "Unbekanntes Modell"})
+                    s.modell = k["modell"] or None
+            return self._json(200, {"ok": True, "gespraech": {"id": s.id, "meta": s.meta(), "agent": {"model": s.agent_modell(), "cwd": s.cwd(), "tools": []}, "usage": None}})
 
         def do_POST(self):
             if not self._erlaubt():
@@ -831,14 +905,20 @@ def handler(z):
                 else:
                     ordner = None
                 s = z.neue_sitzung(k.get("titel"), k.get("arbeitsbereich", "standard"), ordner)
-                return self._json(201, {"ok": True, "gespraech": {"id": s.id, "meta": s.meta(), "agent": {"model": "probe-modell", "cwd": s.cwd(), "tools": []}, "usage": None}})
+                return self._json(201, {"ok": True, "gespraech": {"id": s.id, "meta": s.meta(), "agent": {"model": s.agent_modell(), "cwd": s.cwd(), "tools": []}, "usage": None}})
             m = re.fullmatch(r"/api/gespraech/(\d+)/(nachricht|abbrechen)", p)
             if m:
                 s = z.sitzung(m.group(1))
                 if not s:
                     return self._json(404, {"fehler": "Gespräch nicht gefunden"})
                 if m.group(2) == "nachricht":
-                    threading.Thread(target=s.szenario, args=(str(k.get("text", "")),), daemon=True).start()
+                    text = str(k.get("text", ""))
+                    if text.startswith("/"):
+                        erg = s.befehl(text)
+                        if erg is not None:
+                            # ein Befehl erreicht kein Szenario (wie beim Runner das Modell nicht)
+                            return self._json(200, {"ok": True, "id": None, "art": k.get("art", "folgen"), "befehl": erg})
+                    threading.Thread(target=s.szenario, args=(text,), daemon=True).start()
                 else:
                     s.abbruch.set()
                 return self._json(200, {"ok": True})

@@ -673,6 +673,59 @@ class SucheArchivTests(Basis):
         self.assertEqual(self.anfrage(f"/api/gespraech/{sid}/ansicht")["usage"]["context"], {"tokens": None, "window": 262144})
         self.assertEqual(self.z.sitzung(sid).snapshot()["usage"]["context"], {"tokens": None, "window": 262144})
 
+    def patch_fehler(self, pfad, daten):
+        try:
+            self.patch(pfad, daten)
+        except urllib.error.HTTPError as f:
+            return f.code, json.loads(f.read())
+        return 200, None
+
+    def test_befehle_wie_der_runner_und_modell_je_sitzung(self):
+        sid = self.anfrage("/api/gespraeche", {"titel": "Eingabe"})["gespraech"]["id"]
+        # GET /api/befehle: Form wie src/befehle.js; Gespräch muss es geben, eine Nummer sein
+        liste = self.anfrage(f"/api/befehle?gespraech={sid}")
+        self.assertTrue(liste["ok"] and liste["anzahl"] == len(liste["befehle"]) >= 6)
+        for b in liste["befehle"]:
+            self.assertEqual(sorted(b), ["aliase", "argumente", "art", "beschreibung", "ginny_bestaetigung", "name"])
+        self.assertIn("terminal", {b["art"] for b in liste["befehle"]})
+        self.assertEqual(self.roh("/api/befehle?gespraech=99999")[0], 404)
+        self.assertEqual(self.roh("/api/befehle?gespraech=abc")[0], 400)
+        self.assertEqual(self.roh("/api/befehle", token="x" * 20)[0], 401)
+        # ein Befehl: Antwort `befehl`, Eintrag fyos.befehl, kein Szenario (keine Nutzernachricht, kein Lauf)
+        a = self.anfrage(f"/api/gespraech/{sid}/nachricht", {"text": "/sitzung", "art": "folgen"})
+        self.assertEqual((a["befehl"]["name"], a["befehl"]["ok"]), ("sitzung", True))
+        self.assertIn("probe-modell", a["befehl"]["text"])
+        kinds = [e["kind"] for e in self.anfrage(f"/api/gespraech/{sid}/ansicht?voll=1")["entries"]]
+        self.assertEqual(kinds, ["fyos.befehl"])
+        # Alias, Befehl mit Argument, Fehler eines Befehls
+        self.assertEqual(self.anfrage(f"/api/gespraech/{sid}/nachricht", {"text": "/model probe-gross"})["befehl"]["name"], "modell")
+        self.assertEqual(self.z.sitzung(sid).agent_modell(), "probe-gross")
+        self.assertFalse(self.anfrage(f"/api/gespraech/{sid}/nachricht", {"text": "/modell gibt-es-nicht"})["befehl"]["ok"])
+        # Unbekanntes „/…“ und Pi-Terminalbefehle sind Text: sie starten ein Szenario (Nutzernachricht im Verlauf)
+        a = self.anfrage(f"/api/gespraech/{sid}/nachricht", {"text": "/gibtsnicht hallo"})
+        self.assertNotIn("befehl", a)
+        self.assertNotIn("befehl", self.anfrage(f"/api/gespraech/{sid}/nachricht", {"text": "/settings"}))
+        ende = time.time() + 5
+        while time.time() < ende and not any(e["kind"] == "fyos.mensch" for e in self.anfrage(f"/api/gespraech/{sid}/ansicht?voll=1")["entries"]):
+            time.sleep(0.05)
+        self.assertTrue(any(e.get("data", {}).get("text") == "/gibtsnicht hallo" for e in self.anfrage(f"/api/gespraech/{sid}/ansicht?voll=1")["entries"]))
+
+        # PATCH modell: wie aendereGespraech; null = Standard, Unbekanntes → 500 „Unbekanntes Modell“
+        sid2 = self.anfrage("/api/gespraeche", {"titel": "Modell"})["gespraech"]["id"]
+        self.assertEqual([m["id"] for m in self.anfrage("/api/modelle")["modelle"]], ["probe-modell", "probe-gross"])
+        g = self.patch(f"/api/gespraech/{sid2}", {"modell": "probe-gross"})["gespraech"]
+        self.assertEqual((g["meta"]["modell"], g["agent"]["model"]), ("probe-gross", "probe-gross"))
+        self.assertEqual(self.anfrage(f"/api/gespraech/{sid2}")["agent"]["model"], "probe-gross")
+        self.assertEqual(self.z.sitzung(sid2).snapshot()["agent"]["model"], "probe-gross")
+        self.assertEqual(self.patch(f"/api/gespraech/{sid2}", {"modell": None})["gespraech"]["agent"]["model"], "probe-modell")
+        self.assertEqual(self.patch_fehler(f"/api/gespraech/{sid2}", {"modell": "gibt-es-nicht"}), (500, {"ok": False, "fehler": "Unbekanntes Modell"}))
+        self.assertEqual(self.z.sitzung(sid2).agent_modell(), "probe-modell", "ein abgelehntes Modell ändert nichts")
+        # andere Sitzungen bleiben unberührt, ein anderes Feld lässt das Modell stehen
+        self.patch(f"/api/gespraech/{sid2}", {"modell": "probe-gross"})
+        self.patch(f"/api/gespraech/{sid2}", {"titel": "Neu benannt"})
+        self.assertEqual(self.z.sitzung(sid2).agent_modell(), "probe-gross")
+        self.assertEqual(self.z.sitzung(1).agent_modell(), "probe-modell")
+
 
 if __name__ == "__main__":
     unittest.main()
