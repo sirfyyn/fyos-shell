@@ -45,6 +45,16 @@ pub fn freigaben_zeigen(app: &AppHandle) {
     }
 }
 
+/// Das Einstellungsfenster („FYOS Agent“: Runner, Adressen, lokaler Runner) öffnen oder nach vorn holen. Ein Weg für den Tray-Eintrag
+/// „Einstellungen …“ und den Knopf im Chat-Fenster (Befehl `einstellungen_oeffnen`).
+pub fn einstellungen_zeigen(app: &AppHandle) -> tauri::Result<()> {
+    huelle_fenster::haupt(app, true)?;
+    if let Some(w) = app.get_webview_window(huelle_fenster::HAUPT) {
+        let _ = w.unminimize();
+    }
+    Ok(())
+}
+
 /// Öffnet das Chat-Fenster oder holt es nach vorn.
 pub fn chat_oeffnen(app: &AppHandle) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window(CHAT) {

@@ -46,6 +46,18 @@
     await melde('streaming-teilweise', teilweise, 'Text erscheint vor dem Ende');
     await melde('streaming-ganz', await warte(() => text().includes('Antwort Ende'), 15000), text().slice(-80));
 
+    // Kontextanzeige: die Attrappe liefert wie der Runner eine Lebenszeitsumme (input 9,7 Mio., 193 Mio. gesendet) und pro Antwort ihre usage (3500 Token):
+    // gezeigt wird die Füllung der letzten Antwort (3 % von 128k), nie die Summe als Kontext
+    const ktx = $('kontext');
+    const ktxOk = await warte(() => ktx.dataset.bekannt === '1', 15000);
+    await melde('kontext-plausibel', ktxOk && $('kontextText').textContent === '3 %' && ktx.getAttribute('aria-valuenow') === '3' && /^gesamt 193 M ein/.test($('tokens').textContent) && !/9729|100 %/.test(document.querySelector('.statuszeile').textContent), `${$('kontextText').textContent} | ${$('kontextTitel').textContent} | ${$('tokens').textContent}`);
+
+    // Einstellungen-Knopf: ruft den Befehl, ohne Fehlermeldung (das Fenster selbst prüft e2e_agent.py von außen)
+    const eKnopf = $('einstellungenKnopf');
+    eKnopf.click();
+    await new Promise((r) => setTimeout(r, 1500));
+    await melde('einstellungen-knopf', !eKnopf.hidden && $('einstellungenFehler').hidden && eKnopf.title.includes('Einstellungen'), `fehler verborgen=${$('einstellungenFehler').hidden} ${$('einstellungenFehler').textContent}`);
+
     await chat.sende('werkzeug');
     await melde('werkzeugkarte', await warte(() => document.querySelector('.karte') && text().includes('Werkzeug fertig.')), 'Karte und Antwort');
 

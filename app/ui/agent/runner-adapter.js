@@ -44,7 +44,19 @@
   }
 
   /**
-   * opts: modell, onEntscheidung(id, 'erlauben'|'ablehnen', notiz), onUsage(usage), onAgent(agent), onHinweis(text, fehler),
+   * Kontextfüllung aus der `usage` EINER Antwort (pi-ai: input, output, cacheRead, cacheWrite, totalTokens): der Prompt dieses Aufrufs samt
+   * Antwort ist der Stand des Gesprächs danach. `totalTokens` zuerst, sonst die Summe der vier Teile; ohne verwertbare Zahl null
+   * (abgebrochene oder fehlgeschlagene Antworten tragen Nullen und ändern die Anzeige nicht).
+   */
+  function kontextAusNutzung(u) {
+    if (!u || typeof u !== 'object') return null;
+    const n = (x) => (typeof x === 'number' && Number.isFinite(x) && x > 0 ? x : 0);
+    const t = n(u.totalTokens) || n(u.input) + n(u.output) + n(u.cacheRead) + n(u.cacheWrite);
+    return t > 0 ? t : null;
+  }
+
+  /**
+   * opts: modell, onEntscheidung(id, 'erlauben'|'ablehnen', notiz), onUsage(usage), onKontext(tokens|null), onAgent(agent), onHinweis(text, fehler),
    *       befehlFuer(freigabeId) → Befehl oder '' (aus GET /api/freigaben), vorMensch(text) (entfernt eine eingereihte Blase)
    */
   function createRunnerAdapter(view, opts) {
@@ -127,6 +139,10 @@
       const d = e.data || {};
       if (kind === 'pi.reset' || kind === 'pi.compaction') {
         zugZu();
+        if (opts.onKontext) {
+          const nach = kind === 'pi.compaction' ? d.nachher ?? d.tokensNachher : null;
+          opts.onKontext(typeof nach === 'number' && nach > 0 ? nach : null); // nach dem Verdichten: Größe der Zusammenfassung, wenn der Runner sie nennt
+        }
         view.addMarker({ kind, von: d.vorher ?? d.tokensVorher, nach: d.nachher ?? d.tokensNachher });
       } else if (kind === 'fyos.mensch') {
         zugZu();
@@ -165,6 +181,8 @@
         }
       } else if (m.role === 'assistant') {
         sicherZug();
+        const ktx = kontextAusNutzung(m.usage);
+        if (ktx != null && opts.onKontext) opts.onKontext(ktx);
         const bloecke = Array.isArray(m.content) ? m.content : typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : [];
         bloecke.forEach((b, i) => {
           if (!b) return;
@@ -353,6 +371,7 @@
           continue;
         }
         if (kind.startsWith('fyos.') || kind === 'pi.reset' || kind === 'pi.compaction') {
+          if ((kind === 'pi.reset' || kind === 'pi.compaction') && opts.onKontext) opts.onKontext(null); // die Füllung davor gilt nicht mehr
           const msgs0 = Array.isArray(e.model) ? e.model : e.model ? [e.model] : [];
           if (kind === 'fyos.mensch' || !msgs0.length || kind.startsWith('fyos.freigabe')) {
             eintrag(e);
@@ -378,5 +397,6 @@
   }
 
   FP.createRunnerAdapter = createRunnerAdapter;
+  FP.kontextAusNutzung = kontextAusNutzung;
   FP.diffAusEdit = diffAusEdit;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

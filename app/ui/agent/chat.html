@@ -11,6 +11,10 @@
 <body>
   <div class="app" id="app">
     <aside id="leiste" class="leiste" aria-label="Sitzungen">
+      <div class="leiste-oben">
+        <button id="einstellungenKnopf" type="button" class="leise-knopf einstellungen-knopf" title="Einstellungen: Runner, Adressen, lokaler Runner (Cmd+,)" aria-label="Einstellungen öffnen" aria-keyshortcuts="Meta+, Control+,"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.25" /><path d="M8 1.5v1.75 M8 12.75v1.75 M1.5 8h1.75 M12.75 8h1.75 M3.4 3.4l1.25 1.25 M11.35 11.35l1.25 1.25 M3.4 12.6l1.25-1.25 M11.35 4.65l1.25-1.25" /></svg><span>Einstellungen</span></button>
+        <p id="einstellungenFehler" class="leise runner-hinweis" role="alert" hidden></p>
+      </div>
       <div class="runner-wahl" id="runnerKasten">
         <label for="runnerWahl" class="leise">Runner</label>
         <select id="runnerWahl" aria-label="Aktiver Runner"></select>

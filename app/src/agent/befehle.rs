@@ -129,6 +129,13 @@ pub fn agent_chat_oeffnen(app: AppHandle) -> Result<(), Meldung> {
     fenster::chat_oeffnen(&app).map_err(|e| m(Fehler::RunnerFehler { status: 0, text: Some(e.to_string()) }))
 }
 
+/// Das Einstellungsfenster öffnen oder nach vorn holen (Knopf „Einstellungen“ und Cmd+, im Chat-Fenster). Dasselbe wie der Tray-Eintrag; die
+/// Seite bekommt weder Adresse noch Token, nur den Auftrag zum Öffnen.
+#[tauri::command]
+pub fn einstellungen_oeffnen(app: AppHandle) -> Result<(), Meldung> {
+    fenster::einstellungen_zeigen(&app).map_err(|e| m(Fehler::RunnerFehler { status: 0, text: Some(e.to_string()) }))
+}
+
 /// Der Runner, den das Chat-Fenster zeigt (ohne Token): Kennung, Name, Art, Rechnername der Adresse und Ruhe.
 #[tauri::command]
 pub fn ziel_info(h: H<'_>, a: A<'_>) -> Result<Value, Meldung> {

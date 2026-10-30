@@ -72,6 +72,11 @@ ORDNER_BAUM = {
 }
 ORDNER_MAX = 500
 
+# usage wie beim Runner: das Dokument des Gesprächs ist die SUMME über die Lebenszeit (hier mit den Zahlen aus einer gemeldeten Anzeige vom 30.10.2026:
+# input 9,7 Mio., input + cacheRead 193 Mio.), die usage einer Antwort ist der Prompt dieses einen Aufrufs samt Antwort (= die Kontextfüllung: 3500 Token)
+USAGE_LEBENSZEIT = {"input": 9729400, "output": 2121500, "cacheRead": 183308800, "cacheWrite": 0, "totalTokens": 195159700, "cost": {"total": 0}}
+USAGE_ANTWORT = {"input": 1200, "output": 300, "cacheRead": 2000, "cacheWrite": 0, "totalTokens": 3500, "cost": {"total": 0}}
+
 
 class OrdnerFehler(Exception):
     def __init__(self, status, code, meldung):
@@ -164,7 +169,7 @@ class Sitzung:
 
     def snapshot(self):
         with self.z.sperre:
-            s = {"entries": list(self.eintraege), "agent": {"model": "probe-modell"}, "usage": {"models": {"probe/probe": {"input": 120, "output": 40, "cost": {"total": 0.01}}}}}
+            s = {"entries": list(self.eintraege), "agent": {"model": "probe-modell"}, "usage": {"models": {"probe/probe": USAGE_LEBENSZEIT}}}
             if self.laeuft:
                 s["run"] = True
                 s["generation"] = {"message": {"role": "assistant", "content": [{"type": "text", "text": self.teil}]}}
@@ -229,7 +234,7 @@ class Sitzung:
                 self.teil += teil
             self.senden([{"type": "message_update", "changes": [{"type": "text_delta", "contentIndex": 0, "delta": teil}]}])
             self.pause(abstand)
-        e = self.eintrag("pi.message", model=[{"role": "assistant", "content": [{"type": "text", "text": self.teil}]}])
+        e = self.eintrag("pi.message", model=[{"role": "assistant", "content": [{"type": "text", "text": self.teil}], "usage": USAGE_ANTWORT, "stopReason": "stop"}])
         self.senden([{"type": "message_end", "entry": e}])
 
     def werkzeug_ende(self, tid, name, ergebnis, fehler=False):

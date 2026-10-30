@@ -133,6 +133,7 @@ pub fn run() {
             agent::runner_befehle::ordner_merken,
             agent::befehle::agent_alt_uebernehmen,
             agent::befehle::agent_chat_oeffnen,
+            agent::befehle::einstellungen_oeffnen,
             agent::befehle::ziel_info,
             agent::befehle::ruhe_setzen,
             agent::befehle::zustand_melden,

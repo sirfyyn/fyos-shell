@@ -37,6 +37,7 @@
     return dauerText(ms);
   }
   function zahlK(n) {
+    if (n >= 1000000) return `${(Math.round(n / 100000) / 10).toString().replace('.', ',')} M`;
     return n >= 1000 ? `${(Math.round(n / 100) / 10).toString().replace('.', ',')}k` : String(n);
   }
 

@@ -37,6 +37,7 @@ const BEFEHLE: &[&str] = &[
     "ordner_merken",
     "agent_alt_uebernehmen",
     "agent_chat_oeffnen",
+    "einstellungen_oeffnen",
     "ziel_info",
     "ruhe_setzen",
     "zustand_melden",

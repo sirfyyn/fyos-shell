@@ -601,7 +601,8 @@ function arbeitsplatz(opt) {
     if (methode === 'GET' && url === '/api/health') return antwort(200, { ok: true, agent: 'probe' });
     if (methode === 'GET' && /^\/api\/gespraech\/\d+\/ansicht/.test(url)) {
       const g = st.gespraeche.find((x) => '/api/gespraech/' + x.id + '/ansicht?voll=1' === url);
-      return antwort(200, { entries: [], meta: g ? { titel: g.titel } : null, usage: null });
+      const roh = opt.ansicht ? opt.ansicht(g ? g.id : null) : {};
+      return antwort(200, { entries: roh.entries || [], meta: g ? { titel: g.titel } : null, usage: roh.usage || null });
     }
     if (methode === 'GET' && /^\/api\/gespraech\/\d+$/.test(url)) return antwort(200, { ok: true, agent: { cwd: '/probe/standard' } });
     if (methode === 'GET' && url.startsWith('/api/ordner')) return antwort(404, { fehler: 'unbekannt' });
@@ -626,6 +627,26 @@ function arbeitsplatz(opt) {
   const d = new jsdom.JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
   const w = d.window;
   w.fetch = fetchStub;
+  if (opt.tauri) {
+    // Brücke der Anwendung als Attrappe: Anfragen an den Runner gehen an den Speicher-Runner, alles andere an opt.tauri(befehl, argumente)
+    st.tauri = [];
+    w.__TAURI__ = {
+      core: {
+        invoke: (b, a) => {
+          st.tauri.push([b, a]);
+          if (b === 'runner_anfrage') {
+            return fetchStub(a.pfad, { method: a.methode, body: a.koerper == null ? undefined : JSON.stringify(a.koerper) }).then((r) => (r.ok ? r.json() : Promise.reject({ ursache: `HTTP ${r.status}` })));
+          }
+          if (b === 'strom_oeffnen') return Promise.resolve();
+          if (b === 'runner_liste') return Promise.resolve({ runner: [] });
+          if (b === 'ziel_info') return Promise.resolve({ host: '127.0.0.1', lokal: true, ruhe: false, runner: { id: 'r', name: 'R', art: 'entfernt' }, e2e: false, freigaben_zeigen: false });
+          const r = opt.tauri(b, a);
+          return r instanceof Error || (r && r.ursache) ? Promise.reject(r) : Promise.resolve(r === undefined ? null : r);
+        },
+      },
+      event: { listen: () => Promise.resolve(() => {}) },
+    };
+  }
   for (const m of lies('chat.html').matchAll(/<script src="([^"]+)"><\/script>/g)) w.eval(lies(m[1]));
   return { w, d: w.document, st, g: (id) => w.document.getElementById(id), schliesse: () => w.close() };
 }
@@ -1254,4 +1275,160 @@ test('Runner-Auswahl im Chat-Fenster zeigt den Namen, nie eine Adresse (Quelltex
   const chat = lies('chat.js');
   assert.match(chat, /o\.textContent = r\.art === 'lokal' \? `\$\{r\.name\} \(lokal\)` : r\.name;/);
   assert.ok(!/adresse/i.test(chat), 'chat.js liest keine Adresse');
+});
+
+// --- Einstellungen im Chat-Fenster (Knopf, Cmd+,) -------------------------------------------------------------------------------------
+
+test('Einstellungen-Knopf: eigener Befehl ohne Argumente, nur im Chat-Fenster erlaubt, Knopf mit Titel und Beschriftung (Quelltext-Prüfung)', () => {
+  const html = lies('chat.html');
+  const knopf = /<button id="einstellungenKnopf"[^>]*>/.exec(html);
+  assert.ok(knopf, 'Knopf in chat.html');
+  assert.match(knopf[0], /title="[^"]*Einstellungen[^"]*"/);
+  assert.match(knopf[0], /aria-label="Einstellungen öffnen"/);
+  const chat = lies('chat.js');
+  assert.match(chat, /tauriInvoke\('einstellungen_oeffnen'\)/, 'der Befehl wird ohne Argumente aufgerufen');
+  const caps = fs.readFileSync(path.join(HIER, '..', 'app', 'capabilities', 'agent-chat.json'), 'utf8');
+  assert.match(caps, /"allow-einstellungen-oeffnen"/);
+  const haupt = fs.readFileSync(path.join(HIER, '..', 'app', 'capabilities', 'agent-haupt.json'), 'utf8');
+  assert.ok(!/einstellungen-oeffnen/.test(haupt), 'die Einstellungen selbst brauchen den Befehl nicht');
+});
+
+dom('Einstellungen-Knopf: ein Klick ruft einstellungen_oeffnen (ohne Argumente) auf; ein Fehler steht als Meldung da', async () => {
+  let fehler = null;
+  const { d, st, g, schliesse } = arbeitsplatz({ tauri: (b) => (b === 'einstellungen_oeffnen' && fehler ? fehler : undefined) });
+  try {
+    await bis(() => d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    assert.equal(g('einstellungenKnopf').hidden, false);
+    assert.equal(g('einstellungenKnopf').title.includes('Einstellungen'), true);
+    g('einstellungenKnopf').click();
+    await bis(() => st.tauri.some(([b]) => b === 'einstellungen_oeffnen'));
+    assert.deepEqual(Object.keys(st.tauri.find(([b]) => b === 'einstellungen_oeffnen')[1]), [], 'keine Argumente von der Seite');
+    assert.equal(g('einstellungenFehler').hidden, true);
+    fehler = { ursache: 'Fenster nicht zu öffnen.', abhilfe: 'Neu starten.' };
+    g('einstellungenKnopf').click();
+    await bis(() => !g('einstellungenFehler').hidden);
+    assert.match(g('einstellungenFehler').textContent, /Einstellungen lassen sich nicht öffnen: Fenster nicht zu öffnen\./);
+  } finally {
+    schliesse();
+  }
+});
+
+dom('Einstellungen: Cmd+, und Strg+, öffnen sie; Umschalt+Cmd+, und ein bloßes Komma nicht', async () => {
+  const { w, d, st, g, schliesse } = arbeitsplatz({ tauri: () => undefined });
+  try {
+    await bis(() => d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    const zahl = () => st.tauri.filter(([b]) => b === 'einstellungen_oeffnen').length;
+    taste(w, d.body, ',', { metaKey: true });
+    await bis(() => zahl() === 1);
+    taste(w, d.body, ',', { ctrlKey: true });
+    await bis(() => zahl() === 2);
+    taste(w, d.body, ',', { metaKey: true, shiftKey: true });
+    taste(w, d.body, ',');
+    taste(w, d.body, ',', { metaKey: true, altKey: true });
+    await new Promise((x) => setTimeout(x, 30));
+    assert.equal(zahl(), 2);
+  } finally {
+    schliesse();
+  }
+});
+
+dom('Einstellungen-Knopf: im Browser-Prüfstand ohne Anwendung (keine Brücke) ist er versteckt', async () => {
+  const { d, g, schliesse } = arbeitsplatz();
+  try {
+    await bis(() => d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    assert.equal(g('einstellungenKnopf').hidden, true);
+  } finally {
+    schliesse();
+  }
+});
+
+// --- Kontextanzeige --------------------------------------------------------------------------------------------------------------------
+
+// Gemeldete Anzeige vom 30.10.2026 (Sitzung „Hauptgespräch“): „100 % Kontext 9729,4k von 128k · 193038,2k ein · 2121,5k aus ≈ 0,00 €“. Das UsageDoc des Runners
+// ist die Lebenszeit-Summe je Modell: input 9,7 Mio., input + cacheRead 193,0 Mio., output 2,1 Mio.
+const MAX_USAGE = { models: { 'rhea/rhea': { input: 9729400, output: 2121500, cacheRead: 183308800, cacheWrite: 0, totalTokens: 195159700, cost: { total: 0 } } }, tools: {} };
+const antwortMit = (id, usage) => ({ id, kind: 'pi.message', model: [{ role: 'assistant', content: [{ type: 'text', text: `Antwort ${id}` }], usage, stopReason: 'stop', timestamp: 1000 + id }] });
+const frage = (id) => ({ id, kind: 'pi.message', model: [{ role: 'user', content: [{ type: 'text', text: `Frage ${id}` }], timestamp: 900 + id }] });
+const nutzung = (input, cacheRead, output) => ({ input, output, cacheRead, cacheWrite: 0, totalTokens: input + output + cacheRead, cost: { total: 0 } });
+
+test('Kontextanzeige (rein): die gemeldeten Zahlen sind kein Kontext; gezeigt wird nur ein Wert, der ins Fenster passt', () => {
+  const FP = { zahlK: (n) => (n >= 1000 ? `${(Math.round(n / 100) / 10).toString().replace('.', ',')}k` : String(n)) };
+  const w = { FyosPrototyp: FP };
+  new Function('window', 'globalThis', lies('echt.js'))(w, w);
+  // das UsageDoc liefert nur Summen: ctx bleibt unbekannt
+  const sicht = FP.usageSicht(MAX_USAGE);
+  assert.equal(sicht.ctx, null);
+  assert.equal(sicht.tokIn, 193038200);
+  assert.equal(sicht.tokOut, 2121500);
+  // unmöglich: 9,7 Mio. bei 128k Fenster -> „–“, nie „100 %“
+  const unmoeglich = FP.kontextAnzeige(9729400, 128000);
+  assert.equal(unmoeglich.bekannt, false);
+  assert.equal(unmoeglich.text, '–');
+  assert.match(unmoeglich.titel, /über dem Fenster/);
+  // plausibel
+  const ok = FP.kontextAnzeige(64000, 128000);
+  assert.deepEqual([ok.bekannt, ok.text, ok.prozent, ok.stufe], [true, '50 %', 50, 'ok']);
+  assert.equal(FP.kontextAnzeige(110000, 128000).stufe, 'warn');
+  assert.equal(FP.kontextAnzeige(125000, 128000).stufe, 'kritisch');
+  assert.equal(FP.kontextAnzeige(128000, 128000).text, '100 %', 'genau voll ist möglich');
+  // unbekannt oder unsinnig
+  for (const schlecht of [null, undefined, NaN, -5, '12']) assert.equal(FP.kontextAnzeige(schlecht, 128000).text, '–', String(schlecht));
+  // ohne Fenster: nur die Zahl
+  assert.equal(FP.kontextAnzeige(5000, null).text, '5k');
+});
+
+test('Kontext aus der letzten Antwort: totalTokens, sonst die Summe der Teile; Nullen (Abbruch) und Unsinn ergeben nichts', () => {
+  const w = { FyosPrototyp: {} };
+  new Function('window', 'globalThis', lies('runner-adapter.js'))(w, w);
+  const k = w.FyosPrototyp.kontextAusNutzung;
+  assert.equal(k({ input: 1, output: 2, cacheRead: 3, cacheWrite: 4, totalTokens: 100 }), 100);
+  assert.equal(k({ input: 1, output: 2, cacheRead: 3, cacheWrite: 4 }), 10);
+  for (const leer of [null, undefined, {}, { input: 0, output: 0, totalTokens: 0 }, 'x', { totalTokens: NaN }]) assert.equal(k(leer), null);
+});
+
+dom('Statuszeile: die gemeldete Sitzung (Summe 9,7 Mio. / 193 Mio.) zeigt „–“ statt „100 %“, wenn die letzte Antwort unmögliche Werte trägt; die Summen heißen „gesamt“', async () => {
+  const { d, g, schliesse } = arbeitsplatz({ ansicht: () => ({ entries: [frage(1), antwortMit(2, nutzung(9729400, 0, 100))], usage: MAX_USAGE }) });
+  try {
+    await bis(() => /gesamt/.test(g('tokens').textContent));
+    assert.equal(g('kontextText').textContent, '–');
+    assert.equal(g('kontext').dataset.bekannt, '0');
+    assert.ok(!/100 %/.test(d.body.textContent) && !/9729/.test(d.body.textContent), 'weder „100 %“ noch 9729,4k');
+    assert.match(g('tokens').textContent, /^gesamt 193 M ein · 2,1 M aus$/);
+    assert.match(g('tokens').title, /Summe der ganzen Sitzung/);
+    assert.match(g('kontext').title, /über dem Fenster/);
+  } finally {
+    schliesse();
+  }
+});
+
+dom('Statuszeile: dieselbe Sitzung mit plausibler letzter Antwort zeigt die Füllung dieser Antwort (nicht die Summe)', async () => {
+  const { g, schliesse } = arbeitsplatz({ ansicht: () => ({ entries: [frage(1), antwortMit(2, nutzung(40000, 100000, 500)), frage(3), antwortMit(4, nutzung(3000, 60000, 500))], usage: MAX_USAGE }) });
+  try {
+    await bis(() => g('kontext').dataset.bekannt === '1');
+    // 3000 + 60000 + 500 = 63,5k von 128k: die LETZTE Antwort, nicht die größte und nicht die Summe
+    assert.equal(g('kontextText').textContent, '50 %');
+    assert.equal(g('kontextTitel').textContent, 'Kontext 63,5k von 128k');
+    assert.equal(g('kontext').getAttribute('aria-valuenow'), '50');
+    assert.match(g('tokens').textContent, /gesamt 193 M ein/);
+  } finally {
+    schliesse();
+  }
+});
+
+dom('Statuszeile: ohne Antwort im Verlauf (nur die Summe) und nach einem Marker (leeren, verdichten) steht „–“', async () => {
+  const nur = arbeitsplatz({ ansicht: () => ({ entries: [frage(1)], usage: MAX_USAGE }) });
+  try {
+    await bis(() => /gesamt/.test(nur.g('tokens').textContent));
+    assert.equal(nur.g('kontextText').textContent, '–');
+    assert.equal(nur.g('kontext').dataset.bekannt, '0');
+  } finally {
+    nur.schliesse();
+  }
+  const marker = arbeitsplatz({ ansicht: () => ({ entries: [frage(1), antwortMit(2, nutzung(3000, 60000, 500)), { id: 3, kind: 'pi.reset', data: {} }], usage: MAX_USAGE }) });
+  try {
+    await bis(() => /gesamt/.test(marker.g('tokens').textContent));
+    assert.equal(marker.g('kontextText').textContent, '–', 'nach dem Marker ist die alte Füllung weg');
+  } finally {
+    marker.schliesse();
+  }
 });

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-einstellungen-oeffnen"
+description = "Enables the einstellungen_oeffnen command without any pre-configured scope."
+commands.allow = ["einstellungen_oeffnen"]
+
+[[permission]]
+identifier = "deny-einstellungen-oeffnen"
+description = "Denies the einstellungen_oeffnen command without any pre-configured scope."
+commands.deny = ["einstellungen_oeffnen"]

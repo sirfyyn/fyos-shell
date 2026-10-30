@@ -81,20 +81,18 @@
     $('senden').textContent = s.busy ? 'Einreihen' : 'Senden';
     $('modell').textContent = s.modell || '–';
     const m = $('kontext');
-    if (s.ctx != null && s.fenster) {
-      const an = Math.min(1, s.ctx / s.fenster);
-      const pr = Math.round(an * 100);
-      m.style.setProperty('--fuell', String(an));
-      m.setAttribute('aria-valuenow', String(pr));
-      m.dataset.stufe = pr >= 95 ? 'kritisch' : pr >= 85 ? 'warn' : 'ok';
-      $('kontextText').textContent = `${pr} %`;
-      $('kontextTitel').textContent = `Kontext ${zahl(s.ctx)} von ${zahl(s.fenster)}`;
-    } else if (s.ctx != null) {
-      m.style.setProperty('--fuell', '0');
-      $('kontextText').textContent = zahl(s.ctx);
-      $('kontextTitel').textContent = 'Kontext (Fenstergröße unbekannt)';
-    }
-    $('tokens').textContent = s.tokIn != null || s.tokOut != null ? `${zahl(s.tokIn || 0)} ein · ${zahl(s.tokOut || 0)} aus` : '';
+    // Nur ein plausibler Wert (bekannt, höchstens so groß wie das Fenster) wird gezeigt, sonst „–“ (FP.kontextAnzeige)
+    const k = FP.kontextAnzeige(s.ctx, s.fenster);
+    m.style.setProperty('--fuell', String(k.anteil));
+    m.setAttribute('aria-valuenow', String(k.prozent));
+    m.dataset.stufe = k.stufe;
+    m.dataset.bekannt = k.bekannt ? '1' : '0';
+    $('kontextText').textContent = k.text;
+    $('kontextTitel').textContent = k.bekannt ? k.titel : '';
+    m.title = k.titel;
+    // Summe der ganzen Sitzung (jeder Modellaufruf zählt seinen Prompt erneut, Cache-Lesen inklusive): nicht der Kontext
+    $('tokens').textContent = s.tokIn != null || s.tokOut != null ? `gesamt ${zahl(s.tokIn || 0)} ein · ${zahl(s.tokOut || 0)} aus` : '';
+    $('tokens').title = 'Summe der ganzen Sitzung: gesendete Token (mit Cache-Lesen) und erzeugte Token. Das ist nicht der aktuelle Kontext.';
     $('kosten').textContent = s.kosten != null ? `≈ ${s.kosten.toFixed(2).replace('.', ',')} €` : '';
     modus.zeichne(s.modus);
   }
@@ -452,6 +450,28 @@
   });
   ladeRunner();
 
+  // --- Einstellungen: dasselbe Fenster wie der Tray-Eintrag „Einstellungen …“ (Befehl ohne Argumente; Verbindungsdaten bleiben in Rust) ---
+  let einstellungenUhr = null;
+  function einstellungenFehler(text) {
+    const p = $('einstellungenFehler');
+    p.hidden = !text;
+    p.textContent = text || '';
+    if (einstellungenUhr) clearTimeout(einstellungenUhr);
+    if (text) einstellungenUhr = setTimeout(() => einstellungenFehler(''), 8000);
+  }
+  async function einstellungenOeffnen() {
+    if (!tauriInvoke) return;
+    try {
+      await tauriInvoke('einstellungen_oeffnen');
+      einstellungenFehler('');
+    } catch (f) {
+      const e = alsFehler(f);
+      einstellungenFehler(`Einstellungen lassen sich nicht öffnen: ${(e && e.message) || e}`);
+    }
+  }
+  $('einstellungenKnopf').addEventListener('click', einstellungenOeffnen);
+  $('einstellungenKnopf').hidden = !tauriInvoke;
+
   // --- Ordnerwahl ---
   let ordnerNutzbar = false;
   const ordnerAuswahl = FP.createOrdnerWahl(
@@ -663,6 +683,12 @@
     if (e.key === 'F2' && !mod && !e.altKey && !e.shiftKey && aktiv) {
       e.preventDefault();
       kopfBearbeiten();
+      return;
+    }
+    // Cmd+, (macOS) und Strg+, öffnen die Einstellungen
+    if (mod && !e.shiftKey && !e.altKey && e.key === ',') {
+      e.preventDefault();
+      einstellungenOeffnen();
       return;
     }
     if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {

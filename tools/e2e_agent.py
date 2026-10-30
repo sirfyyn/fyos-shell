@@ -12,6 +12,9 @@ Die Chat-Seite bedient sich im Prüfmodus selbst (ui/agent/e2e.js, nur mit FYOS_
       Arbeitsplatz: Sitzungsliste, Arbeitsordner im Kopf, Terminal-Ansicht (ANSI, Fortschrittszeile), Diff-Ansicht, Wechsel ohne Neuaufbau,
       laufende Sitzung markiert, neue Sitzung mit Arbeitsordner, neue Sitzung nur mit Namen (Enter im Namensfeld), Umbenennen im Kopf
       und in der Leiste (PATCH durch die Brücke, Esc, ohne Neuaufbau, Entwurf bleibt), Fehler des Runners klar, Archivieren und Wiederherstellen
+      Kontextanzeige (kontext-plausibel: Füllung der letzten Antwort, nicht die Lebenszeitsumme) und Einstellungen-Knopf (einstellungen-knopf:
+      der Befehl läuft ohne Fehler; A2b: danach gibt es ein zweites sichtbares Fenster, die Einstellungen; braucht die Bedienungshilfen-Erlaubnis
+      für osascript, sonst "nicht prüfbar")
   A3 der Beobachter fragt Freigaben und Läufe ab (Tray), auch ohne dass die Seite etwas tut
   A4  Token nirgends in den Einstellungen (nur der Verweis), keine Anfrage ohne Token
   A5  falsches Token: die Anwendung bleibt am Leben und versucht es wieder (Katalogmeldung im Banner, Wiederholen)
@@ -56,7 +59,7 @@ ERWARTET_B = ["runner-liste", "lokaler-runner-laeuft", "lokal-dialog-statt-baum"
               "zuletzt-benutzt", "erlauben-nicht-fuer-die-seite", "wechsel-entfernt", "baum-wurzeln", "baum-aufklappen", "baum-auswahl",
               "baum-sitzung-mit-ordner", "ausserhalb-403-klar", "nicht-gefunden-404-klar", "zuletzt-je-runner", "ende"]
 TOKEN = "-".join(["e2e", "probe"] * 4)  # erfundener Testwert
-ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz", "werkzeugkarte", "freigabe-karte",
+ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz", "kontext-plausibel", "einstellungen-knopf", "werkzeugkarte", "freigabe-karte",
             "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "freigaben-zahl", "freigaben-live-strom", "freigaben-banner", "freigaben-banner-oeffnet-panel",
             "freigaben-panel-alle-sitzungen", "freigaben-zerstoererisch-marke", "freigaben-zerstoererisch-zweite-bestaetigung", "freigaben-erlauben-im-panel", "freigaben-notiz-beim-runner",
             "freigaben-spaeter", "freigaben-sprung", "freigaben-sprung-ohne-neuaufbau", "freigaben-verlauf-zieht-nach", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt",
@@ -105,6 +108,17 @@ def app_starten(app, daten, tmp, port, token_im_tresor):
     return subprocess.Popen([str(app / "Contents" / "MacOS" / "fyos-shell")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def sichtbare_fenster(prozess="fyos-shell"):
+    """Titel der sichtbaren Fenster des Prüfbaus (System Events); None, wenn macOS das Lesen nicht erlaubt."""
+    try:
+        r = subprocess.run(["osascript", "-e", f'tell application "System Events" to get name of every window of process "{prozess}"'], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return [n for n in r.stdout.strip().split(", ") if n]
+
+
 def beenden(p):
     p.send_signal(signal.SIGTERM)
     try:
@@ -144,6 +158,14 @@ def pruefe(app, arbeit):
                 r = ergebnisse.get(schritt)
                 e.melde("A2", f"Schritt {schritt}", bool(r and r["ok"]), json.dumps(r) if r else "kein Ergebnis (Zeitüberschreitung oder Seite nicht gestartet)")
             e.melde("A2", "der Prüflauf ist bis zum Ende gekommen", ok and "ende" in ergebnisse)
+            print("A2b Einstellungsfenster nach dem Klick auf den Knopf")
+            fenster = sichtbare_fenster()
+            if fenster is not None:
+                fenster = [n for n in fenster if n == NAME]  # nur die Fenster des Prüfbaus (eine laufende installierte App heißt anders und wird nicht gezählt)
+            if not fenster:
+                print("  [nicht prüfbar] A2b osascript liest keine Fenster des Prüfbaus (Bedienungshilfen für das Terminal erlauben; der Prüfbau muss dazu sichtbar sein); der Befehl selbst ist durch den Schritt einstellungen-knopf belegt")
+            else:
+                e.melde("A2b", "es gibt zwei sichtbare Fenster: Chat und Einstellungen", len(fenster) >= 2, json.dumps(fenster))
             print("A3 Beobachter")
             e.melde("A3", "der Beobachter fragt Freigaben und Läufe ab", "/api/freigaben" in pfade and "/api/laeufe" in pfade)
             print("A4 Token")

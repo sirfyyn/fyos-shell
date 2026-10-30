@@ -120,18 +120,18 @@
     if (!u || typeof u !== 'object') return {};
     if (u.models && typeof u.models === 'object') {
       // Runner (UsageDoc, usage_changed): { models: { 'rhea/rhea': { input, output, cacheRead, cacheWrite, totalTokens, cost: { total } } } }
-      // Kontext: der größte letzte Prompt, geschätzt als max(input, cacheWrite); die genaue Füllung meldet der Runner (noch) nicht.
-      let ctx = 0;
+      // Das UsageDoc des Runners ist die SUMME über die ganze Lebenszeit der Sitzung (pro Modell, jeder Modellaufruf zählt seinen ganzen Prompt
+      // erneut). Daraus lässt sich die aktuelle Kontextfüllung nicht ablesen: `ctx` bleibt hier null. Die Füllung kommt aus der `usage` der
+      // LETZTEN Antwort im Verlauf (runner-adapter.js, onKontext). Früher stand hier max(input, cacheWrite) der Summe: Millionen Token „Kontext“.
       let tokIn = 0;
       let tokOut = 0;
       let kosten = 0;
       for (const m of Object.values(u.models)) {
-        ctx = Math.max(ctx, m.input || 0, m.cacheWrite || 0);
         tokIn += (m.input || 0) + (m.cacheRead || 0);
         tokOut += m.output || 0;
         kosten += (m.cost && m.cost.total) || 0;
       }
-      return { ctx, fenster: null, tokIn, tokOut, kosten };
+      return { ctx: null, fenster: null, tokIn, tokOut, kosten };
     }
     const t = u.totals || u.total || u;
     const c = u.context || {};
@@ -142,6 +142,25 @@
       tokOut: zahl(t.output, t.outputTokens, u.output),
       kosten: zahl(t.cost && t.cost.total, typeof t.cost === 'number' ? t.cost : null, u.cost && u.cost.total, typeof u.cost === 'number' ? u.cost : null),
     };
+  }
+  /**
+   * Was die Statuszeile zur Kontextfüllung zeigt. Nur ein plausibler Wert wird gezeigt: bekannt, nicht negativ und höchstens so groß wie das
+   * Fenster (ein Prompt passt nie über das Fenster hinaus). Alles andere ist „–“ mit Erklärung im Titel, nie eine erfundene Zahl.
+   * → { bekannt, text, titel, anteil (0..1), prozent, stufe: 'ok'|'warn'|'kritisch' }
+   */
+  function kontextAnzeige(ctx, fenster) {
+    const zk = (n) => (FP.zahlK ? FP.zahlK(Math.round(n)) : String(Math.round(n)));
+    const gut = (x) => typeof x === 'number' && Number.isFinite(x) && x >= 0;
+    if (!gut(ctx)) return { bekannt: false, text: '–', titel: 'Kontext noch unbekannt (nach der nächsten Antwort des Agenten)', anteil: 0, prozent: 0, stufe: 'ok' };
+    if (gut(fenster) && fenster > 0) {
+      if (ctx > fenster) {
+        return { bekannt: false, text: '–', titel: `Kontext nicht anzeigbar: gemeldeter Wert ${zk(ctx)} liegt über dem Fenster ${zk(fenster)}`, anteil: 0, prozent: 0, stufe: 'ok' };
+      }
+      const anteil = ctx / fenster;
+      const prozent = Math.round(anteil * 100);
+      return { bekannt: true, text: `${prozent} %`, titel: `Kontext ${zk(ctx)} von ${zk(fenster)}`, anteil, prozent, stufe: prozent >= 95 ? 'kritisch' : prozent >= 85 ? 'warn' : 'ok' };
+    }
+    return { bekannt: true, text: zk(ctx), titel: 'Kontext (Fenstergröße unbekannt)', anteil: 0, prozent: 0, stufe: 'ok' };
   }
   function modellName(agent) {
     const m = agent && agent.model;
@@ -202,6 +221,11 @@
       adapter = FP.createRunnerAdapter(view, {
         modell: S.modell,
         onEntscheidung: (id, wert, notiz) => entscheide(id, wert, notiz),
+        // Kontextfüllung = Größe des letzten Prompts samt Antwort (usage der letzten Antwort); null nach leeren/verdichten bis zur nächsten Antwort
+        onKontext: (tokens) => {
+          S.ctx = tokens;
+          status();
+        },
         onUsage: (u) => {
           const s = usageSicht(u);
           if (s.ctx != null) S.ctx = s.ctx;
@@ -263,6 +287,11 @@
     async function oeffne(id) {
       const mein = ++lauf;
       S.id = id;
+      // Zahlen der vorigen Sitzung nicht stehen lassen
+      S.ctx = null;
+      S.tokIn = null;
+      S.tokOut = null;
+      S.kosten = null;
       view.clear();
       eingereiht.length = 0;
       neuerAdapter();
@@ -451,5 +480,5 @@
     return { start, ende, aktiviere, ruhen, oeffne, sende, stopp, view, S, entscheide, stilleTakt, beiStrom, get adapter() { return adapter; }, warteAuf: () => kette };
   }
 
-  Object.assign(FP, { tauriTransport, httpTransport, createEchtChat, usageSicht, modellName });
+  Object.assign(FP, { tauriTransport, httpTransport, createEchtChat, usageSicht, kontextAnzeige, modellName });
 })(typeof globalThis !== 'undefined' ? globalThis : window);

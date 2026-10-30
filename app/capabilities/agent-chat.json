@@ -10,6 +10,7 @@
     "allow-strom-oeffnen",
     "allow-strom-schliessen",
     "allow-ziel-info",
+    "allow-einstellungen-oeffnen",
     "allow-ruhe-setzen",
     "allow-zustand-melden",
     "allow-bericht-speichern",

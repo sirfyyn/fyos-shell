@@ -49,7 +49,7 @@ pub fn bauen(app: &AppHandle) -> tauri::Result<()> {
             "oeffnen" => fenster::nach_vorn(app),
             "freigaben" => super::fenster::freigaben_zeigen(app),
             "einstellungen" => {
-                let _ = fenster::haupt(app, true);
+                let _ = super::fenster::einstellungen_zeigen(app);
             }
             "update" => {
                 let _ = fenster::haupt(app, true);
