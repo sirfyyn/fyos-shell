@@ -589,23 +589,38 @@ dom('Seitenleiste: ein Fehler beim Archivieren steht an der Zeile', async () => 
 // Ganze Seite (chat.html mit allen Skripten) gegen einen kleinen Runner aus dem Speicher: so, wie die Seite im Prüfstand läuft
 function arbeitsplatz(opt) {
   opt = opt || {};
-  const st = { gespraeche: [{ id: 1, art: 'root', titel: 'Haupt', erstellt: 1000, arbeitsbereich: 'standard', archiviert: false, agent: { cwd: '/probe/standard' } }, { id: 2, art: 'mensch', titel: 'Zweite', erstellt: 900, arbeitsbereich: 'standard', archiviert: false, agent: { cwd: '/probe/standard' } }], naechste: 3, aufrufe: [], patchFehler: null };
+  const st = { gespraeche: [{ id: 1, art: 'root', titel: 'Haupt', erstellt: 1000, arbeitsbereich: 'standard', archiviert: false, agent: { cwd: '/probe/standard' } }, { id: 2, art: 'mensch', titel: 'Zweite', erstellt: 900, arbeitsbereich: 'standard', archiviert: false, agent: { cwd: '/probe/standard' } }, ...(opt.archivierte || [])], naechste: 3, aufrufe: [], patchFehler: null };
   const antwort = (code, obj) => Promise.resolve({ ok: code < 400, status: code, json: async () => obj });
   const fetchStub = (url, o) => {
     const methode = (o && o.method) || 'GET';
     const k = o && o.body ? JSON.parse(o.body) : undefined;
     st.aufrufe.push({ methode, url, koerper: k });
     if (/\/ereignisse$|\/api\/strom$/.test(url)) return new Promise(() => {}); // Ströme bleiben offen und still
-    if (methode === 'GET' && url === '/api/gespraeche') return antwort(200, { ok: true, gespraeche: st.gespraeche.filter((g) => !g.archiviert) });
+    if (methode === 'GET' && /^\/api\/gespraeche(\?|$)/.test(url)) {
+      // opt.archivWeg: der Runner kennt ?archiv=1|alle (jedes Gespräch trägt archiviert); sonst wie ein älterer Runner: Parameter ignoriert, kein Feld archiviert
+      const modus = new URL(url, 'http://x').searchParams.get('archiv');
+      if (!opt.archivWeg) return antwort(200, { ok: true, gespraeche: st.gespraeche.filter((g) => !g.archiviert).map(({ archiviert, ...rest }) => rest) });
+      if (st.listeFehler && modus === '1') return antwort(500, { ok: false, fehler: 'kaputt' });
+      return antwort(200, { ok: true, gespraeche: st.gespraeche.filter((g) => (modus === 'alle' ? true : modus === '1' ? g.archiviert : !g.archiviert)) });
+    }
+    // Wege der neueren Runner (Suche, Datei lesen, Dateiliste): nur mit opt.runner; sonst antwortet der Speicher-Runner wie ein älterer mit „Unbekannte Route“
+    const weg = methode === 'GET' && opt.runner ? /^\/api\/(suche|datei|ordner)\?/.exec(url) : null;
+    if (weg && opt.runner[weg[1]]) {
+      const r = opt.runner[weg[1]](new URL(url, 'http://x').searchParams, url, st);
+      if (r && typeof r.then === 'function') return r.then((x) => antwort(x[0], x[1]));
+      return antwort(r[0], r[1]);
+    }
+    if (methode === 'GET' && /^\/api\/(suche|datei)\?/.test(url)) return antwort(404, { ok: false, fehler: `Unbekannte Route: GET ${url.split('?')[0]}` });
     if (methode === 'GET' && url === '/api/konfiguration') return antwort(200, { ok: true, arbeitsbereiche: { standard: { titel: 'Standard', pfad: '/probe/standard' } }, modelle: [] });
     if (methode === 'GET' && url === '/api/health') return antwort(200, { ok: true, agent: 'probe' });
     if (methode === 'GET' && /^\/api\/gespraech\/\d+\/ansicht/.test(url)) {
       const g = st.gespraeche.find((x) => '/api/gespraech/' + x.id + '/ansicht?voll=1' === url);
       const roh = opt.ansicht ? opt.ansicht(g ? g.id : null) : {};
-      return antwort(200, { entries: roh.entries || [], meta: g ? { titel: g.titel } : null, usage: roh.usage || null });
+      return antwort(200, { entries: roh.entries || [], meta: g ? { titel: g.titel, ...(roh.modell ? { modell: roh.modell } : {}) } : null, usage: roh.usage || null, ...(roh.agent ? { agent: roh.agent } : {}) });
     }
     if (methode === 'GET' && /^\/api\/gespraech\/\d+$/.test(url)) return antwort(200, { ok: true, agent: { cwd: '/probe/standard' } });
     if (methode === 'GET' && url.startsWith('/api/ordner')) return antwort(404, { fehler: 'unbekannt' });
+    if (methode === 'GET' && url === '/api/modelle') return antwort(200, { ok: true, modelle: opt.modelle || [] });
     if (methode === 'GET') return antwort(200, { ok: true, freigaben: [], modelle: [] });
     if (methode === 'POST' && url === '/api/gespraeche') {
       const g = { id: st.naechste++, art: 'mensch', titel: String((k && k.titel) || '').slice(0, 120) || 'Neuer Agent', erstellt: Date.now(), arbeitsbereich: 'standard', archiviert: false, agent: { cwd: '/probe/standard' } };
@@ -635,7 +650,12 @@ function arbeitsplatz(opt) {
         invoke: (b, a) => {
           st.tauri.push([b, a]);
           if (b === 'runner_anfrage') {
-            return fetchStub(a.pfad, { method: a.methode, body: a.koerper == null ? undefined : JSON.stringify(a.koerper) }).then((r) => (r.ok ? r.json() : Promise.reject({ ursache: `HTTP ${r.status}` })));
+            // Fehler wie aus Rust: Katalogmeldung; der Text des Runners (Feld fehler) steht in details als „HTTP <Status>: <Text>“ (fehler_aus_status in bruecke.rs)
+            return fetchStub(a.pfad, { method: a.methode, body: a.koerper == null ? undefined : JSON.stringify(a.koerper) }).then(async (r) => {
+              if (r.ok) return r.json();
+              const j = await r.json().catch(() => ({}));
+              return Promise.reject({ code: 'RUNNER_FEHLER', ursache: `Der Runner antwortet mit einem Fehler (Status ${r.status}).`, abhilfe: 'Noch einmal versuchen.', details: `HTTP ${r.status}${j && j.fehler ? `: ${j.fehler}` : ''}` });
+            });
           }
           if (b === 'strom_oeffnen') return Promise.resolve();
           if (b === 'runner_liste') return Promise.resolve({ runner: [] });
@@ -1733,6 +1753,8 @@ dom('Seite: der Knopf zählt die geänderten Dateien aus dem Verlauf, das Panel 
     d.querySelector('.ae-datei[data-pfad="src/x.js"] .ae-auf').click();
     assert.equal(d.querySelectorAll('.ae-datei[data-pfad="src/x.js"] tr.add').length, 1, 'nur „drei“ ist neu');
     d.querySelector('.ae-datei[data-pfad="src/x.js"] .ae-name').click();
+    // der Runner dieses Speicher-Runners kennt /api/datei nicht (älterer Runner): die Vorschau fällt auf den Verlauf zurück
+    await bis(() => d.querySelectorAll('.ae-code .code').length === 3);
     assert.deepEqual([...d.querySelectorAll('.ae-code .code')].map((x) => x.textContent), ['eins', 'zwei', 'drei'], 'Stand aus dem Lesen plus Bearbeiten');
     d.querySelector('.ae-zurueck').click();
     // live: ein weiteres Werkzeug der offenen Sitzung zu Ende
@@ -1789,8 +1811,740 @@ test('Änderungen: eingebunden in chat.js, neutral formuliert, keine eigenen Weg
   assert.ok(html.includes('src="aenderungen.js"') && html.includes('href="aenderungen.css"'));
   assert.ok(html.indexOf('src="chat-renderer.js"') < html.indexOf('src="aenderungen.js"') && html.indexOf('src="aenderungen.js"') < html.indexOf('src="chat.js"'));
   const eigen = lies('aenderungen.js');
-  assert.ok(!/transport|fetch|XMLHttp|\/api\//.test(eigen.replace(/\/\*[\s\S]*?\*\//g, '')), 'das Panel spricht nie selbst mit dem Runner: alles kommt aus dem Verlauf der Sitzung');
+  assert.ok(!/transport|fetch|XMLHttp|\/api\//.test(eigen.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')), 'das Panel spricht nie selbst mit dem Runner: Datei und Dateiliste kommen über opts.datei und opts.ordner (chat.js)');
   assert.ok(!/innerHTML\s*=\s*(?!icon)/.test(eigen.replace(/e\.innerHTML = icon;[^\n]*/, '')), 'innerHTML nur für die festen Symbole');
   const verboten = new RegExp(['gin', 'ny|perse', 'phone|ti', 'tan|rh', 'ea|sirf', 'yyn|/Users/'].join(''), 'i');
   assert.ok(!verboten.test(eigen + lies('aenderungen.css') + html), 'kein Agenten-, Rechner- oder Pfadname im Quelltext');
+});
+
+// --- Archiv vom Runner, Suche, Datei-Vorschau und Dateibaum über den Runner, Kontextfenster (Abschnitt 9h) -------------------------------------------------
+
+function wegeLogik() {
+  const w = { FyosPrototyp: {} };
+  new Function('window', 'globalThis', lies('runner-wege.js'))(w, w);
+  return w.FyosPrototyp.wege;
+}
+
+test('Wege: Werte werden URL-kodiert, auch Punkte (die Brücke weist ".." in jedem Weg ab); Archivliste nur, wenn jeder Eintrag archiviert: true trägt', () => {
+  const W = wegeLogik();
+  assert.equal(W.kodiere('a b/c.d..e'), 'a%20b%2Fc%2Ed%2E%2Ee');
+  assert.equal(W.kodiere('../etc'), '%2E%2E%2Fetc');
+  assert.deepEqual(plain(W.archivListePruefen({ gespraeche: [{ id: 1, archiviert: true }] })), { unterstuetzt: true, liste: [{ id: 1, archiviert: true }] });
+  assert.equal(W.archivListePruefen({ gespraeche: [] }).unterstuetzt, true, 'leer ist gültig (neuerer Runner ohne Archivierte)');
+  assert.equal(W.archivListePruefen({ gespraeche: [{ id: 1 }, { id: 2 }] }).unterstuetzt, false, 'älterer Runner: Parameter ignoriert, kein Feld archiviert');
+  assert.equal(W.archivListePruefen({ gespraeche: [{ id: 1, archiviert: false }] }).unterstuetzt, false);
+  assert.equal(W.archivListePruefen({}).unterstuetzt, false);
+});
+
+test('Wege: Fehler werden zugeordnet (HTTP-Transport und Rust-Brücke), ein Weg, den der Runner nicht kennt, ist weg_fehlt', () => {
+  const W = wegeLogik();
+  const http = (status, fehler) => Object.assign(new Error(fehler || `HTTP ${status}`), { status, fehler: fehler || '' });
+  const rust = (status, text) => Object.assign(new Error('Der Runner antwortet mit einem Fehler.'), { code: 'RUNNER_FEHLER', meldung: { code: 'RUNNER_FEHLER', details: `HTTP ${status}${text ? `: ${text}` : ''}` } });
+  const art = (f) => W.klassifiziere(f).art;
+  assert.equal(art(http(403, 'gesperrt')), 'gesperrt');
+  assert.equal(art(rust(403, 'gesperrt')), 'gesperrt');
+  assert.equal(art(rust(403, 'verwehrt')), 'verwehrt');
+  assert.equal(art(rust(403, 'ausserhalb')), 'ausserhalb');
+  assert.equal(art(Object.assign(new Error('x'), { code: 'ORDNER_AUSSERHALB' })), 'ausserhalb');
+  assert.equal(art(rust(404, 'nicht_gefunden')), 'nicht_gefunden');
+  assert.equal(art(rust(404, 'gespraech_nicht_gefunden')), 'gespraech');
+  assert.equal(art(rust(404, 'Unbekannte Route: GET /api/suche')), 'weg_fehlt');
+  assert.equal(art(rust(404, 'Nicht gefunden')), 'weg_fehlt');
+  assert.equal(art(http(404)), 'weg_fehlt', 'HTTP-Transport ohne Text');
+  assert.equal(art(rust(429, 'Es läuft schon eine Suche')), 'zu_viele');
+  assert.equal(art(rust(400, 'q muss mindestens 2 Zeichen haben')), 'ungueltig');
+  assert.equal(art(rust(413, 'zu_gross')), 'zu_gross');
+  assert.equal(art(Object.assign(new Error('x'), { code: 'RUNNER_NICHT_ERREICHBAR' })), 'netz');
+  assert.equal(art(new TypeError('Failed to fetch')), 'netz');
+  assert.equal(art(Object.assign(new Error('x'), { code: 'TOKEN_ABGELEHNT' })), 'zugang');
+  assert.equal(art(rust(500, 'kaputt')), 'andere');
+  assert.ok(!/Hostname|\/Users\//.test(W.klassifiziere(rust(403, 'gesperrt')).message), 'die Meldung nennt keine Namen');
+});
+
+test('Wege: Markierungen werden bereinigt (ganze Zahlen, im Ausschnitt, aufsteigend, ohne Überlappung, höchstens 10), Treffer ohne Id fallen weg', () => {
+  const W = wegeLogik();
+  const m = W.markierungenPruefen('abcdefghij', [{ start: 6, laenge: 2 }, { start: 0, laenge: 3 }, { start: 2, laenge: 2 }, { start: 99, laenge: 1 }, { start: -1, laenge: 2 }, { start: 8, laenge: 99 }, { start: 'x', laenge: 1 }, null], 0, 0);
+  assert.deepEqual(plain(m), [{ start: 0, laenge: 3 }, { start: 6, laenge: 2 }, { start: 8, laenge: 2 }]);
+  assert.deepEqual(plain(W.markierungenPruefen('abc', undefined, 1, 2)), [{ start: 1, laenge: 2 }], 'ohne markierungen gilt der erste Treffer');
+  assert.deepEqual(plain(W.markierungenPruefen('abc', [], 0, 0)), []);
+  assert.equal(W.trefferBereinigen({ titel: 'x' }), null);
+  const t = W.trefferBereinigen({ id: 4, titel: '  ', ausschnitt: 'hallo', markierungen: [{ start: 0, laenge: 5 }], zahl: -3, archiviert: 'ja', quelle: 'sonstwas' });
+  assert.deepEqual(plain({ ...t }), { id: 4, titel: 'Ohne Titel', archiviert: false, aktualisiert: 0, quelle: 'verlauf', ausschnitt: 'hallo', markierungen: [{ start: 0, laenge: 5 }], zahl: 0 });
+});
+
+test('Wege: Fenstergröße aus der Modellliste (Id, Anbieter/Id, Name, Objekt) – ohne Eintrag null', () => {
+  const W = wegeLogik();
+  const liste = [{ id: 'm1', provider: 'a', name: 'Modell Eins', contextWindow: 262144 }, { id: 'm1', provider: 'b', name: 'Anderes', contextWindow: 65536 }, { id: 'x', provider: 'a', name: 'X' }];
+  assert.equal(W.fensterAusModellen(liste, 'm1'), 262144);
+  assert.equal(W.fensterAusModellen(liste, 'b/m1'), 65536);
+  assert.equal(W.fensterAusModellen(liste, 'Modell Eins'), 262144);
+  assert.equal(W.fensterAusModellen(liste, { provider: 'b', modelId: 'm1' }), 65536);
+  assert.equal(W.fensterAusModellen(liste, { provider: 'a', id: 'm1' }), 262144);
+  assert.equal(W.fensterAusModellen(liste, 'x'), null, 'ohne contextWindow');
+  assert.equal(W.fensterAusModellen(liste, 'unbekannt'), null);
+  assert.equal(W.fensterAusModellen(null, 'm1'), null);
+});
+
+// Suchfeld und Trefferliste (suche.js) mit einem Runner aus dem Speicher
+const SUCHE_HTML = '<!doctype html><body><div id="k"><input id="f" type="search"><p id="m" role="alert" hidden></p></div><nav id="n"><div id="e" hidden></div><div id="liste">Sitzungen</div></nav><textarea id="eingabe"></textarea></body>';
+const treffer = (id, extra) => ({ id, titel: `Sitzung ${id}`, archiviert: false, aktualisiert: Date.now() - 60000, quelle: 'verlauf', ausschnitt: 'ein Text mit Fehler darin', start: 11, laenge: 6, markierungen: [{ start: 11, laenge: 6 }], zahl: 2, ...extra });
+
+function sucheMit(wegeExtra, opts) {
+  const w = fenster(['sitzungen.js', 'suche.js'], SUCHE_HTML);
+  const d = w.document;
+  const g = (id) => d.getElementById(id);
+  const z = { aufrufe: [], gewaehlt: [], esc: 0 };
+  const wege = { suche: async (q, o) => { z.aufrufe.push([q, o]); return { treffer: [treffer(1)], abgeschnitten: false }; }, ...wegeExtra };
+  const s = w.FyosPrototyp.createSuche({ kasten: g('k'), feld: g('f'), meldung: g('m'), ergebnis: g('e'), behaelter: g('n') }, { wege, beiWahl: (t) => z.gewaehlt.push(t), beiEsc: () => z.esc++, ...opts });
+  const tippe2 = (wert) => {
+    g('f').value = wert;
+    g('f').dispatchEvent(new w.Event('input', { bubbles: true }));
+  };
+  return { w, d, g, s, z, tippe: tippe2 };
+}
+
+dom('Suche: erst nach 250 ms Pause, nur die letzte Eingabe wird gesucht, mindestens 2 Zeichen', async () => {
+  const f = sucheMit();
+  f.tippe('f');
+  await warte(320);
+  assert.equal(f.z.aufrufe.length, 0, 'ein Zeichen: keine Anfrage');
+  assert.match(f.g('e').textContent, /Mindestens 2 Zeichen/);
+  assert.equal(f.g('n').classList.contains('suche-aktiv'), true, 'die Trefferliste ersetzt die Sitzungsliste');
+  f.tippe('fe');
+  await warte(120);
+  f.tippe('feh');
+  await warte(120);
+  f.tippe('fehl');
+  assert.equal(f.z.aufrufe.length, 0, 'während des Tippens keine Anfrage');
+  await warte(150);
+  assert.equal(f.z.aufrufe.length, 0, 'noch nicht 250 ms nach der letzten Eingabe');
+  await bis(() => f.z.aufrufe.length === 1);
+  assert.deepEqual(plain(f.z.aufrufe[0]), ['fehl', { limit: 20, archiv: 'alle' }]);
+  await warte(320);
+  assert.equal(f.z.aufrufe.length, 1, 'nicht mehr als eine Anfrage');
+  // Leerzeichen am Rand zählen nicht
+  f.tippe('  a  ');
+  await warte(320);
+  assert.equal(f.z.aufrufe.length, 1);
+});
+
+dom('Suche: Treffer als Text – Titel, Ausschnitt mit Hervorhebung, Archiv-Marke, Zeit, Zahl; Angriffstext wird nie zu HTML', async () => {
+  const angriff = '<img src=x onerror=alert(1)> Fehler <b>fett</b> & <script>x()</script>';
+  const f = sucheMit({
+    suche: async () => ({
+      treffer: [
+        treffer(1, { titel: '<b>Titel</b><img src=x onerror=alert(2)>', ausschnitt: angriff, markierungen: [{ start: angriff.indexOf('Fehler'), laenge: 6 }, { start: angriff.indexOf('fett'), laenge: 4 }], zahl: 3 }),
+        treffer(2, { archiviert: true, quelle: 'titel', titel: 'Fehler im Titel', ausschnitt: 'Fehler im Titel', markierungen: [{ start: 0, laenge: 6 }], zahl: 1 }),
+        treffer(3, { zahl: 1 }),
+      ],
+      abgeschnitten: true,
+    }),
+  });
+  f.tippe('fehler');
+  await bis(() => f.d.querySelectorAll('.suche-treffer').length === 3);
+  assert.equal(f.d.querySelectorAll('#e img, #e b, #e script').length, 0, 'nichts davon wurde ein Element');
+  const eins = f.d.querySelector('.suche-treffer[data-id="1"]');
+  assert.equal(eins.querySelector('.suche-titel').textContent, '<b>Titel</b><img src=x onerror=alert(2)>');
+  assert.equal(eins.querySelector('.suche-ausschnitt').textContent, angriff, 'der Ausschnitt ist unverändert Text');
+  assert.deepEqual([...eins.querySelectorAll('mark')].map((m) => m.textContent), ['Fehler', 'fett'], 'genau die Offsets sind hervorgehoben');
+  assert.match(eins.querySelector('.suche-meta').textContent, /vor 1 Min\. · 3 Fundstellen/);
+  const zwei = f.d.querySelector('.suche-treffer[data-id="2"]');
+  assert.equal(zwei.querySelector('.suche-archiv').textContent, 'archiviert');
+  assert.equal(zwei.querySelector('.suche-titel mark').textContent, 'Fehler', 'Treffer im Titel: der Titel selbst ist hervorgehoben');
+  assert.equal(zwei.querySelector('.suche-ausschnitt'), null);
+  assert.match(zwei.querySelector('.suche-meta').textContent, /1 Fundstelle$/);
+  assert.equal(f.d.querySelector('.suche-treffer[data-id="3"] .suche-archiv'), null);
+  assert.match(f.g('e').textContent, /Die Suche war begrenzt/);
+  // Klick wählt, Zeile bekommt aria-current
+  zwei.click();
+  assert.equal(f.z.gewaehlt.length, 1);
+  assert.equal(f.z.gewaehlt[0].id, 2);
+  assert.equal(zwei.getAttribute('aria-current'), 'true');
+});
+
+dom('Suche: Antworten veralteter Eingaben werden verworfen (nur die letzte zählt), die alte Liste bleibt bis zur neuen stehen', async () => {
+  const offen = [];
+  const f = sucheMit({ suche: (q) => new Promise((ok) => offen.push({ q, ok })) }, { verzoegerung: 10 });
+  f.tippe('alt');
+  await bis(() => offen.length === 1);
+  f.tippe('neu');
+  await bis(() => offen.length === 2);
+  // die neuere Antwort kommt zuerst, die ältere danach: sie darf nichts überschreiben
+  offen[1].ok({ treffer: [treffer(2, { titel: 'neuer Treffer' })], abgeschnitten: false });
+  await bis(() => f.d.querySelector('.suche-treffer'));
+  offen[0].ok({ treffer: [treffer(1, { titel: 'alter Treffer' })], abgeschnitten: false });
+  await warte(30);
+  assert.deepEqual([...f.d.querySelectorAll('.suche-titel')].map((t) => t.textContent), ['neuer Treffer']);
+  // Tippen während einer Anfrage entwertet sie, auch wenn danach nichts mehr abgeschickt wird (Feld geleert)
+  f.tippe('dritte');
+  await bis(() => offen.length === 3);
+  f.tippe('');
+  offen[2].ok({ treffer: [treffer(3)], abgeschnitten: false });
+  await warte(30);
+  assert.equal(f.d.querySelector('.suche-treffer'), null);
+  assert.equal(f.g('e').hidden, true);
+  assert.equal(f.g('n').classList.contains('suche-aktiv'), false, 'die Sitzungsliste ist zurück');
+});
+
+dom('Suche: Fehler stehen als kurze Meldung unter dem Feld, es gibt keine Wiederholung von selbst; 404 blendet das Feld aus', async () => {
+  const fehler = (art, message) => async () => { throw Object.assign(new Error(message), { art }); };
+  let art = 'zu_viele';
+  const f = sucheMit({ suche: async (q) => { f.z.aufrufe.push([q]); throw Object.assign(new Error(`Fehler ${art}`), { art }); } }, { verzoegerung: 10 });
+  f.tippe('abc');
+  await bis(() => !f.g('m').hidden);
+  assert.match(f.g('m').textContent, /zu viele Suchen/);
+  assert.equal(f.g('m').getAttribute('role'), 'alert');
+  await warte(250);
+  assert.equal(f.z.aufrufe.length, 1, 'keine Dauerschleife');
+  // 400 und Netz
+  art = 'ungueltig';
+  f.tippe('abcd');
+  await bis(() => /lässt sich nicht suchen/.test(f.g('m').textContent));
+  art = 'netz';
+  f.tippe('abcde');
+  await bis(() => /nicht erreichbar/.test(f.g('m').textContent));
+  assert.equal(f.d.querySelector('.suche-treffer'), null);
+  // eine neue Eingabe räumt die Meldung weg
+  f.tippe('');
+  assert.equal(f.g('m').hidden, true);
+  // älterer Runner: 404 → das Feld verschwindet und das Kürzel greift nicht mehr
+  art = 'weg_fehlt';
+  f.tippe('abcdef');
+  await bis(() => f.g('k').hidden);
+  assert.equal(f.g('f').value, '');
+  assert.equal(f.s.verfuegbar, false);
+  assert.equal(f.s.fokussiere(), false);
+  assert.equal(f.g('n').classList.contains('suche-aktiv'), false);
+  void fehler;
+});
+
+dom('Suche: Esc leert das Feld (und stoppt die Ansicht nicht), ein zweites Esc gibt den Fokus zurück; Enter wählt den ersten Treffer; Pfeil runter geht in die Liste', async () => {
+  const f = sucheMit({ suche: async () => ({ treffer: [treffer(1), treffer(2)], abgeschnitten: false }) }, { verzoegerung: 10 });
+  const amDokument = [];
+  f.d.addEventListener('keydown', (e) => amDokument.push(e.key));
+  f.g('f').focus();
+  f.tippe('fehler');
+  await bis(() => f.d.querySelectorAll('.suche-treffer').length === 2);
+  taste(f.w, f.g('f'), 'ArrowDown');
+  assert.equal(f.d.activeElement, f.d.querySelector('.suche-treffer[data-id="1"]'));
+  taste(f.w, f.d.activeElement, 'ArrowDown');
+  assert.equal(f.d.activeElement, f.d.querySelector('.suche-treffer[data-id="2"]'));
+  taste(f.w, f.d.activeElement, 'ArrowUp');
+  taste(f.w, f.d.activeElement, 'ArrowUp');
+  assert.equal(f.d.activeElement, f.g('f'), 'Pfeil hoch aus der ersten Zeile geht ins Feld');
+  taste(f.w, f.g('f'), 'Enter');
+  assert.equal(f.z.gewaehlt.at(-1).id, 1, 'Enter wählt den ersten Treffer');
+  taste(f.w, f.g('f'), 'Escape');
+  assert.equal(f.g('f').value, '');
+  assert.equal(f.g('e').hidden, true);
+  assert.equal(f.z.esc, 0);
+  taste(f.w, f.g('f'), 'Escape');
+  assert.equal(f.z.esc, 1, 'zweites Esc: zurück in die Eingabe');
+  assert.deepEqual(amDokument, [], 'einfache Tasten im Feld erreichen die Kürzel der Seite nicht');
+  taste(f.w, f.g('f'), 'b', { metaKey: true });
+  assert.deepEqual(amDokument, ['b'], 'Cmd+Taste bleibt der Seite');
+});
+
+// Ganze Seite: Archiv vom Runner, Suche, Kürzel
+const archiviert = (id, titel, extra) => ({ id, art: 'mensch', titel, erstellt: 500, arbeitsbereich: 'standard', archiviert: true, agent: { cwd: '/probe/standard' }, ...extra });
+const FRUEHER = () => [archiviert(7, 'Früher archiviert')];
+
+dom('Seite: das Archiv kommt vom Runner (GET /api/gespraeche?archiv=1), lädt beim Start und nach jeder Änderung neu; leer steht „Keine archivierten Sitzungen.“', async () => {
+  const f = arbeitsplatz({ archivWeg: true });
+  try {
+    await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    assert.ok(f.st.aufrufe.some((a) => a.url === '/api/gespraeche?archiv=1'), 'Archivliste beim Start');
+    assert.equal(f.g('archivKopf').hidden, false, 'der Abschnitt steht auch ohne Einträge da (der Runner kennt die Liste)');
+    assert.equal(f.g('archivZahl').textContent, '0');
+    assert.equal(f.g('archivLeer').hidden, true, 'eingeklappt: kein Hinweis');
+    f.g('archivKopf').click();
+    assert.equal(f.g('archivLeer').hidden, false);
+    assert.equal(f.g('archivLeer').textContent, 'Keine archivierten Sitzungen.');
+    // eine Sitzung, die schon vorher archiviert war (anderes Fenster, früherer Start): erscheint nach dem nächsten Laden
+    f.st.gespraeche.push(archiviert(7, 'Früher archiviert'));
+    await f.w.__arbeitsplatz.ladeListe();
+    await bis(() => f.g('archivZahl').textContent === '1');
+    assert.equal(f.g('archivLeer').hidden, true);
+    assert.equal(f.g('archivListe').querySelector('.sitzung-titel').textContent, 'Früher archiviert');
+    assert.equal(f.d.querySelector('#sitzungsliste .sitzung[data-id="7"]'), null, 'nicht in der Hauptliste');
+    // Archivieren: PATCH, danach kommt die Liste vom Runner (ohne lokale Hilfsliste)
+    const vorher = f.st.aufrufe.filter((a) => a.url === '/api/gespraeche?archiv=1').length;
+    f.d.querySelector('#sitzungsliste .sitzung[data-id="2"]').closest('.sitzung-zeile').querySelector('.archivieren').click();
+    await bis(() => f.g('archivZahl').textContent === '2');
+    assert.ok(f.st.aufrufe.filter((a) => a.url === '/api/gespraeche?archiv=1').length > vorher, 'nach der Änderung neu geladen');
+    // Wiederherstellen: aus dem Archiv des Runners
+    f.g('archivListe').querySelector('.sitzung[data-id="7"]').closest('.sitzung-zeile').querySelector('.wiederherstellen').click();
+    await bis(() => f.d.querySelector('#sitzungsliste .sitzung[data-id="7"]'));
+    assert.deepEqual(f.st.aufrufe.filter((a) => a.methode === 'PATCH').map((a) => [a.url, a.koerper]).at(-1), ['/api/gespraech/7', { archiviert: false }]);
+    await bis(() => f.g('archivZahl').textContent === '1');
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Seite: ein älterer Runner (Parameter ignoriert, kein Feld archiviert) lässt alles beim Alten: kein Archiv-Abschnitt ohne selbst Archiviertes, keine Fehler', async () => {
+  const f = arbeitsplatz();
+  try {
+    await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    assert.equal(f.g('archivKopf').hidden, true);
+    assert.equal(f.g('archivLeer').hidden, true);
+    // zweimal laden: die Archivliste wird nach dem ersten Mal nicht mehr erfragt
+    await f.w.__arbeitsplatz.ladeListe();
+    assert.equal(f.st.aufrufe.filter((a) => a.url === '/api/gespraeche?archiv=1').length, 1);
+    assert.equal(f.d.querySelectorAll('#sitzungsliste .sitzung').length, 2, 'die Sitzungen sind nicht doppelt');
+  } finally {
+    f.schliesse();
+  }
+});
+
+const SUCHE_RUNNER = (antworten) => ({
+  suche: (p, url, st) => {
+    st.sucheUrls = (st.sucheUrls || []).concat(url);
+    return antworten(p, st);
+  },
+});
+
+dom('Seite: Suchfeld – Anfrage mit q, limit=20 und archiv=alle, Trefferliste statt Sitzungsliste, Treffer in einer archivierten Sitzung wechselt dorthin mit Hinweis, Esc bringt die Liste zurück', async () => {
+  const f = arbeitsplatz({
+    archivWeg: true,
+    archivierte: FRUEHER(),
+    runner: SUCHE_RUNNER((p) => [200, { ok: true, treffer: [
+      { id: 2, titel: 'Zweite', archiviert: false, aktualisiert: Date.now(), quelle: 'verlauf', ausschnitt: 'ein Satz mit Süßes & <b>x</b>', start: 11, laenge: 5, markierungen: [{ start: 11, laenge: 5 }], zahl: 1 },
+      { id: 7, titel: 'Früher archiviert', archiviert: true, aktualisiert: Date.now() - 86400000, quelle: 'titel', ausschnitt: 'Früher archiviert', start: 0, laenge: 5, markierungen: [{ start: 0, laenge: 5 }], zahl: 1 },
+    ], abgeschnitten: false, durchsucht: 3, gesamt: 3 }]),
+  });
+  try {
+    await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2 && f.g('archivZahl').textContent === '1');
+    f.g('sucheFeld').value = 'Süßes ä';
+    f.g('sucheFeld').dispatchEvent(new f.w.Event('input', { bubbles: true }));
+    await bis(() => f.d.querySelectorAll('.suche-treffer').length === 2);
+    assert.equal(f.st.sucheUrls.length, 1);
+    assert.equal(f.st.sucheUrls[0], '/api/suche?q=S%C3%BC%C3%9Fes%20%C3%A4&limit=20&archiv=alle');
+    assert.equal(f.g('leisteListe').classList.contains('suche-aktiv'), true);
+    assert.equal(f.g('sucheErgebnis').hidden, false);
+    // Hinweis zu den gefundenen Sitzungen: die Seitenleistenlisten sind verdeckt (CSS), nicht entfernt
+    assert.ok(lies('arbeitsplatz.css').includes('.leiste-liste.suche-aktiv > :not(.suche-ergebnis)'));
+    // Treffer in einer archivierten Sitzung: Wechsel mit Hinweis
+    f.d.querySelector('.suche-treffer[data-id="7"]').click();
+    await bis(() => f.g('titel').textContent === 'Früher archiviert');
+    await bis(() => /ist archiviert/.test(f.d.querySelector('.pane.aktiv').textContent));
+    assert.equal(f.w.__arbeitsplatz.aktiv.id, 7);
+    // wieder zum Treffer in der aktiven Sitzung
+    f.d.querySelector('.suche-treffer[data-id="2"]').click();
+    await bis(() => f.g('titel').textContent === 'Zweite');
+    // Esc leert, die Sitzungsliste ist zurück
+    f.g('sucheFeld').focus();
+    taste(f.w, f.g('sucheFeld'), 'Escape');
+    assert.equal(f.g('sucheFeld').value, '');
+    assert.equal(f.g('leisteListe').classList.contains('suche-aktiv'), false);
+    assert.equal(f.g('sucheErgebnis').hidden, true);
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Seite: Cmd+K und „/“ holen den Fokus ins Suchfeld; „/“ im Eingabefeld tippt einen Schrägstrich; ältere Runner ohne /api/suche (404) blenden das Feld aus', async () => {
+  const f = arbeitsplatz();
+  try {
+    await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    await bis(() => f.d.activeElement === f.g('eingabe'));
+    // „/“ im Eingabefeld: kein Sprung
+    const imFeld = new f.w.KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true });
+    f.g('eingabe').dispatchEvent(imFeld);
+    assert.equal(imFeld.defaultPrevented, false);
+    assert.equal(f.d.activeElement, f.g('eingabe'));
+    // „/“ außerhalb eines Feldes
+    f.g('leisteSchalter').focus();
+    const schraeg = new f.w.KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true });
+    f.g('leisteSchalter').dispatchEvent(schraeg);
+    assert.equal(schraeg.defaultPrevented, true);
+    assert.equal(f.d.activeElement, f.g('sucheFeld'));
+    // Cmd+K auch aus der Eingabe
+    f.g('eingabe').focus();
+    f.g('eingabe').dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }));
+    assert.equal(f.d.activeElement, f.g('sucheFeld'));
+    f.g('eingabe').focus();
+    f.g('eingabe').dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }));
+    assert.equal(f.d.activeElement, f.g('sucheFeld'));
+    // Cmd+Umschalt+K ist es nicht
+    f.g('eingabe').focus();
+    f.g('eingabe').dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'k', metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    assert.equal(f.d.activeElement, f.g('eingabe'));
+    // Dieser Speicher-Runner kennt /api/suche nicht (404 „Unbekannte Route“): das Feld verschwindet
+    f.g('sucheFeld').value = 'abc';
+    f.g('sucheFeld').dispatchEvent(new f.w.Event('input', { bubbles: true }));
+    await bis(() => f.g('sucheKasten').hidden);
+    assert.equal(f.w.__arbeitsplatz.suche.verfuegbar, false);
+    f.g('leisteSchalter').focus();
+    const nochmal = new f.w.KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true });
+    f.g('leisteSchalter').dispatchEvent(nochmal);
+    assert.equal(nochmal.defaultPrevented, false, 'ohne Suche kein Abfangen des Schrägstrichs');
+    assert.equal(f.g('leisteListe').classList.contains('suche-aktiv'), false);
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Seite: ein Treffer blättert zur Stelle, wenn der geladene Verlauf sie enthält (Text wird nur verglichen, nie eingesetzt)', async () => {
+  const entries = [frage(1), antwortMit(2, nutzung(10, 10, 10)), { id: 3, kind: 'pi.message', model: [{ role: 'assistant', content: [{ type: 'text', text: 'Der seltene Zielsatz steht hier.' }], stopReason: 'stop', timestamp: 2000 }] }];
+  const f = arbeitsplatz({
+    archivWeg: true,
+    ansicht: (id) => ({ entries: id === 2 ? entries : [] }),
+    runner: SUCHE_RUNNER(() => [200, { ok: true, treffer: [{ id: 2, titel: 'Zweite', archiviert: false, aktualisiert: Date.now(), quelle: 'verlauf', ausschnitt: 'Der seltene Zielsatz steht hier.', start: 4, laenge: 7, markierungen: [{ start: 4, laenge: 7 }], zahl: 1 }], abgeschnitten: false }]),
+  });
+  try {
+    await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    f.g('sucheFeld').value = 'seltene';
+    f.g('sucheFeld').dispatchEvent(new f.w.Event('input', { bubbles: true }));
+    await bis(() => f.d.querySelector('.suche-treffer'));
+    f.d.querySelector('.suche-treffer').click();
+    await bis(() => f.d.querySelector('.treffer-blitz'));
+    assert.match(f.d.querySelector('.treffer-blitz').textContent, /seltene Zielsatz/);
+  } finally {
+    f.schliesse();
+  }
+});
+
+// Datei-Vorschau über GET /api/datei
+const DATEI_VERLAUF = verlaufMit(['write', { path: '/probe/standard/neu.txt', content: 'aus dem Verlauf\n' }], ['read', { path: 'src/x.js' }, 'eins\nzwei\n']);
+
+function dateiRunner(antwort) {
+  return { datei: (p, url, st) => { st.dateiUrls = (st.dateiUrls || []).concat(url); return antwort(p, st); } };
+}
+const oeffneDatei = async (f, pfad) => {
+  await bis(() => !f.g('aenderungenKnopf').hidden);
+  f.g('aenderungenKnopf').click();
+  f.d.querySelector(`.ae-datei[data-pfad="${pfad}"] .ae-name`).click();
+};
+const vorschauText = (f) => [...f.d.querySelectorAll('.ae-code .code')].map((x) => x.textContent);
+
+dom('Vorschau über den Runner: Weg und Abfrage stimmen (absoluter Pfad, Sitzung, max), der Inhalt kommt vom Runner, nicht aus dem Verlauf; Hinweise für Kürzung und Schwärzung', async () => {
+  const f = arbeitsplatz({
+    tauri: () => undefined,
+    ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }),
+    runner: dateiRunner((p) => [200, { ok: true, pfad: p.get('pfad'), groesse: 4000000, text: 'echt vom Runner\nzweite <b>Zeile</b>\n', abgeschnitten: true, binaer: false, geaendert: 1793350000000, geschwaerzt: true }]),
+  });
+  try {
+    await oeffneDatei(f, 'neu.txt');
+    await bis(() => vorschauText(f).length === 2);
+    assert.deepEqual(vorschauText(f), ['echt vom Runner', 'zweite <b>Zeile</b>']);
+    assert.equal(f.d.querySelectorAll('.ae-code b').length, 0, 'kein HTML aus der Datei');
+    assert.equal(f.st.dateiUrls.length, 1);
+    assert.equal(f.st.dateiUrls[0], '/api/datei?pfad=%2Fprobe%2Fstandard%2Fneu%2Etxt&gespraech=1&max=200000');
+    const stand = f.d.querySelector('.ae-quelle').textContent;
+    assert.match(stand, /aktuell vom Runner gelesen/);
+    assert.match(stand, /Gekürzt: gezeigt werden die ersten \d+ von 4000000 Byte/);
+    assert.match(f.d.querySelector('.ae-geschwaerzt').textContent, /Geheimnisse geschwärzt/);
+    assert.ok(!f.st.tauri.some(([b, a]) => b === 'runner_anfrage' && a.methode !== 'GET' && /datei|suche/.test(a.pfad)), 'nur GET');
+    // ein Datei-Pfad, der über die Brücke geht, enthält keine Roh-Punkte (".." wird dort abgewiesen)
+    assert.ok(!/\.\./.test(f.st.dateiUrls[0]));
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Vorschau über den Runner: Binärdatei, leere Datei, Wird gelesen …', async () => {
+  let antwort = [200, { ok: true, pfad: '/x', groesse: 2048, binaer: true }];
+  let freigabe;
+  const f = arbeitsplatz({ ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }), runner: dateiRunner(() => (freigabe ? new Promise((ok) => (freigabe.ok = () => ok(antwort))) : antwort)) });
+  try {
+    await oeffneDatei(f, 'neu.txt');
+    await bis(() => f.d.querySelector('.ae-binaer'));
+    assert.equal(f.d.querySelector('.ae-binaer').textContent, 'Binärdatei, 2048 Byte');
+    assert.equal(f.d.querySelector('.ae-code'), null);
+    f.d.querySelector('.ae-zurueck').click();
+    antwort = [200, { ok: true, pfad: '/x', groesse: 0, text: '', abgeschnitten: false, binaer: false, geaendert: 0 }];
+    f.d.querySelector('.ae-datei[data-pfad="neu.txt"] .ae-name').click();
+    await bis(() => f.d.querySelector('.ae-leer'));
+    assert.equal(f.d.querySelector('.ae-leer').textContent, 'Die Datei ist leer.');
+    f.d.querySelector('.ae-zurueck').click();
+    freigabe = {};
+    antwort = [200, { ok: true, pfad: '/x', groesse: 3, text: 'abc', abgeschnitten: false, binaer: false, geaendert: 0 }];
+    f.d.querySelector('.ae-datei[data-pfad="neu.txt"] .ae-name').click();
+    assert.equal(f.d.querySelector('.ae-laedt').textContent, 'Wird gelesen …');
+    await bis(() => freigabe.ok);
+    freigabe.ok();
+    await bis(() => vorschauText(f).join() === 'abc');
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Vorschau über den Runner: gesperrt, keine Leserechte, Sitzung weg – klare Meldung, KEIN Umweg über den Verlauf (HTTP-Transport und Rust-Brücke gleich)', async () => {
+  for (const tauri of [false, true]) {
+    for (const [status, kennwort, grund, text] of [[403, 'gesperrt', 'gesperrt', /gesperrt/], [403, 'verwehrt', 'verwehrt', /Leserechte/], [404, 'gespraech_nicht_gefunden', 'gespraech', /Sitzung gibt es/], [400, 'keine_datei', 'keine_datei', /keine reguläre Datei/], [413, 'zu_gross', 'zu_gross', /zu groß/]]) {
+      const f = arbeitsplatz({ ...(tauri ? { tauri: () => undefined } : {}), ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }), runner: dateiRunner(() => [status, { ok: false, fehler: kennwort, meldung: 'Text des Runners' }]) });
+      try {
+        await oeffneDatei(f, 'neu.txt');
+        await bis(() => f.d.querySelector('.ae-grund'));
+        assert.equal(f.d.querySelector('.ae-grund').dataset.grund, grund, `${tauri ? 'Brücke' : 'HTTP'} ${kennwort}`);
+        assert.match(f.d.querySelector('.ae-grund').textContent, text);
+        assert.equal(f.d.querySelector('.ae-code'), null, 'der Verlaufsstand wird hier nicht gezeigt');
+        assert.ok(!/aus dem Verlauf/.test(f.g('aenderungenInhalt').textContent));
+        assert.ok(!/Token/i.test(f.g('aenderungenInhalt').textContent), 'ein 403 auf der Datei ist kein Tokenfehler');
+      } finally {
+        f.schliesse();
+      }
+    }
+  }
+});
+
+dom('Vorschau über den Runner: Datei außerhalb der freigegebenen Ordner – der Stand aus dem Verlauf mit Hinweis, ohne Verlaufsstand die Meldung', async () => {
+  const f = arbeitsplatz({ tauri: () => undefined, ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }), runner: dateiRunner(() => [403, { ok: false, fehler: 'ausserhalb', meldung: 'Pfad liegt außerhalb der erlaubten Wurzeln' }]) });
+  try {
+    await oeffneDatei(f, 'neu.txt');
+    await bis(() => vorschauText(f).length);
+    assert.deepEqual(vorschauText(f), ['aus dem Verlauf']);
+    assert.match(f.d.querySelector('.ae-quelle').textContent, /nicht zum Lesen frei; gezeigt wird der Stand aus dem Verlauf/);
+    f.d.querySelector('.ae-zurueck').click();
+    f.w.__arbeitsplatz.aenderungen.oeffneVorschau('nie-gesehen.txt');
+    await bis(() => f.d.querySelector('.ae-grund'));
+    assert.equal(f.d.querySelector('.ae-grund').dataset.grund, 'ausserhalb');
+    assert.match(f.d.querySelector('.ae-grund').textContent, /außerhalb der Ordner, die der Runner freigibt/);
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Vorschau über den Runner: Datei nicht (mehr) da → Stand aus dem Verlauf mit Hinweis; älterer Runner (Weg fehlt) → Verlauf ohne Hinweis; Netzfehler → Verlauf mit Hinweis', async () => {
+  const f = arbeitsplatz({ tauri: () => undefined, ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }), runner: dateiRunner(() => [404, { ok: false, fehler: 'nicht_gefunden', meldung: 'Datei nicht gefunden' }]) });
+  try {
+    await oeffneDatei(f, 'neu.txt');
+    await bis(() => vorschauText(f).length);
+    assert.deepEqual(vorschauText(f), ['aus dem Verlauf']);
+    assert.match(f.d.querySelector('.ae-quelle').textContent, /gibt es auf dem Runner nicht \(mehr\); gezeigt wird der Stand aus dem Verlauf/);
+    assert.match(f.d.querySelector('.ae-quelle').textContent, /zuletzt vom Agenten/);
+    // eine Datei, die nur gelesen wurde und weg ist, ohne Verlaufsstand: Meldung
+    f.d.querySelector('.ae-zurueck').click();
+  } finally {
+    f.schliesse();
+  }
+  // älterer Runner: Standard des Speicher-Runners ist 404 „Unbekannte Route“
+  const alt = arbeitsplatz({ tauri: () => undefined, ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }) });
+  try {
+    await oeffneDatei(alt, 'neu.txt');
+    await bis(() => vorschauText(alt).length);
+    assert.deepEqual(vorschauText(alt), ['aus dem Verlauf']);
+    assert.ok(!/nicht (mehr)|nicht geliefert/.test(alt.d.querySelector('.ae-quelle').textContent), 'kein Fehlerhinweis, wenn es den Weg schlicht nicht gibt');
+  } finally {
+    alt.schliesse();
+  }
+  const netz = arbeitsplatz({ ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }), runner: dateiRunner(() => Promise.reject(new TypeError('Failed to fetch'))) });
+  try {
+    await oeffneDatei(netz, 'neu.txt');
+    await bis(() => vorschauText(netz).length);
+    assert.deepEqual(vorschauText(netz), ['aus dem Verlauf']);
+    assert.match(netz.d.querySelector('.ae-quelle').textContent, /Runner hat die Datei nicht geliefert/);
+  } finally {
+    netz.schliesse();
+  }
+});
+
+dom('Vorschau über den Runner: eine Datei, die der Agent nur gelesen hat und die weg ist, und eine Datei ohne Verlaufsstand zeigen die Meldung', async () => {
+  const verlauf = verlaufMit(['write', { path: 'a.txt', content: 'a\n' }]);
+  const f = arbeitsplatz({ ansicht: (id) => ({ entries: id === 1 ? verlauf : [] }), runner: dateiRunner(() => [404, { ok: false, fehler: 'nicht_gefunden' }]) });
+  try {
+    await bis(() => !f.g('aenderungenKnopf').hidden);
+    f.g('aenderungenKnopf').click();
+    f.w.__arbeitsplatz.aenderungen.oeffneVorschau('nie-gesehen.txt');
+    await bis(() => f.d.querySelector('.ae-grund'));
+    assert.match(f.d.querySelector('.ae-grund').textContent, /gibt es auf dem Runner nicht \(mehr\)/);
+  } finally {
+    f.schliesse();
+  }
+});
+
+// Dateibaum über GET /api/ordner?dateien=1
+const BAUM = {
+  '/probe/standard': { eintraege: [{ name: 'src', ordner: true }, { name: 'docs', ordner: true }, { name: 'liesmich.txt', ordner: false, groesse: 2048 }, { name: 'neu.txt', ordner: false, groesse: 16 }] },
+  '/probe/standard/src': { eintraege: [{ name: 'x.js', ordner: false, groesse: 11 }, { name: 'y.js', ordner: false, groesse: 5 }] },
+  '/probe/standard/docs': { eintraege: [{ name: 'a.md', ordner: false, groesse: 1 }], abgeschnitten: true },
+};
+function ordnerRunner(extra) {
+  return {
+    ordner: (p, url, st) => {
+      st.ordnerUrls = (st.ordnerUrls || []).concat(url);
+      const pfad = p.get('pfad');
+      if (extra && extra[pfad]) return extra[pfad];
+      return BAUM[pfad] ? [200, { ok: true, wurzeln: ['/probe'], pfad, erlaubt: true, ...BAUM[pfad] }] : [404, { ok: false, fehler: 'nicht_gefunden' }];
+    },
+  };
+}
+const knoten = (f) => [...f.d.querySelectorAll('#aenderungenInhalt .ae-knoten')].map((b) => `${b.dataset.ordner !== undefined ? 'O' : 'D'}:${b.querySelector('.ae-dname').textContent}`);
+
+dom('Dateibaum über den Runner: Wurzel mit dateien=1, Ordner mit berührten Dateien klappen von selbst auf, berührte Dateien sind hervorgehoben, andere Ordner laden erst beim Aufklappen', async () => {
+  const f = arbeitsplatz({ tauri: () => undefined, ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }), runner: ordnerRunner() });
+  try {
+    await bis(() => !f.g('aenderungenKnopf').hidden);
+    f.g('aenderungenKnopf').click();
+    f.g('aenderungenReiterBaum').click();
+    await bis(() => knoten(f).includes('O:docs') && knoten(f).includes('D:y.js'));
+    assert.equal(f.st.ordnerUrls[0], '/api/ordner?pfad=%2Fprobe%2Fstandard&dateien=1');
+    assert.ok(f.st.ordnerUrls.includes('/api/ordner?pfad=%2Fprobe%2Fstandard%2Fsrc&dateien=1'), 'der Ordner mit der berührten Datei wurde geladen');
+    assert.ok(!f.st.ordnerUrls.some((u) => /docs/.test(u)), 'docs lädt erst beim Aufklappen');
+    assert.deepEqual(knoten(f), ['O:docs', 'O:src', 'D:x.js', 'D:y.js', 'D:liesmich.txt', 'D:neu.txt']);
+    const x = f.d.querySelector('.ae-knoten[data-datei="src/x.js"]');
+    assert.equal(x.dataset.beruehrt, '1');
+    assert.equal(x.querySelector('.ae-art').textContent, 'gelesen');
+    const neu = f.d.querySelector('.ae-knoten[data-datei="neu.txt"]');
+    assert.equal(neu.dataset.beruehrt, '1');
+    assert.equal(neu.querySelector('.ae-art').textContent, 'neu');
+    assert.equal(f.d.querySelector('.ae-knoten[data-datei="liesmich.txt"]').dataset.beruehrt, undefined);
+    assert.match(f.d.querySelector('.ae-knoten[data-datei="liesmich.txt"] .ae-groesse').textContent, /2,0 KB/);
+    // lazy: docs aufklappen
+    f.d.querySelector('.ae-knoten[data-ordner="docs"]').click();
+    await bis(() => knoten(f).includes('D:a.md'));
+    assert.ok(f.st.ordnerUrls.includes('/api/ordner?pfad=%2Fprobe%2Fstandard%2Fdocs&dateien=1'));
+    assert.match(f.d.querySelector('#aenderungenInhalt').textContent, /Nur die ersten 500 Einträge/);
+    // zuklappen und wieder aufklappen lädt nicht neu
+    const n = f.st.ordnerUrls.length;
+    f.d.querySelector('.ae-knoten[data-ordner="docs"]').click();
+    assert.ok(!knoten(f).includes('D:a.md'));
+    f.d.querySelector('.ae-knoten[data-ordner="docs"]').click();
+    assert.ok(knoten(f).includes('D:a.md'));
+    assert.equal(f.st.ordnerUrls.length, n);
+    // Klick auf eine Datei, die der Agent nicht berührt hat: Vorschau über den Runner
+    assert.equal(f.w.__arbeitsplatz.aenderungen.lebend, true);
+    f.d.querySelector('.ae-knoten[data-datei="liesmich.txt"]').click();
+    assert.equal(f.w.__arbeitsplatz.aenderungen.modus, 'vorschau');
+    await bis(() => f.d.querySelector('.ae-grund, .ae-code, .ae-fehlt'));
+    assert.equal(f.d.querySelector('.ae-vname').textContent, 'liesmich.txt');
+    // Pfeil rechts/links auf einem Ordner des lebenden Baums
+    f.d.querySelector('.ae-zurueck').click();
+    f.d.querySelector('.ae-knoten[data-ordner="src"]').focus();
+    taste(f.w, f.d.activeElement, 'ArrowLeft');
+    assert.ok(!knoten(f).includes('D:x.js'), 'zugeklappt');
+    taste(f.w, f.d.activeElement, 'ArrowRight');
+    assert.ok(knoten(f).includes('D:x.js'), 'wieder auf');
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Dateibaum über den Runner: Fehler beim Aufklappen stehen unter dem Ordner; liegt der Arbeitsordner außerhalb der Wurzeln (403) oder kennt der Runner die Liste nicht, bleibt der Baum bei den berührten Dateien', async () => {
+  const f = arbeitsplatz({ tauri: () => undefined, ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }), runner: ordnerRunner({ '/probe/standard/docs': [403, { ok: false, fehler: 'gesperrt' }] }) });
+  try {
+    await bis(() => !f.g('aenderungenKnopf').hidden);
+    f.g('aenderungenKnopf').click();
+    f.g('aenderungenReiterBaum').click();
+    await bis(() => knoten(f).includes('O:docs'));
+    f.d.querySelector('.ae-knoten[data-ordner="docs"]').click();
+    await bis(() => /Nicht lesbar/.test(f.d.querySelector('#aenderungenInhalt').textContent));
+    assert.match(f.d.querySelector('.ae-baum-meldung.fehler').textContent, /gesperrt/);
+  } finally {
+    f.schliesse();
+  }
+  const aussen = arbeitsplatz({ tauri: () => undefined, ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }), runner: ordnerRunner({ '/probe/standard': [403, { ok: false, fehler: 'ausserhalb' }] }) });
+  try {
+    await bis(() => !aussen.g('aenderungenKnopf').hidden);
+    aussen.g('aenderungenKnopf').click();
+    aussen.g('aenderungenReiterBaum').click();
+    await bis(() => /außerhalb der Ordner, die der Runner freigibt/.test(aussen.d.querySelector('#aenderungenInhalt').textContent));
+    assert.equal(aussen.w.__arbeitsplatz.aenderungen.lebend, false);
+    assert.deepEqual(knoten(aussen), ['O:src', 'D:x.js', 'D:neu.txt'], 'weiter die berührten Dateien');
+  } finally {
+    aussen.schliesse();
+  }
+  // älterer Runner: GET /api/ordner mit Pfad nur Ordner (404 hier): Baum aus berührten Dateien, Fußzeile wie bisher
+  const alt = arbeitsplatz({ ansicht: (id) => ({ entries: id === 1 ? DATEI_VERLAUF : [] }) });
+  try {
+    await bis(() => !alt.g('aenderungenKnopf').hidden);
+    alt.g('aenderungenKnopf').click();
+    alt.g('aenderungenReiterBaum').click();
+    await bis(() => alt.d.querySelector('.ae-fuss'));
+    await warte(60);
+    assert.deepEqual(knoten(alt), ['O:src', 'D:x.js', 'D:neu.txt']);
+    assert.equal(alt.w.__arbeitsplatz.aenderungen.lebend, false);
+  } finally {
+    alt.schliesse();
+  }
+});
+
+// Kontextanzeige mit usage.context und contextWindow
+const MIT_KONTEXT = (tokens, fenster) => ({ ...MAX_USAGE, context: { tokens, window: fenster } });
+
+dom('Kontext: usage.context = { tokens, window } aus der Ansicht gilt (Rhea 262144: 100000 Token = 38 %), auch gegen die Summe aus dem UsageDoc', async () => {
+  const f = arbeitsplatz({ ansicht: () => ({ entries: [frage(1), antwortMit(2, nutzung(5, 5, 5))], usage: MIT_KONTEXT(100000, 262144) }) });
+  try {
+    await bis(() => f.g('kontext').dataset.bekannt === '1');
+    assert.equal(f.g('kontextText').textContent, '38 %');
+    assert.equal(f.g('kontextTitel').textContent, 'Kontext 100k von 262,1k');
+    assert.equal(f.g('kontext').getAttribute('aria-valuenow'), '38');
+    assert.match(f.g('tokens').textContent, /gesamt 193 M ein/);
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Kontext: das Fenster kommt aus contextWindow von GET /api/modelle, wenn usage.context fehlt; usage.context.window gewinnt; ohne beides bleibt es bei 128000', async () => {
+  const modelle = [{ id: 'probe-modell', provider: 'probe', name: 'Probe-Modell', contextWindow: 262144 }];
+  const antwort = antwortMit(2, nutzung(3000, 60000, 500)); // 63,5k
+  // Modell der Sitzung bekannt (agent.model), Fenster aus der Modellliste
+  const a = arbeitsplatz({ modelle, ansicht: () => ({ entries: [frage(1), antwort], usage: MAX_USAGE, agent: { model: { provider: 'probe', modelId: 'probe-modell' } } }) });
+  try {
+    await bis(() => a.g('kontext').dataset.bekannt === '1');
+    assert.equal(a.g('kontextText').textContent, '24 %');
+    assert.equal(a.g('kontextTitel').textContent, 'Kontext 63,5k von 262,1k');
+  } finally {
+    a.schliesse();
+  }
+  // Modellname als Text (meta.modell)
+  const b = arbeitsplatz({ modelle, ansicht: () => ({ entries: [frage(1), antwort], usage: MAX_USAGE, modell: 'probe-modell' }) });
+  try {
+    await bis(() => b.g('kontext').dataset.bekannt === '1');
+    assert.equal(b.g('kontextTitel').textContent, 'Kontext 63,5k von 262,1k');
+  } finally {
+    b.schliesse();
+  }
+  // usage.context.window gewinnt vor der Modellliste
+  const c = arbeitsplatz({ modelle, ansicht: () => ({ entries: [frage(1), antwort], usage: MIT_KONTEXT(63500, 65536), agent: { model: { provider: 'probe', modelId: 'probe-modell' } } }) });
+  try {
+    await bis(() => c.g('kontext').dataset.bekannt === '1');
+    assert.equal(c.g('kontextText').textContent, '97 %');
+    assert.equal(c.g('kontext').dataset.stufe, 'kritisch');
+  } finally {
+    c.schliesse();
+  }
+  // ohne usage.context und ohne contextWindow: wie bisher 128000
+  const d = arbeitsplatz({ ansicht: () => ({ entries: [frage(1), antwort], usage: MAX_USAGE }) });
+  try {
+    await bis(() => d.g('kontext').dataset.bekannt === '1');
+    assert.equal(d.g('kontextTitel').textContent, 'Kontext 63,5k von 128k');
+  } finally {
+    d.schliesse();
+  }
+});
+
+dom('Kontext: tokens null (nach leeren/verdichten) zeigt „–“; ein usage_changed mit neuem context ersetzt die Anzeige', async () => {
+  const f = arbeitsplatz({ ansicht: () => ({ entries: [frage(1), antwortMit(2, nutzung(3000, 60000, 500))], usage: MIT_KONTEXT(null, 262144) }) });
+  try {
+    await bis(() => /gesamt/.test(f.g('tokens').textContent));
+    assert.equal(f.g('kontextText').textContent, '–', 'der Runner kennt die Füllung nicht: keine Zahl aus dem alten Verlauf');
+    assert.equal(f.g('kontext').dataset.bekannt, '0');
+    // Strom: usage_changed mit der neuen Füllung
+    f.w.__chat.adapter.apply({ type: 'usage_changed', usage: MIT_KONTEXT(52428, 262144) });
+    await bis(() => f.g('kontext').dataset.bekannt === '1');
+    assert.equal(f.g('kontextText').textContent, '20 %');
+    f.w.__chat.adapter.apply({ type: 'usage_changed', usage: MIT_KONTEXT(null, 262144) });
+    await bis(() => f.g('kontext').dataset.bekannt === '0');
+    assert.equal(f.g('kontextText').textContent, '–');
+  } finally {
+    f.schliesse();
+  }
+});
+
+test('Quelltext: neue Module neutral formuliert, nur lesende Wege (GET), kein innerHTML mit Daten des Runners, im Fenster eingebunden', () => {
+  const html = lies('chat.html');
+  const neu = lies('runner-wege.js') + lies('suche.js');
+  for (const id of ['sucheKasten', 'sucheFeld', 'sucheMeldung', 'sucheErgebnis', 'leisteListe', 'archivLeer']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.indexOf('src="runner-wege.js"') < html.indexOf('src="echt.js"') && html.indexOf('src="suche.js"') < html.indexOf('src="chat.js"'));
+  assert.ok(!/'(POST|PATCH|PUT|DELETE)'/.test(lies('runner-wege.js')), 'runner-wege.js liest nur');
+  assert.equal((lies('runner-wege.js').match(/transport\.api\('GET'/g) || []).length, 1, 'alle Anfragen laufen durch eine Stelle');
+  assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(neu), 'Namen und Texte nur über textContent');
+  const verboten = new RegExp(['gin', 'ny|perse', 'phone|ti', 'tan|rh', 'ea|sirf', 'yyn|/Users/'].join(''), 'i');
+  assert.ok(!verboten.test(neu + html + lies('arbeitsplatz.css')), 'kein Agenten-, Rechner- oder Pfadname im Quelltext');
+  assert.match(html, /placeholder="Sitzungen durchsuchen"/);
+  const chat = lies('chat.js');
+  assert.match(chat, /key\.toLowerCase\(\) === 'k'/);
+  assert.match(chat, /e\.key === '\/'/);
 });

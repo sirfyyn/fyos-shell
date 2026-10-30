@@ -67,7 +67,8 @@
    * Zeilen der Seitenleiste. Eingabe: gespraeche (Liste des Runners), bereiche ({ name: { titel, pfad } }), aktiv (createAktivitaet),
    * o: { jetzt, offeneIds (Set der ID mit sicher laufendem Zug), auswahlId }.
    * Ausgabe: { sitzungen: [...], weitere: [...], archiv: [...] }, neueste Aktivität oben; Zeile: { id, titel, art, zeit, zeitText, bereich, ordner, pfad, laeuft, archiviert }.
-   * o.archivLokal: Einträge, die dieses Fenster archiviert hat (der Runner nennt sie in der Liste nicht mehr); sie stehen im Archiv und erlauben „Wiederherstellen“.
+   * o.archivLokal: Archivierte, die nicht in `gespraeche` stehen: die Liste des Runners mit ?archiv=1 und/oder, was dieses Fenster archiviert hat (ältere Runner
+   *   nennen archivierte Sitzungen sonst nirgends); sie stehen im Archiv und erlauben „Wiederherstellen“. o.archivImmer: der Runner kennt die Archivliste.
    */
   function sitzungsListe(gespraeche, bereiche, aktiv, o) {
     o = o || {};
@@ -103,6 +104,8 @@
       sitzungen: offen.filter((z) => HAUPT_ARTEN.has(z.art)),
       weitere: offen.filter((z) => !HAUPT_ARTEN.has(z.art)),
       archiv: zeilen.filter((z) => z.archiviert && HAUPT_ARTEN.has(z.art)),
+      // true, wenn der Runner die Archivliste kennt (GET /api/gespraeche?archiv=1): der Abschnitt „Archiv“ steht dann auch ohne Einträge da
+      archivImmer: !!o.archivImmer,
     };
   }
 

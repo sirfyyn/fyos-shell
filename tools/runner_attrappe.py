@@ -5,11 +5,18 @@
 
 Spricht den Teil der Runner-Schnittstelle, den die Chat-Seite und die Seitenleiste brauchen:
   GET  /api/health, /api/konfiguration, /api/modelle, /api/freigaben, /api/laeufe
-  GET  /api/gespraeche                    Sitzungsliste (Sitzung 1 Hauptgespräch, Sitzung 2 in einem anderen Arbeitsbereich)
+  GET  /api/gespraeche                    Sitzungsliste (Sitzung 1 Hauptgespräch, Sitzung 2 in einem anderen Arbeitsbereich); ohne Parameter ohne Archivierte,
+                                          ?archiv=1 nur Archivierte, ?archiv=alle beide; jedes Gespräch trägt `archiviert`
+  GET  /api/suche?q=&limit=&archiv=       Suche über Titel und sichtbaren Verlauf: {ok, treffer: [{id, titel, archiviert, aktualisiert, ausschnitt, start, laenge,
+                                          markierungen, zahl, quelle}], abgeschnitten, durchsucht, gesamt}; q mindestens 2 Zeichen (sonst 400 {ok: false, fehler})
+  GET  /api/modelle                       je Modell `contextWindow`; usage.context = {tokens, window} in /ansicht und im Snapshot des Stroms (tokens null nach Reset)
   POST /api/gespraeche                    neue Sitzung {titel, arbeitsbereich, modell} → 201 {gespraech: {id, meta, agent}}; ohne titel „Neuer Agent“, bis 120 Zeichen
   PATCH /api/gespraech/<id>               {titel, archiviert} → 200 {gespraech: {id, meta, agent}}; archivierte Sitzungen fehlen in GET /api/gespraeche (wie beim Runner)
   GET  /api/ordner?pfad=…                 Ordnerwahl: ohne pfad die Wurzeln, mit pfad die Unterordner (erfundener Baum unter /probe/ordner-a und -b)
                                           POST /api/gespraeche nimmt zusätzlich `ordner`; Gesprächsliste und Gespräch tragen ihn in `ordner` und `agent.cwd`
+  GET  /api/ordner?pfad=…&dateien=1       dazu Dateien ({name, ordner: false, groesse}), Ordner zuerst, Gesperrte (.env, *.pem …) fehlen
+  GET  /api/datei?pfad=…&gespraech=&max=  Inhalt einer Textdatei im erfundenen Baum: {ok, pfad, groesse, text, abgeschnitten, binaer: false, geaendert}, Binärdatei
+                                          ohne text ({binaer: true}); 400 ungültig, 403 ausserhalb/gesperrt, 404, 413 (max über 1 MiB); Standard 200000 Byte
   GET  /api/gespraech/<id>                Meta und Arbeitsordner der Sitzung (agent.cwd)
   GET  /api/gespraech/<id>/ansicht?voll=1 Verlauf der Sitzung
   GET  /api/gespraech/<id>/ereignisse     Ereignisstrom (SSE) der Sitzung: erst ein Snapshot, dann Ereignisse, alle 5 s ein Herzschlag-Kommentar
@@ -26,6 +33,7 @@ Mit --token verlangt jede Anfrage `Authorization: Bearer <T>` (sonst 401). Jede 
 mit `auth: true/false` (kam das richtige Token an?), aber nie mit dem Token selbst.
 """
 import argparse
+import fnmatch
 import json
 import posixpath
 import queue
@@ -53,19 +61,29 @@ BEREICHE = {
     "standard": {"titel": "Standard", "pfad": "/probe/standard"},
     "projekt": {"titel": "Projekt Alpha", "pfad": "/probe/alpha"},
 }
-MODELLE = [{"id": "probe-modell", "name": "Probe-Modell", "provider": "probe", "max": False}]
+# `contextWindow` wie GET /api/modelle des Runners (Rhea: 262144); die Attrappe nimmt dieselbe Zahl, damit die Oberfläche nicht auf 128000 fällt
+KONTEXT_FENSTER = 262144
+MODELLE = [{"id": "probe-modell", "name": "Probe-Modell", "provider": "probe", "max": False, "contextWindow": KONTEXT_FENSTER}]
 
-# "Ordner je Sitzung": ein erfundener Ordnerbaum im Speicher (kein Dateisystem). Wörterbuch = Ordner, None = Datei.
-# Dieselben zwei Wege wie der echte Runner (GET /api/ordner, POST /api/gespraeche mit `ordner`), gleiche Fehlerbilder.
+# "Ordner je Sitzung": ein erfundener Ordnerbaum im Speicher (kein Dateisystem). Wörterbuch = Ordner, Text = Textdatei, bytes = Datei mit Rohdaten.
+# Dieselben Wege wie der echte Runner (GET /api/ordner mit `dateien=1`, GET /api/datei, POST /api/gespraeche mit `ordner`), gleiche Fehlerbilder.
 ORDNER_WURZELN = ["/probe/ordner-a", "/probe/ordner-b"]
+DATEI_GEAENDERT = 1793350000000
 ORDNER_BAUM = {
     "probe": {
         "ordner-a": {
-            "projekt-eins": {"src": {}, "docs": {}, "README.md": None},
+            "projekt-eins": {
+                "src": {"haupt.py": 'print("Grüße")\nPASSWORD=geheim123\n', "bild.png": b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"},
+                "docs": {},
+                "README.md": "# Probe\nHallo Welt\n",
+                "lang.txt": ("zeile " + "x" * 93 + "\n") * 3000,
+                ".env": "GEHEIM=1\n",
+                "server.pem": "-----BEGIN CERTIFICATE-----\n",
+            },
             "projekt-zwei": {},
             "Notizen": {},
             ".versteckt": {},
-            "liesmich.txt": None,
+            "liesmich.txt": "Grüße aus der Attrappe\n",
         },
         "ordner-b": {"viele": {f"d{i:04d}": {} for i in range(510)}},
         "draussen": {"geheim": {}},
@@ -79,14 +97,155 @@ USAGE_LEBENSZEIT = {"input": 9729400, "output": 2121500, "cacheRead": 183308800,
 USAGE_ANTWORT = {"input": 1200, "output": 300, "cacheRead": 2000, "cacheWrite": 0, "totalTokens": 3500, "cost": {"total": 0}}
 
 
+# Suche über Sitzungen (GET /api/suche) in derselben Form wie der Runner (deploy/runner/pi-durable/src/suche.js): Titel und sichtbarer Text von
+# Mensch und Agent, alle Wörter müssen vorkommen, Groß/Klein egal, Ausschnitt höchstens 160 Zeichen mit Offsets (start/laenge) statt HTML.
+# Vereinfachungen der Attrappe: Offsets zählen Zeichen (Python) statt UTF-16-Einheiten (nur für Zeichen außerhalb der BMP anders), die Schwärzung
+# kennt nur Bearer, token=, password= und ähnliche Schlüssel-Wert-Paare.
+SUCHE_TREFFER_MAX = 50
+SUCHE_SITZUNGEN_MAX = 200
+SUCHE_AUSSCHNITT = 160
+_SCHWAERZ = [
+    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{6,}", re.I), "Bearer ***"),
+    (re.compile(r"\b(authorization|token|passwort|password|passwd|secret|api[_-]?key)(\s*[=:]\s*)(\S+)", re.I), r"\1\2***"),
+]
+
+
+class SucheFehler(Exception):
+    def __init__(self, status, meldung):
+        super().__init__(meldung)
+        self.status = status
+        self.meldung = meldung
+
+
+def suche_archiv_modus(roh):
+    t = (roh or "").strip().lower()
+    if t in ("", "0", "nein"):
+        return "aktiv"
+    if t in ("1", "ja"):
+        return "archiviert"
+    if t == "alle":
+        return "alle"
+    raise SucheFehler(400, "archiv muss 0, 1 oder alle sein")
+
+
+def suche_passt(s, modus):
+    return modus == "alle" or (s.archiviert if modus == "archiviert" else not s.archiviert)
+
+
+def suche_ausschnitt(text, woerter):
+    kl = text.lower()
+    erster = min((kl.find(w) for w in woerter if kl.find(w) >= 0), default=0)
+    von = max(0, erster - SUCHE_AUSSCHNITT // 3)
+    bis = min(len(text), von + SUCHE_AUSSCHNITT)
+    von = max(0, bis - SUCHE_AUSSCHNITT)
+    aus, klaus = text[von:bis], kl[von:bis]
+    alle = []
+    for w in woerter:
+        i = klaus.find(w)
+        while i >= 0:
+            alle.append((i, len(w)))
+            i = klaus.find(w, i + len(w))
+    alle.sort(key=lambda m: (m[0], -m[1]))
+    marken, ende = [], 0
+    for start, laenge in alle:
+        if start < ende:
+            continue
+        marken.append({"start": start, "laenge": laenge})
+        ende = start + laenge
+        if len(marken) >= 10:
+            break
+    erste = marken[0] if marken else {"start": 0, "laenge": 0}
+    return {"ausschnitt": aus, "start": erste["start"], "laenge": erste["laenge"], "markierungen": marken}
+
+
+def suche_texte(s):
+    """Sichtbare Texte einer Sitzung, neueste zuerst: Eingaben des Menschen (fyos.mensch) und Textblöcke des Agenten; keine Werkzeuge, keine Marker."""
+    aus = []
+    for e in s.eintraege:
+        if e.get("kind") == "fyos.mensch":
+            aus.append(str((e.get("data") or {}).get("text", "")))
+        for m in e.get("model") or []:
+            if m.get("role") == "assistant":
+                aus.append("\n".join(b.get("text", "") for b in m.get("content") or [] if isinstance(b, dict) and b.get("type") == "text"))
+    texte = []
+    for t in reversed(aus):
+        for muster, ersatz in _SCHWAERZ:
+            t = muster.sub(ersatz, t)
+        t = re.sub(r"\s+", " ", t).strip()
+        if t:
+            texte.append(t)
+    return texte
+
+
+def suche_antwort(z, query):
+    """GET /api/suche?q=&limit=&archiv= → (Status, Körper); Fehler wie beim Runner: {ok: false, fehler}."""
+
+    def eins(name):
+        return query.get(name, [None])[0]
+
+    try:
+        q = eins("q")
+        if q is None or len(q.strip()) < 2:
+            raise SucheFehler(400, "q muss mindestens 2 Zeichen haben")
+        if len(q.strip()) > 200:
+            raise SucheFehler(400, "q darf höchstens 200 Zeichen haben")
+        woerter = list(dict.fromkeys(w[:80].lower() for w in q.split()))
+        if len(woerter) > 6:
+            raise SucheFehler(400, "q darf höchstens 6 Wörter haben")
+        roh_limit = eins("limit")
+        if roh_limit in (None, ""):
+            limit = 20
+        else:
+            try:
+                limit = int(roh_limit)
+            except ValueError:
+                limit = 0
+            if limit < 1 or str(limit) != roh_limit.strip():
+                raise SucheFehler(400, f"limit muss eine ganze Zahl von 1 bis {SUCHE_TREFFER_MAX} sein")
+            limit = min(limit, SUCHE_TREFFER_MAX)
+        modus = suche_archiv_modus(eins("archiv"))
+    except SucheFehler as f:
+        return f.status, {"ok": False, "fehler": f.meldung}
+    with z.sperre:
+        liste = sorted((s for s in z.sitzungen.values() if suche_passt(s, modus)), key=lambda s: (s.art != "root", -s.erstellt))
+    kandidaten = liste[:SUCHE_SITZUNGEN_MAX]
+    abgeschnitten = len(liste) > len(kandidaten)
+    treffer, durchsucht = [], 0
+    for s in kandidaten:
+        if len(treffer) >= limit:
+            abgeschnitten = True
+            break
+        durchsucht += 1
+        einheiten = [("titel", s.titel)] + [("verlauf", t) for t in suche_texte(s)]
+        gefunden = set()
+        zahl, beste = 0, None
+        if all(w in s.titel.lower() for w in woerter):
+            einheiten, zahl, beste = einheiten[:1], 1, ("titel", s.titel)
+            gefunden = set(woerter)
+        else:
+            for quelle, text in einheiten:
+                hier = [w for w in woerter if w in text.lower()]
+                if not hier:
+                    continue
+                zahl += 1
+                gefunden.update(hier)
+                if beste is None or len(hier) > beste[2]:
+                    beste = (quelle, text, len(hier))
+        if len(gefunden) != len(woerter) or not beste:
+            continue
+        treffer.append({"id": s.id, "titel": s.titel, "archiviert": s.archiviert, "aktualisiert": s.aktualisiert, "quelle": beste[0], **suche_ausschnitt(beste[1], woerter), "zahl": zahl})
+    treffer.sort(key=lambda t: -t["aktualisiert"])
+    return 200, {"ok": True, "treffer": treffer, "abgeschnitten": abgeschnitten, "durchsucht": durchsucht, "gesamt": len(liste)}
+
+
 class OrdnerFehler(Exception):
     def __init__(self, status, code, meldung):
         super().__init__(meldung)
         self.status, self.code, self.meldung = status, code, meldung
 
 
-def ordner_pruefen(wurzeln, roh):
-    """Wie src/ordner.js des Runners: gibt den normalisierten Pfad zurück oder wirft OrdnerFehler (400/403/404)."""
+def pfad_pruefen(wurzeln, roh):
+    """Textliche Prüfung wie src/ordner.js des Runners: gibt den normalisierten Pfad zurück oder wirft OrdnerFehler (400/403)."""
     if not isinstance(roh, str) or roh == "":
         raise OrdnerFehler(400, "ungueltig", "Pfad fehlt oder ist kein Text")
     if "\0" in roh:
@@ -102,6 +261,12 @@ def ordner_pruefen(wurzeln, roh):
         n = "/" + n.lstrip("/")
     if not any(n == w or n.startswith(w + "/") for w in wurzeln):
         raise OrdnerFehler(403, "ausserhalb", "Pfad liegt außerhalb der erlaubten Wurzeln")
+    return n
+
+
+def ordner_pruefen(wurzeln, roh):
+    """Wie src/ordner.js des Runners: gibt den normalisierten Pfad und den Knoten zurück oder wirft OrdnerFehler (400/403/404)."""
+    n = pfad_pruefen(wurzeln, roh)
     knoten = ORDNER_BAUM
     for teil in [t for t in n.split("/") if t]:
         if not isinstance(knoten, dict) or teil not in knoten:
@@ -112,14 +277,83 @@ def ordner_pruefen(wurzeln, roh):
     return n, knoten
 
 
-def ordner_auflisten(wurzeln, pfad):
+# Sperrliste wie src/sperre.js des Runners (hier die wichtigsten Muster; Namen ohne Beachtung der Groß-/Kleinschreibung,
+# angewendet auf jeden Pfadteil unterhalb der Wurzel).
+SPERRE = [".env", ".env.*", "*.env", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_ed25519*", ".netrc", ".npmrc", ".ssh", ".gnupg", ".aws",
+          "credentials", "credentials.*", "*.token", "token.json", "secrets", "secrets.json", "secrets.yml", "secrets.yaml"]
+DATEI_STANDARD = 200000
+DATEI_HOECHST = 1048576
+
+
+def gesperrt(wurzeln, n):
+    wurzel = next((w for w in wurzeln if n == w or n.startswith(w + "/")), "")
+    teile = [t for t in n[len(wurzel):].split("/") if t]
+    return any(fnmatch.fnmatchcase(t.lower(), m.lower()) for t in teile for m in SPERRE)
+
+
+def ordner_auflisten(wurzeln, pfad, dateien=False):
+    """Wie src/ordner.js: mit dateien=True zusätzlich Dateien ({name, ordner: False, groesse}), Ordner zuerst, höchstens ORDNER_MAX zusammen."""
     if not pfad:
         return {"wurzeln": wurzeln, "pfad": None, "eintraege": [], "erlaubt": bool(wurzeln)}
     n, knoten = ordner_pruefen(wurzeln, pfad)
-    namen = sorted((k for k, v in knoten.items() if isinstance(v, dict) and not k.startswith(".")), key=lambda s: (s.lower(), s))
-    antwort = {"wurzeln": wurzeln, "pfad": n, "eintraege": [{"name": k, "ordner": True} for k in namen[:ORDNER_MAX]], "erlaubt": True}
-    if len(namen) > ORDNER_MAX:
+    if dateien and gesperrt(wurzeln, n):
+        raise OrdnerFehler(403, "gesperrt", "Dieser Ordner ist gesperrt (deutet auf Geheimnisse hin)")
+    sichtbar = lambda k: not k.startswith(".") and not (dateien and gesperrt(wurzeln, n.rstrip("/") + "/" + k))
+    ordnung = lambda s: (s.lower(), s)
+    ordner = sorted((k for k, v in knoten.items() if isinstance(v, dict) and sichtbar(k)), key=ordnung)
+    eintraege = [{"name": k, "ordner": True} for k in ordner[:ORDNER_MAX]]
+    zahl = len(ordner)
+    if dateien:
+        dateinamen = sorted((k for k, v in knoten.items() if not isinstance(v, dict) and sichtbar(k)), key=ordnung)
+        zahl += len(dateinamen)
+        for k in dateinamen[: max(0, ORDNER_MAX - len(eintraege))]:
+            eintraege.append({"name": k, "ordner": False, "groesse": len(knoten[k] if isinstance(knoten[k], bytes) else knoten[k].encode("utf-8"))})
+    antwort = {"wurzeln": wurzeln, "pfad": n, "eintraege": eintraege, "erlaubt": True}
+    if zahl > ORDNER_MAX:
         antwort["abgeschnitten"] = True
+    return antwort
+
+
+def datei_schwaerzen(text):
+    """Zeilenweise wie schwaerzenText() des Runners (verkürzt): Schlüssel-Wert-Paare, Bearer, Schlüsselblöcke."""
+    text = re.sub(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$)", "***PRIVATE KEY***", text)
+    zeilen = []
+    for zeile in text.split("\n"):
+        zeile = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]{6,}", "Bearer ***", zeile, flags=re.I)
+        zeile = re.sub(r"\b(authorization|token|passwort|password|passwd|secret|api[_-]?key)(\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|\S+)", r"\1\2***", zeile, flags=re.I)
+        zeilen.append(zeile)
+    return "\n".join(zeilen)
+
+
+def datei_lesen(wurzeln, roh, max_roh=None):
+    """Wie src/datei.js des Runners: {pfad, groesse, text, abgeschnitten, binaer: False, geaendert, geschwaerzt (nur wenn etwas ersetzt wurde)} oder {pfad, groesse, binaer: True}."""
+    if max_roh in (None, ""):
+        grenze = DATEI_STANDARD
+    else:
+        if not re.fullmatch(r"\d{1,12}", str(max_roh)) or int(max_roh) < 1:
+            raise OrdnerFehler(400, "ungueltig", "max muss eine ganze Zahl ab 1 sein")
+        grenze = int(max_roh)
+        if grenze > DATEI_HOECHST:
+            raise OrdnerFehler(413, "zu_gross", f"max darf höchstens {DATEI_HOECHST} Byte sein")
+    n = pfad_pruefen(wurzeln, roh)
+    if gesperrt(wurzeln, n):
+        raise OrdnerFehler(403, "gesperrt", "Diese Datei ist gesperrt (deutet auf Geheimnisse hin)")
+    knoten = ORDNER_BAUM
+    for teil in [t for t in n.split("/") if t]:
+        if not isinstance(knoten, dict) or teil not in knoten:
+            raise OrdnerFehler(404, "nicht_gefunden", "Datei nicht gefunden")
+        knoten = knoten[teil]
+    if isinstance(knoten, dict):
+        raise OrdnerFehler(400, "keine_datei", "Das ist keine reguläre Datei")
+    roh_bytes = knoten if isinstance(knoten, bytes) else knoten.encode("utf-8")
+    if b"\0" in roh_bytes[:8192]:
+        return {"pfad": n, "groesse": len(roh_bytes), "binaer": True}
+    teil = roh_bytes[:grenze]
+    text = teil.decode("utf-8", errors="ignore" if len(roh_bytes) > grenze else "replace")
+    geschwaerzt = datei_schwaerzen(text)
+    antwort = {"pfad": n, "groesse": len(roh_bytes), "text": geschwaerzt, "abgeschnitten": len(roh_bytes) > grenze, "binaer": False, "geaendert": DATEI_GEAENDERT}
+    if geschwaerzt != text:
+        antwort["geschwaerzt"] = True  # wie der Runner: das Feld steht nur, wenn etwas ersetzt wurde
     return antwort
 
 ANSI_TEXT = "\x1b[1mBau\x1b[0m gestartet\n\x1b[32mgruen ok\x1b[0m und \x1b[31mrot Fehler\x1b[0m\nFortschritt 10%\rFortschritt 100%\n"
@@ -137,6 +371,7 @@ class Sitzung:
         self.art = art
         self.bereich = bereich
         self.erstellt = erstellt
+        self.aktualisiert = erstellt  # letzte Aktivität (Suche: `aktualisiert`)
         self.eintraege = []  # Verlauf (für Ansicht und Snapshot)
         self.abonnenten = []  # (queue, Verbindungs-Objekt)
         self.laeuft = False
@@ -166,11 +401,24 @@ class Sitzung:
             e["model"] = model
         with self.z.sperre:
             self.eintraege.append(e)
+            self.aktualisiert = int(time.time() * 1000)
         return e
+
+    def kontext(self):
+        """usage.context wie beim Runner: Füllung = totalTokens der letzten Antwort, null nach einem Reset-Marker; window = Fenster des Modells."""
+        tokens = None
+        for e in self.eintraege:
+            if e.get("kind") in ("pi.reset", "pi.compaction"):
+                tokens = None
+            for m in e.get("model") or []:
+                t = (m.get("usage") or {}).get("totalTokens")
+                if m.get("role") == "assistant" and isinstance(t, (int, float)) and t > 0:
+                    tokens = t
+        return {"tokens": tokens, "window": KONTEXT_FENSTER}
 
     def snapshot(self):
         with self.z.sperre:
-            s = {"entries": list(self.eintraege), "agent": {"model": "probe-modell"}, "usage": {"models": {"probe/probe": USAGE_LEBENSZEIT}}}
+            s = {"entries": list(self.eintraege), "agent": {"model": "probe-modell"}, "usage": {"models": {"probe/probe": USAGE_LEBENSZEIT}, "tools": {}, "context": self.kontext()}}
             if self.laeuft:
                 s["run"] = True
                 s["generation"] = {"message": {"role": "assistant", "content": [{"type": "text", "text": self.teil}]}}
@@ -451,14 +699,32 @@ def handler(z):
             if p == "/api/modelle":
                 return self._json(200, {"ok": True, "modelle": MODELLE})
             if p == "/api/ordner":
-                pfad = parse_qs(urlparse(self.path).query).get("pfad", [None])[0]
+                abfrage = parse_qs(urlparse(self.path).query)
+                pfad = abfrage.get("pfad", [None])[0]
                 try:
-                    return self._json(200, {"ok": True, **ordner_auflisten(z.wurzeln, pfad)})
+                    return self._json(200, {"ok": True, **ordner_auflisten(z.wurzeln, pfad, abfrage.get("dateien", [""])[0] in ("1", "true"))})
                 except OrdnerFehler as f:
                     return self._json(f.status, {"ok": False, "fehler": f.code, "meldung": f.meldung, "wurzeln": z.wurzeln, "erlaubt": bool(z.wurzeln)})
+            if p == "/api/datei":
+                abfrage = parse_qs(urlparse(self.path).query)
+                try:
+                    gid = abfrage.get("gespraech", [None])[0]
+                    if gid and not z.sitzung(gid):
+                        raise OrdnerFehler(404, "gespraech_nicht_gefunden", "Gespräch nicht gefunden")
+                    return self._json(200, {"ok": True, **datei_lesen(z.wurzeln, abfrage.get("pfad", [None])[0], abfrage.get("max", [None])[0])})
+                except OrdnerFehler as f:
+                    return self._json(f.status, {"ok": False, "fehler": f.code, "meldung": f.meldung})
             if p == "/api/gespraeche":
-                # wie der echte Runner (gespraeche() in src/runner.js): archivierte Sitzungen stehen nicht in der Liste
-                return self._json(200, {"ok": True, "gespraeche": [s.liste() for s in z.sitzungen.values() if not s.archiviert]})
+                # wie der echte Runner (gespraeche() in src/runner.js): ohne ?archiv stehen archivierte Sitzungen nicht in der Liste;
+                # ?archiv=1 liefert nur Archivierte, ?archiv=alle beide
+                try:
+                    modus = suche_archiv_modus(parse_qs(urlparse(self.path).query).get("archiv", [None])[0])
+                except SucheFehler as f:
+                    return self._json(f.status, {"ok": False, "fehler": f.meldung})
+                return self._json(200, {"ok": True, "gespraeche": [s.liste() for s in z.sitzungen.values() if suche_passt(s, modus)]})
+            if p == "/api/suche":
+                status, koerper = suche_antwort(z, parse_qs(urlparse(self.path).query))
+                return self._json(status, koerper)
             if p == "/api/freigaben":
                 return self._json(200, {"ok": True, "freigaben": z.liste_freigaben()})
             if p == "/api/laeufe":

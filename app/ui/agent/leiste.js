@@ -246,6 +246,12 @@
       }
     }
 
+    /** „Keine archivierten Sitzungen.“ steht nur bei aufgeklapptem, leerem Archiv. */
+    function archivLeerZeigen() {
+      if (!refs.archivLeer || !refs.archivKopf) return;
+      refs.archivLeer.hidden = !(!refs.archivKopf.hidden && refs.archivKopf.getAttribute('aria-expanded') === 'true' && archivKnoten.size === 0);
+    }
+
     let zeichnet = false;
     function zeichne(daten, aktiv) {
       aktivId = aktiv;
@@ -267,9 +273,12 @@
       }
       if (refs.archiv) {
         abgleichen(refs.archiv, daten.archiv || [], archivKnoten, true);
-        if (refs.archivKopf) refs.archivKopf.hidden = !(daten.archiv || []).length;
+        // Kennt der Runner die Archivliste (daten.archivImmer), steht der Abschnitt auch ohne Einträge da („Keine archivierten Sitzungen.“)
+        const zeigeArchiv = (daten.archiv || []).length > 0 || !!daten.archivImmer;
+        if (refs.archivKopf) refs.archivKopf.hidden = !zeigeArchiv;
         if (refs.archivZahl) refs.archivZahl.textContent = String((daten.archiv || []).length);
-        if (!(daten.archiv || []).length) refs.archiv.hidden = true;
+        if (!zeigeArchiv) refs.archiv.hidden = true;
+        archivLeerZeigen();
       }
       refs.leer.hidden = (daten.sitzungen || []).length > 0;
       refs.weitereKopf.hidden = !(daten.weitere || []).length;
@@ -368,6 +377,7 @@
         const auf = liste.hidden;
         liste.hidden = !auf;
         kopf.setAttribute('aria-expanded', auf ? 'true' : 'false');
+        archivLeerZeigen();
       });
     }
     klappe(refs.weitereKopf, refs.weitere);

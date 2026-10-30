@@ -31,7 +31,8 @@
     async function api(methode, pfad, koerper) {
       const r = await f(basis + pfad, { method: methode, headers: koerper === undefined || koerper === null ? {} : { 'Content-Type': 'application/json' }, body: koerper === undefined || koerper === null ? undefined : JSON.stringify(koerper) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.ok === false) throw new Error(j.fehler || j.error || `HTTP ${r.status}`);
+      // Status und Kennwort des Runners bleiben am Fehler (die Seite ordnet sie zu: runner-wege.js), der Text bleibt wie bisher
+      if (!r.ok || j.ok === false) throw Object.assign(new Error(j.fehler || j.error || `HTTP ${r.status}`), { status: r.status, fehler: typeof j.fehler === 'string' ? j.fehler : '' });
       return j;
     }
     async function lesen(kanal, pfad, st) {
@@ -131,7 +132,9 @@
         tokOut += m.output || 0;
         kosten += (m.cost && m.cost.total) || 0;
       }
-      return { ctx: null, fenster: null, tokIn, tokOut, kosten };
+      // Neuere Runner nennen die Füllung und das Fenster selbst: usage.context = { tokens, window } (tokens null = unbekannt, z. B. nach leeren/verdichten)
+      const k = u.context && typeof u.context === 'object' ? u.context : null;
+      return { ctx: k ? zahl(k.tokens) : null, fenster: k ? zahl(k.window) : null, hatKontext: !!k && 'tokens' in k, tokIn, tokOut, kosten };
     }
     const t = u.totals || u.total || u;
     const c = u.context || {};
@@ -181,7 +184,8 @@
       titel: '',
       modell: '',
       ctx: null,
-      fenster: opts.fensterStandard || 128000, // Der Runner nennt die Fenstergröße noch nicht (/api/modelle hat kein contextWindow)
+      // Fenster: usage.context.window der Sitzung, sonst contextWindow des Modells aus GET /api/modelle (opts.modelle), sonst die Vorgabe (ältere Runner)
+      fenster: opts.fensterStandard || 128000,
       tokIn: null,
       tokOut: null,
       kosten: null,
@@ -200,7 +204,16 @@
     let adapter = null;
     let zeitgeber = null;
     let abmelden = null;
-    const status =() => opts.onStatus && opts.onStatus({ ...S, busy: view.busy, wartet: view.zustand().wartetAufFreigabe });
+    let fensterUsage = null; // usage.context.window der Sitzung (gewinnt vor der Modellliste)
+    let modellRoh = null; // agent.model, wie der Runner es nennt (Text oder Objekt)
+    function fensterNachfuehren() {
+      const ausListe = FP.wege && opts.modelle ? FP.wege.fensterAusModellen(opts.modelle(), modellRoh || S.modell) : null;
+      S.fenster = fensterUsage != null ? fensterUsage : ausListe != null ? ausListe : opts.fensterStandard || 128000;
+    }
+    const status =() => {
+      fensterNachfuehren();
+      return opts.onStatus && opts.onStatus({ ...S, busy: view.busy, wartet: view.zustand().wartetAufFreigabe });
+    };
     const view = FP.createChatView(opts.spalte, {
       scroller: opts.scroller,
       zumEnde: opts.zumEnde,
@@ -228,8 +241,8 @@
         },
         onUsage: (u) => {
           const s = usageSicht(u);
-          if (s.ctx != null) S.ctx = s.ctx;
-          if (s.fenster != null) S.fenster = s.fenster;
+          if (s.ctx != null || s.hatKontext) S.ctx = s.ctx; // nennt der Runner die Füllung (auch „unbekannt“), gilt sie
+          if (s.fenster != null) fensterUsage = s.fenster;
           if (s.tokIn != null) S.tokIn = s.tokIn;
           if (s.tokOut != null) S.tokOut = s.tokOut;
           if (s.kosten != null) S.kosten = s.kosten;
@@ -237,6 +250,7 @@
         },
         onAgent: (a) => {
           S.modell = modellName(a) || S.modell;
+          if (a && a.model) modellRoh = a.model;
           status();
         },
         onHinweis: (text, fehler) => view.addNote(text, fehler ? 'fehler' : ''),
@@ -294,6 +308,8 @@
       S.tokIn = null;
       S.tokOut = null;
       S.kosten = null;
+      fensterUsage = null;
+      modellRoh = null;
       view.clear();
       eingereiht.length = 0;
       neuerAdapter();
@@ -307,10 +323,13 @@
         adapter.replay(a.entries || [], false);
         if (a.usage && adapter) {
           const s = usageSicht(a.usage);
-          Object.assign(S, Object.fromEntries(Object.entries({ ctx: s.ctx, fenster: s.fenster, tokIn: s.tokIn, tokOut: s.tokOut, kosten: s.kosten }).filter(([, v]) => v != null)));
+          Object.assign(S, Object.fromEntries(Object.entries({ ctx: s.ctx, tokIn: s.tokIn, tokOut: s.tokOut, kosten: s.kosten }).filter(([, v]) => v != null)));
+          if (s.hatKontext) S.ctx = s.ctx;
+          if (s.fenster != null) fensterUsage = s.fenster;
         }
         if (a.meta && a.meta.titel) S.titel = a.meta.titel;
         if (a.meta && a.meta.modell) S.modell = a.meta.modell;
+        if (a.agent && a.agent.model) modellRoh = a.agent.model;
       } catch (f) {
         view.addNote(`Verlauf nicht ladbar: ${f.message || f}`, 'fehler');
       }
@@ -347,7 +366,10 @@
           S.trennung = null;
           if ((p.daten.entries || []).some((e) => e && e.kind === 'fyos.freigabe')) await ladeFreigaben();
           adapter.snapshot(p.daten);
-          if (p.daten.agent) S.modell = modellName(p.daten.agent) || S.modell;
+          if (p.daten.agent) {
+            S.modell = modellName(p.daten.agent) || S.modell;
+            if (p.daten.agent.model) modellRoh = p.daten.agent.model;
+          }
           break;
         case 'ereignisse': {
           const liste = Array.isArray(p.daten) ? p.daten : [];

@@ -58,3 +58,13 @@
   .ae-panel, .fp-panel:not([hidden]) ~ .ae-panel { width: 100%; right: 0; }
   .ae-dordner { display: none; }
 }
+
+/* Aktueller Stand vom Runner: Hinweise, lebender Dateibaum (Ordner laden beim Aufklappen) */
+.ae-hinweis { margin: 6px 0; font-size: 12px; color: var(--warn); }
+.ae-geschwaerzt { color: var(--leise); }
+.ae-knoten.lade { opacity: .7; }
+.ae-knoten .ae-groesse { margin-left: auto; font-size: 11px; color: var(--leise); font-variant-numeric: tabular-nums; }
+.ae-knoten .ae-gelesen-marke { margin-left: 6px; }
+.ae-knoten[data-beruehrt="1"] .ae-dname { color: var(--akzent); }
+.ae-baum-meldung { margin: 2px 0 2px 28px; font-size: 11.5px; color: var(--leise); }
+.ae-baum-meldung.fehler { color: var(--schlecht); }

@@ -47,7 +47,12 @@
           <button id="neuAnlegen" type="submit" class="primaer">Anlegen</button>
         </div>
       </form>
-      <nav class="leiste-liste" aria-label="Sitzungsliste">
+      <div id="sucheKasten" class="suche-kasten">
+        <input id="sucheFeld" type="search" class="suche-feld" placeholder="Sitzungen durchsuchen" aria-label="Sitzungen durchsuchen" aria-keyshortcuts="Meta+K Control+K /" aria-controls="sucheErgebnis" aria-expanded="false" autocomplete="off" spellcheck="false" maxlength="200">
+        <p id="sucheMeldung" class="suche-meldung" role="alert" hidden></p>
+      </div>
+      <nav class="leiste-liste" id="leisteListe" aria-label="Sitzungsliste">
+        <div id="sucheErgebnis" class="suche-ergebnis" role="listbox" aria-label="Suchtreffer" hidden></div>
         <div id="sitzungsliste" role="listbox" aria-label="Sitzungen" aria-orientation="vertical"></div>
         <p id="sitzungenLeer" class="leise leer-hinweis" hidden>Noch keine Sitzung.</p>
         <button id="weitereKopf" type="button" class="weitere-kopf" aria-expanded="false" aria-controls="weitereListe" hidden>
@@ -60,6 +65,7 @@
           Archiv <span id="archivZahl" class="chip">0</span>
         </button>
         <div id="archivListe" role="list" aria-label="Archivierte Sitzungen" hidden></div>
+        <p id="archivLeer" class="leise leer-hinweis" hidden>Keine archivierten Sitzungen.</p>
       </nav>
       <div class="leiste-fuss leise" id="leisteFuss"></div>
     </aside>
@@ -140,10 +146,12 @@
   <script src="terminal.js"></script>
   <script src="chat-renderer.js"></script>
   <script src="runner-adapter.js"></script>
+  <script src="runner-wege.js"></script>
   <script src="echt.js"></script>
   <script src="modus.js"></script>
   <script src="sitzungen.js"></script>
   <script src="leiste.js"></script>
+  <script src="suche.js"></script>
   <script src="freigaben.js"></script>
   <script src="aenderungen.js"></script>
   <script src="ordner.js"></script>

@@ -13,7 +13,8 @@ Die Chat-Seite bedient sich im Prüfmodus selbst (ui/agent/e2e.js, nur mit FYOS_
       laufende Sitzung markiert, neue Sitzung mit Arbeitsordner, neue Sitzung nur mit Namen (Enter im Namensfeld), Umbenennen im Kopf
       und in der Leiste (PATCH durch die Brücke, Esc, ohne Neuaufbau, Entwurf bleibt), Fehler des Runners klar, Archivieren und Wiederherstellen
       Panel „Änderungen“ (aenderungen-*: Knopf mit Zahl, Liste der Dateien aus den Datei-Werkzeugen, Diff, Vorschau, Dateibaum, Esc)
-      Kontextanzeige (kontext-plausibel: Füllung der letzten Antwort, nicht die Lebenszeitsumme) und Einstellungen-Knopf (einstellungen-knopf:
+      Archiv vom Runner, Suche, Datei-Vorschau und Dateibaum über den Runner (archiv-vom-runner, suche-*, kuerzel-suche, baum-mit-dateien, vorschau-*)
+      Kontextanzeige (kontext-plausibel: Füllung der letzten Antwort gegen das Fenster 262144 des Modells, nicht die Lebenszeitsumme) und Einstellungen-Knopf (einstellungen-knopf:
       der Befehl läuft ohne Fehler; A2b: danach gibt es ein zweites sichtbares Fenster, die Einstellungen; braucht die Bedienungshilfen-Erlaubnis
       für osascript, sonst "nicht prüfbar")
   A3 der Beobachter fragt Freigaben und Läufe ab (Tray), auch ohne dass die Seite etwas tut
@@ -68,7 +69,8 @@ ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz
             "aenderungen-baum", "aenderungen-esc", "wechsel-zu-zweiter", "wechsel-eigener-verlauf",
             "laufende-sitzung-markiert", "markierung-endet", "wechsel-erhaelt-sitzung", "wechsel-nichts-doppelt", "neue-sitzung",
             "neue-sitzung-mit-namen", "umbenennen-kopf", "umbenennen-ohne-neuaufbau", "umbenennen-esc", "umbenennen-leiste", "umbenennen-fehler-klar",
-            "archivieren", "wiederherstellen", "ende"]
+            "archivieren", "wiederherstellen", "archiv-vom-runner", "suche-treffer", "suche-archiv-treffer", "suche-esc", "kuerzel-suche", "baum-mit-dateien",
+            "vorschau-ueber-weg", "vorschau-geschwaerzt", "vorschau-gekuerzt", "vorschau-binaer", "vorschau-gesperrt", "ende"]
 
 
 def bauen(ausgabe):
@@ -170,6 +172,15 @@ def pruefe(app, arbeit):
                 e.melde("A2b", "es gibt zwei sichtbare Fenster: Chat und Einstellungen", len(fenster) >= 2, json.dumps(fenster))
             print("A3 Beobachter")
             e.melde("A3", "der Beobachter fragt Freigaben und Läufe ab", "/api/freigaben" in pfade and "/api/laeufe" in pfade)
+            # Wege von Archiv, Suche, Datei lesen und Dateiliste: nur GET, mit Token, mit der erwarteten Abfrage (alles durch die echte Brücke runner_anfrage)
+            wege = [x for x in z if "pfad" in x and x["methode"] == "GET"]
+            e.melde("A3", "Archiv, Suche, Datei und Dateiliste kamen als GET mit Token durch die Brücke",
+                    any(x["pfad"] == "/api/gespraeche?archiv=1" and x["auth"] for x in wege)
+                    and any(x["pfad"].startswith("/api/suche?q=Umbenannt&limit=20&archiv=alle") and x["auth"] for x in wege)
+                    and any(x["pfad"].startswith("/api/datei?pfad=%2Fprobe%2Fordner-a%2Fprojekt-eins%2FREADME%2Emd&gespraech=") and x["pfad"].endswith("&max=200000") and x["auth"] for x in wege)
+                    and any(x["pfad"].startswith("/api/ordner?pfad=%2Fprobe%2Fordner-a%2Fprojekt-eins&dateien=1") and x["auth"] for x in wege),
+                    json.dumps(sorted({x["pfad"][:90] for x in wege if x["pfad"].startswith(("/api/suche", "/api/datei", "/api/ordner", "/api/gespraeche?"))})[:12]))
+            e.melde("A3", "Suche und Datei lesen kamen nie mit einem anderen Verb als GET", all(x["methode"] == "GET" for x in z if "pfad" in x and x["pfad"].startswith(("/api/suche", "/api/datei"))))
             print("A4 Token")
             anfragen = [x for x in z if "pfad" in x]
             e.melde("A4", "jede Anfrage kam mit dem richtigen Token und dem Kopf X-FYOS-Agent", bool(anfragen) and all(x["auth"] and x["kopf"] for x in anfragen))

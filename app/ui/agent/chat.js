@@ -139,16 +139,25 @@
   );
 
   // --- Änderungen der Sitzung: Knopf „Änderungen (N)“ und Panel; abgeleitet aus den Datei-Werkzeugen im Verlauf der sichtbaren Sitzung ---
-  const aenderungen = FP.createAenderungen({
-    knopf: $('aenderungenKnopf'),
-    zahl: $('aenderungenZahl'),
-    panel: $('aenderungenPanel'),
-    zu: $('aenderungenZu'),
-    reiter: $('aenderungenReiter'),
-    reiterListe: $('aenderungenReiterListe'),
-    reiterBaum: $('aenderungenReiterBaum'),
-    inhalt: $('aenderungenInhalt'),
-  });
+  // Lesende Wege zum Runner für Archiv, Suche und Datei-Vorschau (GET über die Brücke, runner-wege.js)
+  const wege = FP.wege.createWege(transport);
+  const aenderungen = FP.createAenderungen(
+    {
+      knopf: $('aenderungenKnopf'),
+      zahl: $('aenderungenZahl'),
+      panel: $('aenderungenPanel'),
+      zu: $('aenderungenZu'),
+      reiter: $('aenderungenReiter'),
+      reiterListe: $('aenderungenReiterListe'),
+      reiterBaum: $('aenderungenReiterBaum'),
+      inhalt: $('aenderungenInhalt'),
+    },
+    {
+      // Vorschau und Dateibaum lesen den echten Stand vom Runner (GET /api/datei, GET /api/ordner?dateien=1); fehlt der Weg, bleibt der Stand aus dem Verlauf
+      datei: (abs, id) => wege.datei(abs, { gespraech: id, max: 200000 }),
+      ordner: (abs) => wege.ordner(abs),
+    }
+  );
   /** Arbeitsordner der Sitzung für relative Pfade: die Sitzung selbst, sonst der Arbeitsbereich aus der Liste. */
   function ordnerPfad(rec) {
     if (rec.cwd) return rec.cwd;
@@ -170,7 +179,10 @@
   }
 
   // --- Seitenleiste ---
-  // Sitzungen, die dieses Fenster archiviert hat: GET /api/gespraeche nennt archivierte nicht mehr, so bleibt „Wiederherstellen“ möglich (bis zum Neuladen)
+  // Archiv: Neuere Runner liefern die archivierten Sitzungen dauerhaft (GET /api/gespraeche?archiv=1, `archivServer`). Bei älteren Runnern nennt GET /api/gespraeche
+  // archivierte nicht mehr: dann stehen im Archiv nur die Sitzungen, die dieses Fenster archiviert hat (`archivLokal`, bis zum Neuladen), so bleibt „Wiederherstellen“ möglich.
+  let archivServer = []; // Einträge der Liste des Runners mit archiviert: true
+  let archivWeg = 'unbekannt'; // 'ja' (Runner kennt ?archiv=1), 'nein' (älterer Runner), 'unbekannt' (noch nicht geprüft oder Netzfehler)
   const archivLokal = new Map(); // String(id) → Eintrag der Liste
   const aenderung = FP.sitzungen.createAenderung(transport);
   const leiste = FP.createLeiste(
@@ -183,9 +195,59 @@
       archiv: $('archivListe'),
       archivKopf: $('archivKopf'),
       archivZahl: $('archivZahl'),
+      archivLeer: $('archivLeer'),
     },
     { beiWahl: (id) => wechsle(id), beiUmbenennen: (id, text) => umbenenne(id, text), beiArchivieren: (id, an) => archiviere(id, an) }
   );
+
+  // --- Suche über die Sitzungen (Feld oben in der Leiste; Cmd/Strg+K oder / holt den Fokus dorthin) ---
+  const suche = FP.createSuche(
+    { kasten: $('sucheKasten'), feld: $('sucheFeld'), meldung: $('sucheMeldung'), ergebnis: $('sucheErgebnis'), behaelter: $('leisteListe') },
+    { wege, beiWahl: (t) => waehleTreffer(t), beiEsc: () => eingabe.focus() }
+  );
+  const normal = (t) => String(t).toLowerCase().replace(/\s+/g, ' ');
+  /** Zur Stelle des Treffers blättern, wenn der geladene Verlauf sie enthält (sonst bleibt es beim Wechsel). Kein HTML: nur Textknoten werden verglichen. */
+  function springeZuTreffer(rec, t) {
+    const m = t.markierungen && t.markierungen[0];
+    if (!m || t.quelle === 'titel') return false;
+    const nadel = normal(t.ausschnitt.slice(m.start, m.start + m.laenge));
+    if (nadel.length < 2) return false;
+    const kontext = normal(t.ausschnitt.slice(Math.max(0, m.start - 20), m.start + m.laenge + 20));
+    const wurzel = rec.pane.querySelector('.spalte');
+    if (!wurzel) return false;
+    const lauf = document.createTreeWalker(wurzel, NodeFilter.SHOW_TEXT);
+    let beste = null;
+    let punkte = 0;
+    for (let n = lauf.nextNode(); n; n = lauf.nextNode()) {
+      if (!normal(n.nodeValue).includes(nadel)) continue;
+      const block = n.parentElement && n.parentElement.closest('p, li, pre, td, h1, h2, h3, h4, blockquote, div');
+      const p = block && normal(block.textContent).includes(kontext) ? 2 : 1;
+      if (p > punkte) {
+        beste = n.parentElement;
+        punkte = p;
+        if (p === 2) break;
+      }
+    }
+    if (!beste) return false;
+    if (typeof beste.scrollIntoView === 'function') beste.scrollIntoView({ block: 'center' });
+    beste.classList.add('treffer-blitz');
+    setTimeout(() => beste.classList.remove('treffer-blitz'), 2500);
+    return true;
+  }
+  async function waehleTreffer(t) {
+    await wechsle(t.id);
+    if (!aktiv || String(aktiv.id) !== String(t.id)) return;
+    if (t.archiviert && !aktiv.archivHinweis) {
+      aktiv.archivHinweis = true;
+      aktiv.chat.view.addNote('Diese Sitzung ist archiviert. Zum Weiterarbeiten im Abschnitt „Archiv“ der Seitenleiste „Wiederherstellen“ wählen.');
+    }
+    springeZuTreffer(aktiv, t);
+  }
+  function sucheOeffnen() {
+    if (!suche.verfuegbar) return false;
+    leisteUmschalten(true);
+    return suche.fokussiere();
+  }
 
   /** Umbenennen (Leiste und Kopf): PATCH, dann Liste, Kopf und Ansicht der Sitzung nachziehen, ohne etwas neu aufzubauen. */
   async function umbenenne(id, text) {
@@ -194,6 +256,8 @@
     if (g) g.titel = r.titel;
     const a = archivLokal.get(String(id));
     if (a) a.titel = r.titel;
+    const s = archivServer.find((x) => String(x.id) === String(id));
+    if (s) s.titel = r.titel;
     const rec = ansichten.get(String(id));
     if (rec) rec.chat.S.titel = r.titel;
     zeichneListe();
@@ -219,10 +283,12 @@
       } else {
         zeichneListe();
       }
+      ladeListe(); // neuere Runner: das Archiv kommt von dort zurück (dauerhaft)
     } else {
-      const g = archivLokal.get(schluessel);
+      const g = archivLokal.get(schluessel) || archivServer.find((x) => String(x.id) === schluessel);
       await aenderung.archivieren(id, false);
       archivLokal.delete(schluessel);
+      archivServer = archivServer.filter((x) => String(x.id) !== schluessel);
       if (g && !gespraeche.some((x) => String(x.id) === schluessel)) gespraeche.push({ ...g, archiviert: false });
       zeichneListe();
       ladeListe();
@@ -234,7 +300,11 @@
     const laufend = new Set();
     // die sichtbare Sitzung weiß es genau; die übrigen kennt nur der Aktivitätsstrom
     if (aktiv && aktiv.chat.view.busy) laufend.add(String(aktiv.id));
-    const daten = FP.sitzungen.sitzungsListe(gespraeche, bereiche, aktivitaet, { laufend, archivLokal: [...archivLokal.values()] });
+    // Archiv = Liste des Runners (dauerhaft) plus, was dieses Fenster eben archiviert hat und die Liste noch nicht nennt; je Id ein Eintrag, die lokale Fassung gewinnt
+    const archivAlle = new Map();
+    for (const g of archivServer) archivAlle.set(String(g.id), g);
+    for (const [k, g] of archivLokal) archivAlle.set(k, g);
+    const daten = FP.sitzungen.sitzungsListe(gespraeche, bereiche, aktivitaet, { laufend, archivLokal: [...archivAlle.values()], archivImmer: archivWeg === 'ja' });
     if (aktiv) {
       const z = [...daten.sitzungen, ...daten.weitere].find((x) => String(x.id) === String(aktiv.id));
       if (z && !aktiv.chat.view.busy) z.laeuft = false;
@@ -247,16 +317,50 @@
     zeichnenGeplant = true;
     setTimeout(zeichneListe, 80);
   }
+  /** Archivierte Sitzungen vom Runner holen (nur wenn er die Archivliste kennt). Netzfehler lassen den alten Stand stehen. */
+  async function ladeArchiv() {
+    if (archivWeg === 'nein') return;
+    try {
+      const a = await wege.archiv();
+      if (!a.unterstuetzt) {
+        // Der Runner hat den Parameter ignoriert (Antwort ohne `archiviert: true`): altes Verhalten, nur die selbst archivierten Sitzungen
+        archivWeg = 'nein';
+        archivServer = [];
+        return;
+      }
+      archivWeg = 'ja';
+      archivServer = a.liste;
+      // Der Runner ist die Quelle: was dieses Fenster zwischenzeitlich selbst vermerkt hat, steht jetzt in seiner Liste
+      archivLokal.clear();
+    } catch (f) {
+      if (f && f.art === 'weg_fehlt') archivWeg = 'nein';
+    }
+  }
   let listeLaeuft = null;
+  let listeNochmal = false;
+  /** Liste neu laden (Sitzungen und Archiv). Kommt während des Ladens eine neue Anforderung, läuft danach genau ein weiterer Durchgang (kein veralteter Stand nach einer Änderung). */
   function ladeListe() {
-    if (listeLaeuft) return listeLaeuft;
-    listeLaeuft = transport
-      .api('GET', '/api/gespraeche')
-      .then((r) => {
-        gespraeche = Array.isArray(r.gespraeche) ? r.gespraeche : [];
+    if (listeLaeuft) {
+      listeNochmal = true;
+      return listeLaeuft;
+    }
+    const einmal = async () => {
+      // erst die Sitzungen, dann das Archiv (nacheinander: scheitert die erste Anfrage, etwa mit abgelehntem Token, bleibt es bei einer Anfrage)
+      const r = await transport.api('GET', '/api/gespraeche').catch(() => null);
+      if (r) gespraeche = Array.isArray(r.gespraeche) ? r.gespraeche : [];
+      planeZeichnen();
+      if (aktiv) zeigeOrdner(aktiv);
+      if (r) {
+        await ladeArchiv();
         planeZeichnen();
-        if (aktiv) zeigeOrdner(aktiv);
-      })
+      }
+    };
+    listeLaeuft = (async () => {
+      do {
+        listeNochmal = false;
+        await einmal();
+      } while (listeNochmal);
+    })()
       .catch(() => {})
       .then(() => {
         listeLaeuft = null;
@@ -306,6 +410,7 @@
     const d = paneBauen(id);
     const rec = { id, pane: d.pane, chat: null, benutzt: Date.now(), entwurf: '', cwd: undefined };
     rec.chat = FP.createEchtChat(transport, {
+      modelle: () => modelle, // contextWindow je Modell (GET /api/modelle): Fenster der Kontextanzeige
       spalte: d.spalte,
       scroller: d.verlauf,
       zumEnde: d.zumEnde,
@@ -719,6 +824,19 @@
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
     const mod = e.metaKey || e.ctrlKey;
+    // Suche: Cmd/Strg+K immer, „/“ nur wenn der Fokus nicht in einem Eingabefeld liegt (sonst tippt man einen Schrägstrich)
+    if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+      if (sucheOeffnen()) e.preventDefault();
+      return;
+    }
+    if (e.key === '/' && !mod && !e.altKey) {
+      const a0 = document.activeElement;
+      const feld = a0 && (a0.tagName === 'INPUT' || a0.tagName === 'TEXTAREA' || a0.tagName === 'SELECT' || a0.isContentEditable);
+      if (!feld && sucheOeffnen()) {
+        e.preventDefault();
+        return;
+      }
+    }
     if (e.key === 'F2' && !mod && !e.altKey && !e.shiftKey && aktiv) {
       e.preventDefault();
       kopfBearbeiten();
@@ -811,7 +929,7 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)

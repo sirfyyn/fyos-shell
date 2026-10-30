@@ -46,11 +46,11 @@
     await melde('streaming-teilweise', teilweise, 'Text erscheint vor dem Ende');
     await melde('streaming-ganz', await warte(() => text().includes('Antwort Ende'), 15000), text().slice(-80));
 
-    // Kontextanzeige: die Attrappe liefert wie der Runner eine Lebenszeitsumme (input 9,7 Mio., 193 Mio. gesendet) und pro Antwort ihre usage (3500 Token):
-    // gezeigt wird die Füllung der letzten Antwort (3 % von 128k), nie die Summe als Kontext
+    // Kontextanzeige: die Attrappe liefert wie der Runner eine Lebenszeitsumme (input 9,7 Mio., 193 Mio. gesendet), pro Antwort ihre usage (3500 Token) und
+    // usage.context = { tokens, window } mit dem Fenster 262144 (Rhea): gezeigt wird die Füllung der letzten Antwort (1 % von 262,1k), nie die Summe als Kontext
     const ktx = $('kontext');
     const ktxOk = await warte(() => ktx.dataset.bekannt === '1', 15000);
-    await melde('kontext-plausibel', ktxOk && $('kontextText').textContent === '3 %' && ktx.getAttribute('aria-valuenow') === '3' && /^gesamt 193 M ein/.test($('tokens').textContent) && !/9729|100 %/.test(document.querySelector('.statuszeile').textContent), `${$('kontextText').textContent} | ${$('kontextTitel').textContent} | ${$('tokens').textContent}`);
+    await melde('kontext-plausibel', ktxOk && $('kontextText').textContent === '1 %' && ktx.getAttribute('aria-valuenow') === '1' && /262,1k/.test($('kontextTitel').textContent) && /^gesamt 193 M ein/.test($('tokens').textContent) && !/9729|100 %/.test(document.querySelector('.statuszeile').textContent), `${$('kontextText').textContent} | ${$('kontextTitel').textContent} | ${$('tokens').textContent}`);
 
     // Einstellungen-Knopf: ruft den Befehl, ohne Fehlermeldung (das Fenster selbst prüft e2e_agent.py von außen)
     const eKnopf = $('einstellungenKnopf');
@@ -281,8 +281,85 @@
     $('archivKopf').click();
     const imArchiv = !$('archivListe').hidden && $('archivListe').textContent.includes('Umbenannt E2E');
     $('archivListe').querySelector('.wiederherstellen').click();
-    const zurueckInListe = await warte(() => reihe(sid) && $('archivKopf').hidden, 15000);
+    const zurueckInListe = await warte(() => reihe(sid) && $('archivZahl').textContent === '0', 15000); // der Runner kennt die Archivliste: der Abschnitt bleibt, leer
     await melde('wiederherstellen', imArchiv && zurueckInListe && (await serverTitel(sid)) === 'Umbenannt E2E', `im Archiv: ${imArchiv}, Server: ${await serverTitel(sid)}`);
+
+    { // Archiv dauerhaft, Suche, Datei-Vorschau und Dateibaum über den Runner (docs/current/FYOS-AGENT-HUELLE.md, Abschnitt 9h)
+    const ap = window.__arbeitsplatz;
+    const tippe = (feld, wert) => {
+      feld.value = wert;
+      feld.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    // Archiv vom Runner: eine Sitzung wird NICHT über dieses Fenster archiviert (anderes Fenster, früherer Start); nach dem Laden der Liste steht sie im Archiv
+    await api('PATCH', `/api/gespraech/${sid}`, { archiviert: true });
+    await ap.ladeListe();
+    const dauerhaft = await warte(() => !reihe(sid) && $('archivZahl').textContent === '1' && !$('archivKopf').hidden, 15000);
+    if ($('archivListe').hidden) $('archivKopf').click();
+    await melde('archiv-vom-runner', dauerhaft && $('archivListe').textContent.includes('Umbenannt E2E'), `Zahl=${$('archivZahl').textContent} Text=${$('archivListe').textContent.slice(0, 60)}`);
+
+    // Suche: Treffer im Titel der archivierten Sitzung, Hervorhebung als <mark>, Marke „archiviert“; Klick wechselt dorthin mit Hinweis
+    const feld = $('sucheFeld');
+    feld.focus();
+    tippe(feld, 'Umbenannt');
+    await warte(() => document.querySelector(`.suche-treffer[data-id="${sid}"]`), 15000);
+    const treffer = document.querySelector(`.suche-treffer[data-id="${sid}"]`);
+    await melde('suche-treffer', !!treffer && !!treffer.querySelector('.suche-titel mark') && treffer.querySelector('.suche-titel mark').textContent.toLowerCase() === 'umbenannt' && !!treffer.querySelector('.suche-archiv') && $('leisteListe').classList.contains('suche-aktiv') && !document.querySelector('.suche-ergebnis img'), treffer ? treffer.textContent.slice(0, 80) : 'kein Treffer');
+    if (treffer) treffer.click();
+    const gewechselt = await warte(() => String(ap.aktiv && ap.aktiv.id) === String(sid) && text().includes('ist archiviert'), 15000);
+    await melde('suche-archiv-treffer', gewechselt, `aktiv=${ap.aktiv && ap.aktiv.id} ${text().slice(-100)}`);
+    feld.focus();
+    feld.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await melde('suche-esc', feld.value === '' && !$('leisteListe').classList.contains('suche-aktiv') && $('sucheErgebnis').hidden, `Feld=${feld.value}`);
+    // zurück in die Hauptsitzung und die Sitzung wiederherstellen
+    await ap.wechsle(1);
+    $('archivListe').querySelector('.wiederherstellen').click();
+    await warte(() => reihe(sid) && $('archivZahl').textContent === '0', 15000);
+    // Kürzel „/“ außerhalb eines Eingabefelds
+    document.activeElement.blur();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true }));
+    await melde('kuerzel-suche', document.activeElement === feld, `aktiv=${document.activeElement && document.activeElement.id}`);
+    feld.blur();
+
+    // Dateibaum und Vorschau über den Runner: eine Sitzung mit Arbeitsordner im erfundenen Baum der Attrappe
+    const neuSitzung = await api('POST', '/api/gespraeche', { titel: 'Dateien E2E', ordner: '/probe/ordner-a/projekt-eins' });
+    const nid = String((neuSitzung.gespraech || neuSitzung).id);
+    await ap.ladeListe();
+    await ap.wechsle(nid);
+    await warte(() => String(ap.aktiv && ap.aktiv.id) === nid && $('ordner').textContent === 'projekt-eins', 15000);
+    const pa = ap.aenderungen;
+    pa.zeige(true);
+    $('aenderungenReiterBaum').click();
+    const baumDa = await warte(() => document.querySelector('.ae-knoten[data-datei="README.md"]') && pa.lebend, 15000);
+    const namen = () => [...document.querySelectorAll('#aenderungenInhalt .ae-knoten .ae-dname')].map((x) => x.textContent);
+    await melde('baum-mit-dateien', !!baumDa && pa.lebend && namen().includes('lang.txt') && namen().includes('src') && namen().includes('docs') && !namen().includes('.env') && !namen().includes('server.pem') && !namen().includes('.versteckt'), namen().join('|'));
+    document.querySelector('.ae-knoten[data-ordner="src"]').click();
+    await warte(() => document.querySelector('.ae-knoten[data-datei="src/haupt.py"]'), 10000);
+    const code = () => [...document.querySelectorAll('#aenderungenInhalt .ae-code .code')].map((x) => x.textContent).join('|');
+    document.querySelector('.ae-knoten[data-datei="README.md"]').click();
+    const readmeOk = await warte(() => code() === '# Probe|Hallo Welt', 10000);
+    await melde('vorschau-ueber-weg', readmeOk && /aktuell vom Runner gelesen/.test(document.querySelector('#aenderungenInhalt .ae-quelle').textContent), code());
+    document.querySelector('#aenderungenInhalt .ae-zurueck').click();
+    document.querySelector('.ae-knoten[data-datei="src/haupt.py"]').click();
+    const geschwaerzt = await warte(() => document.querySelector('#aenderungenInhalt .ae-geschwaerzt'), 10000);
+    await melde('vorschau-geschwaerzt', geschwaerzt && code().includes('PASSWORD=***') && !code().includes('geheim123'), code());
+    document.querySelector('#aenderungenInhalt .ae-zurueck').click();
+    document.querySelector('.ae-knoten[data-datei="lang.txt"]').click();
+    const gekuerzt = await warte(() => /Gekürzt/.test((document.querySelector('#aenderungenInhalt .ae-quelle') || {}).textContent || ''), 10000);
+    await melde('vorschau-gekuerzt', gekuerzt, (document.querySelector('#aenderungenInhalt .ae-quelle') || {}).textContent);
+    document.querySelector('#aenderungenInhalt .ae-zurueck').click();
+    document.querySelector('.ae-knoten[data-datei="src/bild.png"]').click();
+    await warte(() => document.querySelector('#aenderungenInhalt .ae-binaer'), 10000);
+    const binaer = document.querySelector('#aenderungenInhalt .ae-binaer');
+    await melde('vorschau-binaer', !!binaer && /^Binärdatei, \d+ Byte$/.test(binaer.textContent) && !document.querySelector('#aenderungenInhalt .ae-code'), binaer ? binaer.textContent : 'keine Anzeige');
+    document.querySelector('#aenderungenInhalt .ae-zurueck').click();
+    pa.oeffneVorschau('.env');
+    await warte(() => document.querySelector('#aenderungenInhalt .ae-grund[data-grund="gesperrt"]'), 10000);
+    const gesperrt = document.querySelector('#aenderungenInhalt .ae-grund[data-grund="gesperrt"]');
+    await melde('vorschau-gesperrt', !!gesperrt && !document.querySelector('#aenderungenInhalt .ae-code') && !/Token/i.test($('aenderungenInhalt').textContent), gesperrt ? gesperrt.textContent : 'keine Meldung');
+    pa.zeige(false);
+    await ap.wechsle(1);
+    }
+
     await melde('ende', true, '');
   }
   lauf().catch((f) => melde('abgebrochen', false, (f && f.message) || f));

@@ -460,5 +460,219 @@ class OrdnerAusTests(OrdnerTests):
     test_ausbrueche_sind_403_ausserhalb = None
 
 
+class DateiBasis(Basis):
+    ohne_ordner = False
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if cls.ohne_ordner:
+            cls.z.wurzeln = []
+
+    roh = OrdnerTests.roh
+    liste = OrdnerTests.liste
+
+    def datei(self, pfad, **extra):
+        q = "pfad=" + urllib.parse.quote(pfad, safe="") + "".join(f"&{k}={urllib.parse.quote(str(v), safe='')}" for k, v in extra.items())
+        return self.roh("/api/datei?" + q)
+
+
+class DateiTests(DateiBasis):
+    """GET /api/datei und GET /api/ordner?dateien=1 in derselben Form wie der Runner (deploy/runner/pi-durable/test/datei.test.js)."""
+
+    def test_text_wird_gelesen(self):
+        status, d = self.datei("/probe/ordner-a/liesmich.txt")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            {k: d[k] for k in ("ok", "pfad", "text", "abgeschnitten", "binaer")},
+            {"ok": True, "pfad": "/probe/ordner-a/liesmich.txt", "text": "Grüße aus der Attrappe\n", "abgeschnitten": False, "binaer": False},
+        )
+        self.assertEqual(d["groesse"], len("Grüße aus der Attrappe\n".encode()))
+        self.assertIsInstance(d["geaendert"], int)
+        self.assertNotIn("geschwaerzt", d, "das Feld steht nur, wenn etwas ersetzt wurde")
+
+    def test_geschwaerzt_nur_wenn_etwas_ersetzt_wurde(self):
+        status, d = self.datei("/probe/ordner-a/projekt-eins/src/haupt.py")
+        self.assertEqual(status, 200)
+        self.assertIs(d["geschwaerzt"], True)
+        self.assertIn("PASSWORD=***", d["text"])
+        self.assertNotIn("geheim123", d["text"])
+
+    def test_abschneiden_und_max(self):
+        status, d = self.datei("/probe/ordner-a/projekt-eins/lang.txt")
+        self.assertEqual((status, len(d["text"]), d["abgeschnitten"], d["groesse"]), (200, 200000, True, 300000))
+        status, d = self.datei("/probe/ordner-a/projekt-eins/lang.txt", max=50)
+        self.assertEqual((len(d["text"]), d["abgeschnitten"]), (50, True))
+        self.assertEqual(self.datei("/probe/ordner-a/liesmich.txt", max=1048577)[0], 413)
+        self.assertEqual(self.datei("/probe/ordner-a/liesmich.txt", max=1048576)[0], 200)
+        for m in ("0", "abc", "-1", "1.5"):
+            self.assertEqual(self.datei("/probe/ordner-a/liesmich.txt", max=m)[0], 400, m)
+
+    def test_binaerdatei_ohne_inhalt(self):
+        status, d = self.datei("/probe/ordner-a/projekt-eins/src/bild.png")
+        self.assertEqual(status, 200)
+        self.assertEqual((d["binaer"], d["groesse"]), (True, 16))
+        self.assertNotIn("text", d)
+
+    def test_schwaerzung(self):
+        status, d = self.datei("/probe/ordner-a/projekt-eins/src/haupt.py")
+        self.assertEqual((status, d["text"]), (200, 'print("Grüße")\nPASSWORD=***\n'))
+
+    def test_sperrliste(self):
+        for p in ["/probe/ordner-a/projekt-eins/.env", "/probe/ordner-a/projekt-eins/server.pem", "/probe/ordner-a/nicht-da.pem"]:
+            status, d = self.datei(p)
+            self.assertEqual((status, d["fehler"]), (403, "gesperrt"), p)
+
+    def test_ausbrueche_und_ungueltiges(self):
+        for p in ["/probe/ordner-a/../draussen", "/probe/draussen/geheim", "/etc/passwd", "/", "/probe/ordner-ax/x"]:
+            status, d = self.datei(p)
+            self.assertEqual((status, d["fehler"]), (403, "ausserhalb"), p)
+        for p in ["relativ.txt", ".", "/probe/ordner-a/liesmich.txt\0"]:
+            status, d = self.datei(p)
+            self.assertEqual((status, d["fehler"]), (400, "ungueltig"), repr(p))
+        self.assertEqual(self.roh("/api/datei")[0], 400)
+        self.assertEqual(self.datei("/probe/ordner-a/gibtsnicht.txt")[0], 404)
+        status, d = self.datei("/probe/ordner-a/projekt-eins")
+        self.assertEqual((status, d["fehler"]), (400, "keine_datei"))
+
+    def test_gespraech_und_token(self):
+        self.assertEqual(self.datei("/probe/ordner-a/liesmich.txt", gespraech=1)[0], 200)
+        self.assertEqual(self.datei("/probe/ordner-a/liesmich.txt", gespraech=9999)[0], 404)
+        self.assertEqual(self.roh("/api/datei?pfad=%2Fprobe%2Fordner-a%2Fliesmich.txt", token="x" * 20)[0], 401)
+
+    def test_dateiliste_ordner_zuerst_ohne_gesperrte(self):
+        status, d = self.roh("/api/ordner?dateien=1&pfad=" + urllib.parse.quote("/probe/ordner-a/projekt-eins", safe=""))
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [(e["name"], e["ordner"]) for e in d["eintraege"]],
+            [("docs", True), ("src", True), ("lang.txt", False), ("README.md", False)],
+        )
+        self.assertEqual(d["eintraege"][2]["groesse"], 300000)
+        status, d = self.roh("/api/ordner?dateien=1&pfad=" + urllib.parse.quote("/probe/ordner-a", safe=""))
+        self.assertEqual([e["name"] for e in d["eintraege"]], ["Notizen", "projekt-eins", "projekt-zwei", "liesmich.txt"])
+        # ohne den Schalter wie bisher: nur Ordner, ohne groesse
+        status, d = self.liste("/probe/ordner-a")
+        self.assertEqual([e for e in d["eintraege"] if e["ordner"] is False], [])
+
+    def test_dateiliste_grenze_500(self):
+        status, d = self.roh("/api/ordner?dateien=1&pfad=" + urllib.parse.quote("/probe/ordner-b/viele", safe=""))
+        self.assertEqual((status, len(d["eintraege"]), d.get("abgeschnitten")), (200, 500, True))
+
+
+class DateiAusTests(DateiBasis):
+    """Ohne erlaubte Wurzeln (--ohne-ordner): jede Datei 403."""
+
+    ohne_ordner = True
+
+    def test_alles_403(self):
+        status, d = self.datei("/probe/ordner-a/liesmich.txt")
+        self.assertEqual((status, d["fehler"]), (403, "ausserhalb"))
+
+
+class SucheArchivTests(Basis):
+    """Archiv-Parameter, Suche und Kontextfenster in derselben Form wie der echte Runner (deploy/runner/pi-durable/test/suche-archiv.test.js)."""
+
+    def roh(self, pfad, daten=None, token=TOKEN):
+        req = urllib.request.Request(self.basis + pfad, data=None if daten is None else json.dumps(daten).encode(), method="GET" if daten is None else "POST")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as a:
+                return a.status, json.loads(a.read())
+        except urllib.error.HTTPError as f:
+            return f.code, json.loads(f.read())
+
+    def sprich(self, sid, text, erwartet):
+        """Eine Nachricht senden und warten, bis die Antwort des Szenarios im Verlauf steht."""
+        vorher = len([e for e in self.anfrage(f"/api/gespraech/{sid}/ansicht")["entries"] if e["kind"] == "pi.message"])
+        self.anfrage(f"/api/gespraech/{sid}/nachricht", {"text": text})
+        ende = time.time() + 8
+        while time.time() < ende:
+            if len([e for e in self.anfrage(f"/api/gespraech/{sid}/ansicht")["entries"] if e["kind"] == "pi.message"]) > vorher:
+                return
+            time.sleep(0.05)
+        self.fail(f"keine Antwort auf {erwartet}")
+
+    def suche(self, q, extra=""):
+        return self.roh("/api/suche?q=" + urllib.parse.quote(q, safe="") + extra)
+
+    def test_archiv_parameter(self):
+        a = self.anfrage("/api/gespraeche", {"titel": "Archiv-Test A"})["gespraech"]["id"]
+        b = self.anfrage("/api/gespraeche", {"titel": "Archiv-Test B"})["gespraech"]["id"]
+        self.patch(f"/api/gespraech/{b}", {"archiviert": True})
+        ids = lambda pfad: [g["id"] for g in self.anfrage(pfad)["gespraeche"]]  # noqa: E731
+        standard = self.anfrage("/api/gespraeche")
+        self.assertEqual(sorted(standard), ["gespraeche", "ok"])
+        self.assertIn(a, ids("/api/gespraeche"))
+        self.assertNotIn(b, ids("/api/gespraeche"))
+        self.assertEqual(ids("/api/gespraeche?archiv=0"), ids("/api/gespraeche"))
+        self.assertTrue(all(g["archiviert"] is False for g in standard["gespraeche"]))
+        nur = self.anfrage("/api/gespraeche?archiv=1")["gespraeche"]
+        self.assertIn(b, [g["id"] for g in nur])
+        self.assertTrue(all(g["archiviert"] is True for g in nur))
+        alle = ids("/api/gespraeche?archiv=alle")
+        self.assertIn(a, alle)
+        self.assertIn(b, alle)
+        status, d = self.roh("/api/gespraeche?archiv=vielleicht")
+        self.assertEqual((status, d["ok"]), (400, False))
+        self.patch(f"/api/gespraech/{b}", {"archiviert": False})
+        self.assertIn(b, ids("/api/gespraeche"))
+        self.assertNotIn(b, ids("/api/gespraeche?archiv=1"))
+
+    def test_suche_titel_verlauf_offsets_archiv(self):
+        sid = self.anfrage("/api/gespraeche", {"titel": "Rechnung Mahnung"})["gespraech"]["id"]
+        status, d = self.suche("RECHNUNG")
+        self.assertEqual(status, 200)
+        self.assertTrue(d["ok"] and isinstance(d["abgeschnitten"], bool))
+        t = next(x for x in d["treffer"] if x["id"] == sid)
+        for feld in ("id", "titel", "archiviert", "aktualisiert", "ausschnitt", "start", "laenge", "zahl"):
+            self.assertIn(feld, t)
+        self.assertEqual(t["ausschnitt"][t["start"] : t["start"] + t["laenge"]].lower(), "rechnung")
+        # Verlauf: Mensch und Agent, mehrere Wörter, Werkzeug-Rohdaten nicht
+        self.sprich(sid, "Bitte Zebrafink prüfen", "Zebrafink")
+        d = self.suche("zebrafink antwort")[1]
+        t = next(x for x in d["treffer"] if x["id"] == sid)
+        self.assertEqual(t["quelle"], "verlauf")
+        self.assertGreaterEqual(t["zahl"], 1)
+        self.sprich(sid, "werkzeug bitte", "Werkzeug fertig.")  # das Ergebnis „Inhalt der Probe“ steht nur im Werkzeug-Eintrag
+        self.assertEqual(self.suche("Inhalt der Probe")[1]["treffer"], [])
+        self.assertIn(sid, [x["id"] for x in self.suche("Werkzeug fertig")[1]["treffer"]])
+        # Archivierte nur mit Parameter
+        self.patch(f"/api/gespraech/{sid}", {"archiviert": True})
+        self.assertNotIn(sid, [x["id"] for x in self.suche("zebrafink")[1]["treffer"]])
+        nur = self.suche("zebrafink", "&archiv=1")[1]["treffer"]
+        self.assertEqual([x["id"] for x in nur], [sid])
+        self.assertTrue(nur[0]["archiviert"])
+        self.assertIn(sid, [x["id"] for x in self.suche("zebrafink", "&archiv=alle")[1]["treffer"]])
+        self.patch(f"/api/gespraech/{sid}", {"archiviert": False})
+
+    def test_suche_ausschnitt_limit_und_fehlerformen(self):
+        sid = self.anfrage("/api/gespraeche", {"titel": "Lang"})["gespraech"]["id"]
+        self.sprich(sid, "Füllwort " * 60 + "ÄRGER mit der Nadel " + "danach " * 60, "Antwort")
+        d = self.suche("ärger nadel")[1]
+        t = next(x for x in d["treffer"] if x["id"] == sid)
+        self.assertLessEqual(len(t["ausschnitt"]), 160)
+        self.assertEqual(t["ausschnitt"][t["start"] : t["start"] + t["laenge"]], "ÄRGER")
+        self.assertEqual([t["ausschnitt"][m["start"] : m["start"] + m["laenge"]].lower() for m in t["markierungen"]], ["ärger", "nadel"])
+        self.assertEqual(len(self.suche("Probe", "&limit=1")[1]["treffer"]), 1)
+        for pfad in ("/api/suche", "/api/suche?q=a", "/api/suche?q=ab&limit=0", "/api/suche?q=ab&limit=x", "/api/suche?q=ab&archiv=?", "/api/suche?q=a+b+c+d+e+f+g"):
+            status, d = self.roh(pfad)
+            self.assertEqual((status, d["ok"], type(d["fehler"])), (400, False, str), pfad)
+        self.assertEqual(self.roh("/api/suche?q=probe", token="x" * 20)[0], 401)
+        self.assertEqual(self.roh("/api/suche?q=probe", token=None)[0], 401)
+
+    def test_kontextfenster_in_modellen_ansicht_und_snapshot(self):
+        for m in self.anfrage("/api/modelle")["modelle"]:
+            self.assertEqual(m["contextWindow"], 262144)
+        sid = self.anfrage("/api/gespraeche", {"titel": "Kontext"})["gespraech"]["id"]
+        self.assertEqual(self.anfrage(f"/api/gespraech/{sid}/ansicht")["usage"]["context"], {"tokens": None, "window": 262144})
+        self.sprich(sid, "Frage", "Antwort")
+        self.assertEqual(self.anfrage(f"/api/gespraech/{sid}/ansicht")["usage"]["context"], {"tokens": 3500, "window": 262144})
+        self.assertIn("models", self.anfrage(f"/api/gespraech/{sid}/ansicht")["usage"])
+        self.z.sitzung(sid).eintrag("pi.reset", {"vorher": 1, "nachher": 0})  # leeren: die Füllung ist unbekannt, das Fenster bleibt
+        self.assertEqual(self.anfrage(f"/api/gespraech/{sid}/ansicht")["usage"]["context"], {"tokens": None, "window": 262144})
+        self.assertEqual(self.z.sitzung(sid).snapshot()["usage"]["context"], {"tokens": None, "window": 262144})
+
+
 if __name__ == "__main__":
     unittest.main()

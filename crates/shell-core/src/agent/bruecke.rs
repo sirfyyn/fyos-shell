@@ -57,6 +57,15 @@ pub fn fehler_aus_status(code: u16, meldung: Option<&str>) -> Fehler {
 /// Wie [`fehler_aus_status`], aber mit dem angefragten Weg: ein 404 auf `/api/ordner?pfad=…` heißt „Ordner nicht vorhanden“
 /// (ein 404 auf `/api/ordner` ohne Pfad heißt: der Runner kennt die Ordnerliste nicht und bleibt ein `RUNNER_FEHLER`).
 pub fn fehler_aus_status_fuer(pfad: &str, code: u16, meldung: Option<&str>) -> Fehler {
+    // Datei lesen (`/api/datei`): 400 bis 499 außer 401 sind Antworten über die Datei (gesperrt, verwehrt, ausserhalb, nicht_gefunden …), kein Tokenfehler;
+    // der Text des Runners (`fehler`: das Kennwort) bleibt im Fehler, die Seite ordnet ihn zu
+    if (pfad == "/api/datei" || pfad.starts_with("/api/datei?")) && (400..500).contains(&code) && code != 401 {
+        return Fehler::RunnerFehler { status: code, text: meldung.map(str::trim).filter(|m| !m.is_empty()).map(str::to_string) };
+    }
+    // Dateiliste (`/api/ordner?…`): ein gesperrter oder nicht lesbarer Ordner ist ebenfalls kein Tokenfehler
+    if pfad.starts_with("/api/ordner?") && code == 403 && matches!(meldung.map(str::trim), Some("gesperrt") | Some("verwehrt")) {
+        return Fehler::RunnerFehler { status: code, text: meldung.map(str::trim).map(str::to_string) };
+    }
     if code == 404 && (pfad.starts_with("/api/ordner?") && pfad.contains("pfad=")) {
         return Fehler::OrdnerNichtGefunden;
     }
@@ -158,6 +167,47 @@ mod tests {
         assert!(pfad_erlaubt("/api/ordner?pfad=%2Fx") && pfad_erlaubt("/api/ordner/erlauben"));
         assert!(pfad_reserviert("/api/ordner/erlauben") && pfad_reserviert("/api/ordner/erlauben/?x=1"));
         assert!(!pfad_reserviert("/api/ordner") && !pfad_reserviert("/api/ordner?pfad=/api/ordner/erlauben"));
+    }
+
+    #[test]
+    fn suche_und_datei_gehen_durch_die_bruecke_nur_lesend_und_unter_api() {
+        // Suche, Archivliste, Datei lesen und Dateiliste (Zweig apps/agent-suche-archiv): alles GET mit Abfrage unter /api/, URL-kodiert
+        for gut in [
+            "/api/suche?q=fehler%20suche&limit=20&archiv=alle",
+            "/api/gespraeche?archiv=1",
+            "/api/datei?pfad=%2Fprobe%2Fordner-a%2Fliesmich.txt&gespraech=1&max=200000",
+            "/api/ordner?pfad=%2Fprobe%2Fordner-a&dateien=1",
+            "/api/modelle",
+        ] {
+            assert!(pfad_erlaubt(gut) && !pfad_reserviert(gut), "{gut}");
+        }
+        assert_eq!(methode_erlaubt("get"), Some("GET"));
+        // ein Weg außerhalb von /api/, ein Rückweg und ein fremdes Ziel gehen weiter nicht
+        for schlecht in ["/suche?q=x", "/api/suche?q=a b", "/api/datei?pfad=/x/../etc/passwd", "/api/datei?pfad=https://evil.example.org/x", "https://evil.example.org/api/suche?q=x"] {
+            assert!(!pfad_erlaubt(schlecht), "{schlecht}");
+        }
+        // reserviert bleibt nur das Erlauben von Ordnern; Datei und Suche sind es nicht
+        assert!(!pfad_reserviert("/api/datei?pfad=%2Fapi%2Fordner%2Ferlauben") && !pfad_reserviert("/api/suche?q=ordner"));
+    }
+
+    #[test]
+    fn dateifehler_sind_keine_tokenfehler() {
+        // 403 gesperrt/verwehrt/ausserhalb und 404 nicht_gefunden auf /api/datei bleiben RUNNER_FEHLER mit dem Kennwort des Runners im Text
+        for (status, wort) in [(403u16, "gesperrt"), (403, "verwehrt"), (403, "ausserhalb"), (404, "nicht_gefunden"), (404, "gespraech_nicht_gefunden"), (400, "keine_datei"), (413, "zu_gross")] {
+            let f = fehler_aus_status_fuer("/api/datei?pfad=%2Fx", status, Some(wort));
+            assert_eq!(f.code(), "RUNNER_FEHLER", "{status} {wort}");
+            assert!(f.meldung().details.unwrap().contains(&format!("HTTP {status}: {wort}")), "{status} {wort}");
+        }
+        // ein 401 ist weiter ein Tokenfehler; ein alter Runner ohne den Weg antwortet 404 mit „Unbekannte Route“ (RUNNER_FEHLER, die Seite erkennt es am Text)
+        assert_eq!(fehler_aus_status_fuer("/api/datei?pfad=%2Fx", 401, Some("Nicht erlaubt")).code(), "TOKEN_ABGELEHNT");
+        let alt = fehler_aus_status_fuer("/api/suche?q=ab", 404, Some("Unbekannte Route: GET /api/suche"));
+        assert_eq!(alt.code(), "RUNNER_FEHLER");
+        assert!(alt.meldung().details.unwrap().contains("Unbekannte Route"));
+        // Dateiliste: gesperrter Ordner ist RUNNER_FEHLER; „ausserhalb“ bleibt ORDNER_AUSSERHALB
+        assert_eq!(fehler_aus_status_fuer("/api/ordner?pfad=%2Fx&dateien=1", 403, Some("gesperrt")).code(), "RUNNER_FEHLER");
+        assert_eq!(fehler_aus_status_fuer("/api/ordner?pfad=%2Fx&dateien=1", 403, Some("ausserhalb")).code(), "ORDNER_AUSSERHALB");
+        // andere Wege unverändert
+        assert_eq!(fehler_aus_status_fuer("/api/gespraech/9", 403, Some("gesperrt")).code(), "TOKEN_ABGELEHNT");
     }
 
     #[test]

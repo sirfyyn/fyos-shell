@@ -1,11 +1,13 @@
 /* Änderungen-Panel des Arbeitsplatzes: zeigt, welche Dateien der Agent in der offenen Sitzung geschrieben oder bearbeitet hat.
  *
- * Quelle sind allein die Werkzeugaufrufe im Verlauf (write, edit, multiedit, str_replace; read für den Ausgangsstand): der Adapter
- * (runner-adapter.js) sammelt sie beim Abspielen des Verlaufs und beim Live-Strom, `sammle()` leitet daraus die Dateiliste ab.
- * Der Runner hat KEINEN Weg, Dateien des Arbeitsordners zu lesen (siehe docs/current/FYOS-AGENT-HUELLE.md, Abschnitt 9g): Vorschau und
- * Dateibaum kommen darum aus dem Verlauf (zuletzt geschriebener Inhalt mit den späteren Bearbeitungen, sonst das Ergebnis des letzten Lesens).
+ * Die LISTE der geänderten Dateien kommt allein aus den Werkzeugaufrufen im Verlauf (write, edit, multiedit, str_replace; read für den Ausgangsstand): der
+ * Adapter (runner-adapter.js) sammelt sie beim Abspielen des Verlaufs und beim Live-Strom, `sammle()` leitet daraus die Dateiliste ab.
+ * VORSCHAU und DATEIBAUM lesen, wenn der Runner die Wege hat (docs/current/FYOS-AGENT-HUELLE.md, Abschnitt 9h), den echten Stand: opts.datei(absPfad, sitzungId)
+ * (GET /api/datei) und opts.ordner(absPfad) (GET /api/ordner?dateien=1); beide liefert chat.js über runner-wege.js, dieses Modul kennt weder Transport noch Wege.
+ * Fehlt der Weg (älterer Runner) oder die Datei, bleibt der Stand aus dem Verlauf (zuletzt geschriebener Inhalt mit den späteren Bearbeitungen, sonst das
+ * Ergebnis des letzten Lesens) und der Baum zeigt die berührten Dateien.
  *
- * Reine Teile (ohne DOM): sammle, vorschau, baum, relativ. Oberfläche: createAenderungen(refs, opts). Texte kommen aus dem Verlauf und werden
+ * Reine Teile (ohne DOM): sammle, vorschau, baum, relativ. Oberfläche: createAenderungen(refs, opts). Texte kommen aus dem Verlauf und vom Runner und werden
  * nur als Text eingesetzt. Der Diff wird vom Renderer der Verlaufskarten gebaut (FP.baueDiff in chat-renderer.js), nichts doppelt.
  */
 (function (G) {
@@ -228,11 +230,20 @@
   const QUELLE_TEXT = {
     geschrieben: 'Stand: zuletzt vom Agenten in dieser Sitzung geschrieben. Änderungen von außen danach sind hier nicht sichtbar.',
     gelesen: 'Stand: beim letzten Lesen durch den Agenten in dieser Sitzung.',
+    runner: 'Stand: aktuell vom Runner gelesen.',
   };
+  /** Fehler des Runners, bei denen die Vorschau nichts aus dem Verlauf zeigt (die Datei ist nicht lesbar, der Verlauf soll sie nicht umgehen).
+   *  „ausserhalb“ gehört nicht dazu: ein Arbeitsordner außerhalb der freigegebenen Wurzeln ist üblich, dort bleibt der Stand aus dem Verlauf (mit Hinweis). */
+  const HART = new Set(['gesperrt', 'verwehrt', 'keine_datei', 'ungueltig', 'zu_gross', 'gespraech', 'zugang']);
+  const MAX_LIVE_ORDNER = 12; // so viele Ordner lädt der Baum von selbst (Ordner mit berührten Dateien); weitere erst beim Aufklappen
+  const absolut = (p) => p.startsWith('/') || /^[A-Za-z]:\//.test(p);
+  const verbinde = (rel, name) => (rel ? `${rel}/${name}` : name);
+  const groesseText = (n) => (n == null ? '' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1).replace('.', ',')} KB` : `${(n / 1048576).toFixed(1).replace('.', ',')} MB`);
 
   /**
    * refs: { knopf, zahl, panel, zu, hinweis, reiter, reiterListe, reiterBaum, inhalt }
-   * opts: { beiAenderung(anzahl) }
+   * opts: { beiAenderung(anzahl), datei(absPfad, sitzungId) → Promise<{ art: 'text'|'binaer', text, groesse, abgeschnitten, geschwaerzt, geaendert }> (Fehler mit .art),
+   *         ordner(absPfad) → Promise<{ eintraege: [{ name, ordner, groesse }], abgeschnitten }> }
    */
   function createAenderungen(refs, opts) {
     opts = opts || {};
@@ -254,8 +265,15 @@
     let vorschauPfad = null;
     let zurueckModus = 'liste';
     const offen = new Set(); // Pfade mit aufgeklapptem Diff
-    const zu = new Set(); // Pfade zugeklappter Ordner im Baum
+    const zu = new Set(); // Pfade zugeklappter Ordner im Baum (Baum aus berührten Dateien)
     let sigAlt = '';
+    let cwdAbs = ''; // Arbeitsordner der Sitzung (absolut), Grundlage für Lesen und Dateiliste
+    let vorschauStand = null; // Antwort des Runners zur Vorschau: { pfad, phase: 'laedt'|'ok'|'fehler', res?, fehler? }
+    let vorschauNr = 0;
+    // Lebender Baum (GET /api/ordner?dateien=1): { wurzel, status: 'pruefen'|'an'|'aus', grund, ordner: Map(rel → { geladen, laedt, fehler, eintraege, abgeschnitten }) }
+    let live = null;
+    const auf = new Set(); // im lebenden Baum aufgeklappte Ordner (relativ zum Arbeitsordner)
+    const autoAuf = new Set(); // Ordner, die der Baum schon von selbst aufgeklappt hat (ein zugeklappter bleibt zu)
     const css = (s) => String(s).replace(/["\\]/g, '\\$&');
 
     const fokusSchluessel = () => {
@@ -363,21 +381,287 @@
       return ul;
     }
 
+    // --- Lebender Baum: Dateiliste des Arbeitsordners vom Runner (GET /api/ordner?dateien=1), Ordner laden beim Aufklappen ---
+    const istLive = () => !!live && live.status === 'an';
+    function neuZeichnenBaum() {
+      if (!refs.panel.hidden && modus === 'baum') zeichne(true);
+    }
+    function absPfad(pfad) {
+      if (!pfad) return '';
+      if (absolut(pfad)) return pfad;
+      return cwdAbs ? `${cwdAbs.replace(/\\/g, '/').replace(/\/+$/, '')}/${pfad}` : '';
+    }
+    /** Ordner mit berührten Dateien (relativ zum Arbeitsordner), tiefster zuerst nicht nötig: alle Vorfahren jeder berührten Datei. */
+    function beruehrteOrdner() {
+      const aus = new Set();
+      for (const f of erg.beruehrt) {
+        if (f.ausserhalb || absolut(f.pfad)) continue;
+        const teile = f.pfad.split('/').filter(Boolean);
+        for (let i = 1; i < teile.length; i++) aus.add(teile.slice(0, i).join('/'));
+      }
+      return [...aus];
+    }
+    async function ladeLive(rel) {
+      const L = live;
+      if (!L || !opts.ordner) return;
+      let e = L.ordner.get(rel);
+      if (!e) {
+        e = { geladen: false, laedt: false, fehler: '', eintraege: [], abgeschnitten: false };
+        L.ordner.set(rel, e);
+      }
+      if (e.laedt) return;
+      e.laedt = true;
+      try {
+        const r = await opts.ordner(rel ? `${L.wurzel}/${rel}` : L.wurzel);
+        if (live !== L) return;
+        e.eintraege = r.eintraege;
+        e.abgeschnitten = r.abgeschnitten;
+        e.fehler = '';
+        e.geladen = true;
+      } catch (f) {
+        if (live !== L) return;
+        e.fehler = (f && f.message) || String(f);
+        e.fehlerArt = f && f.art;
+        if (rel === '') {
+          L.status = 'aus';
+          L.grund = (f && f.art) || 'andere';
+          L.meldung = e.fehler;
+        }
+      } finally {
+        e.laedt = false;
+      }
+      if (live !== L) return;
+      if (rel === '' && L.status === 'pruefen') {
+        L.status = 'an';
+        oeffneBeruehrte();
+      }
+      neuZeichnenBaum();
+    }
+    /** Die Ordner mit berührten Dateien einmal von selbst aufklappen (höchstens MAX_LIVE_ORDNER); danach entscheidet der Nutzer. */
+    function oeffneBeruehrte() {
+      let n = 0;
+      for (const rel of beruehrteOrdner().sort()) {
+        if (autoAuf.has(rel) || n >= MAX_LIVE_ORDNER) continue;
+        autoAuf.add(rel);
+        auf.add(rel);
+        n += 1;
+        ladeLive(rel);
+      }
+    }
+    function liveStarten() {
+      if (!opts.ordner || !cwdAbs) return;
+      if (live && live.wurzel === cwdAbs) return;
+      live = { wurzel: cwdAbs, status: 'pruefen', grund: '', meldung: '', ordner: new Map() };
+      auf.clear();
+      autoAuf.clear();
+      ladeLive('');
+    }
+    function liveZuruecksetzen() {
+      live = null;
+      auf.clear();
+      autoAuf.clear();
+    }
+    /** Nach neuen Werkzeugen: die offenen Ordner neu lesen (die alte Liste bleibt bis dahin stehen). */
+    function aktualisiereLive() {
+      if (!istLive()) return;
+      let n = 0;
+      ladeLive('');
+      oeffneBeruehrte();
+      for (const rel of auf) if (n++ < MAX_LIVE_ORDNER) ladeLive(rel);
+    }
+
+    function histKnoten(rel) {
+      let k = baum(erg.beruehrt.filter((f) => !f.ausserhalb && !absolut(f.pfad)));
+      for (const t of rel.split('/').filter(Boolean)) {
+        k = k && k.ordner.get(t);
+        if (!k) return null;
+      }
+      return k;
+    }
+    /** Kinder eines Ordners: das Verzeichnis des Runners, ergänzt um berührte Dateien, die dort nicht stehen (versteckt, gelöscht, noch nicht geladen). */
+    function kinderLive(rel) {
+      const e = live.ordner.get(rel);
+      const beruehrt = new Map(erg.beruehrt.map((f) => [f.pfad, f]));
+      const ordner = new Map();
+      const dateien = new Map();
+      if (e) {
+        for (const x of e.eintraege) {
+          if (x.ordner) ordner.set(x.name, { name: x.name, pfad: verbinde(rel, x.name) });
+          else dateien.set(x.name, { name: x.name, pfad: verbinde(rel, x.name), groesse: x.groesse, f: beruehrt.get(verbinde(rel, x.name)) || null });
+        }
+      }
+      const h = histKnoten(rel);
+      if (h) {
+        for (const [n, o] of h.ordner) if (!ordner.has(n)) ordner.set(n, { name: n, pfad: o.pfad });
+        for (const f of h.dateien) if (!dateien.has(f.name)) dateien.set(f.name, { name: f.name, pfad: f.pfad, groesse: null, f });
+      }
+      const sortiert = (m) => [...m.values()].sort((a, b) => a.name.localeCompare(b.name));
+      return { ordner: sortiert(ordner), dateien: sortiert(dateien) };
+    }
+    function knotenLive(rel, tiefe) {
+      const ul = el('ul', 'ae-baum');
+      ul.setAttribute('role', 'group');
+      const e = live.ordner.get(rel);
+      const k = kinderLive(rel);
+      for (const o of k.ordner) {
+        const offenO = auf.has(o.pfad);
+        const li = el('li', 'ae-knoten-punkt');
+        li.setAttribute('role', 'treeitem');
+        li.setAttribute('aria-expanded', String(offenO));
+        const eo = live.ordner.get(o.pfad);
+        const b = el('button', `ae-knoten ordner${offenO ? ' offen' : ''}${eo && eo.laedt ? ' lade' : ''}`);
+        b.type = 'button';
+        b.dataset.fokus = `ordner:${o.pfad}`;
+        b.dataset.ordner = o.pfad;
+        b.dataset.live = '1';
+        b.style.paddingLeft = `${6 + tiefe * 14}px`;
+        b.append(mitIcon('span', 'ae-chev', ICON.chev), mitIcon('span', 'ae-symbol', ICON.ordner), el('span', 'ae-dname', o.name));
+        b.addEventListener('click', () => schalteOrdner(o.pfad, undefined, true));
+        li.append(b);
+        if (offenO) {
+          const sub = knotenLive(o.pfad, tiefe + 1);
+          li.append(sub);
+        }
+        ul.append(li);
+      }
+      for (const f of k.dateien) {
+        const li = el('li', 'ae-knoten-punkt');
+        li.setAttribute('role', 'treeitem');
+        const b = el('button', 'ae-knoten datei');
+        b.type = 'button';
+        b.dataset.fokus = `datei:${f.pfad}`;
+        b.dataset.datei = f.pfad;
+        b.dataset.art = f.f ? f.f.art || 'gelesen' : '';
+        if (f.f) b.dataset.beruehrt = '1';
+        b.style.paddingLeft = `${6 + tiefe * 14}px`;
+        b.append(el('span', 'ae-chev leer'), mitIcon('span', 'ae-symbol', ICON.datei), el('span', 'ae-dname', f.name));
+        if (f.f) b.append(el('span', `chip ae-art ${f.f.art || 'gelesen'}`, f.f.art ? ART_TEXT[f.f.art] : 'gelesen'));
+        else if (f.groesse != null) b.append(el('span', 'ae-groesse', groesseText(f.groesse)));
+        b.addEventListener('click', () => oeffneVorschau(f.pfad));
+        li.append(b);
+        ul.append(li);
+      }
+      // Meldungen unter dem Ordner: lädt, Fehler, abgeschnitten, leer
+      const sammel = el('li', 'ae-knoten-punkt');
+      sammel.setAttribute('role', 'none');
+      let text = '';
+      let fehler = false;
+      if (!e || e.laedt) text = e && e.geladen ? '' : 'Wird geladen …';
+      if (e && !e.laedt && e.fehler && !e.geladen) {
+        text = `Nicht lesbar: ${e.fehler}`;
+        fehler = true;
+      } else if (e && e.geladen && e.abgeschnitten) text = 'Nur die ersten 500 Einträge werden gezeigt.';
+      else if (e && e.geladen && !k.ordner.length && !k.dateien.length) text = 'Leer.';
+      if (text) {
+        const m = el('p', `ae-baum-meldung${fehler ? ' fehler' : ''}`, text);
+        m.style.marginLeft = `${6 + tiefe * 14 + 22}px`;
+        sammel.append(m);
+        ul.append(sammel);
+      }
+      return ul;
+    }
+
     function zeichneBaum() {
-      if (!erg.beruehrt.length) {
-        refs.inhalt.append(el('div', 'fp-leer', 'In dieser Sitzung hat der Agent noch keine Dateien gelesen oder geändert.'));
+      if (opts.ordner && cwdAbs && (!live || live.wurzel !== cwdAbs)) liveStarten();
+      if (istLive()) {
+        const wurzel = knotenLive('', 0);
+        wurzel.classList.add('wurzel');
+        wurzel.setAttribute('role', 'tree');
+        wurzel.setAttribute('aria-label', 'Dateien des Arbeitsordners');
+        refs.inhalt.append(wurzel);
+        const draussen = erg.beruehrt.filter((f) => f.ausserhalb || absolut(f.pfad));
+        if (draussen.length) {
+          refs.inhalt.append(el('p', 'ae-quelle', 'Außerhalb des Arbeitsordners (vom Agenten berührt):'));
+          const w2 = knotenZeichnen(baum(draussen), 0);
+          w2.classList.add('wurzel');
+          w2.setAttribute('role', 'tree');
+          w2.setAttribute('aria-label', 'Dateien außerhalb des Arbeitsordners');
+          refs.inhalt.append(w2);
+        }
+        refs.inhalt.append(el('p', 'ae-fuss', 'Dateiliste des Arbeitsordners vom Runner (ohne versteckte und gesperrte Dateien); Dateien, die der Agent in dieser Sitzung berührt hat, sind markiert.'));
         return;
       }
-      const wurzel = knotenZeichnen(baum(erg.beruehrt), 0);
-      wurzel.classList.add('wurzel');
-      wurzel.setAttribute('role', 'tree');
-      wurzel.setAttribute('aria-label', 'Dateien dieser Sitzung');
-      refs.inhalt.append(wurzel);
-      refs.inhalt.append(el('p', 'ae-fuss', 'Der Runner kann den Arbeitsordner nicht als Dateiliste ausgeben. Der Baum zeigt nur Dateien, die der Agent in dieser Sitzung gelesen, geschrieben oder bearbeitet hat.'));
+      if (!erg.beruehrt.length) {
+        refs.inhalt.append(el('div', 'fp-leer', 'In dieser Sitzung hat der Agent noch keine Dateien gelesen oder geändert.'));
+      } else {
+        const wurzel = knotenZeichnen(baum(erg.beruehrt), 0);
+        wurzel.classList.add('wurzel');
+        wurzel.setAttribute('role', 'tree');
+        wurzel.setAttribute('aria-label', 'Dateien dieser Sitzung');
+        refs.inhalt.append(wurzel);
+      }
+      let fuss = 'Der Runner kann den Arbeitsordner nicht als Dateiliste ausgeben. Der Baum zeigt nur Dateien, die der Agent in dieser Sitzung gelesen, geschrieben oder bearbeitet hat.';
+      if (live && live.status === 'pruefen') fuss = 'Die Dateiliste des Arbeitsordners wird geladen. Bis dahin zeigt der Baum die Dateien, die der Agent in dieser Sitzung berührt hat.';
+      else if (live && live.status === 'aus' && live.grund === 'ausserhalb') fuss = 'Der Arbeitsordner liegt außerhalb der Ordner, die der Runner freigibt. Der Baum zeigt nur Dateien, die der Agent in dieser Sitzung berührt hat.';
+      else if (live && live.status === 'aus' && live.grund !== 'weg_fehlt') fuss = `Die Dateiliste ist nicht verfügbar (${live.meldung || 'unbekannter Grund'}). Der Baum zeigt nur Dateien, die der Agent in dieser Sitzung berührt hat.`;
+      refs.inhalt.append(el('p', 'ae-fuss', fuss));
+    }
+
+    // --- Vorschau: Inhalt vom Runner (GET /api/datei), sonst der Stand aus dem Verlauf ---
+    function leereDatei(pfad) {
+      const rel = pfad;
+      return { pfad: rel, name: nameVon(rel), ordner: ordnerVon(rel), ausserhalb: absolut(rel), art: null, plus: 0, minus: 0, hunks: [], gelesen: false, inhalt: null, quelle: '', unsicher: false };
+    }
+    function startVorschauLaden() {
+      const nr = ++vorschauNr;
+      vorschauStand = null;
+      if (!opts.datei || !vorschauPfad) return;
+      const abs = absPfad(vorschauPfad);
+      if (!abs) return;
+      const pfad = vorschauPfad;
+      vorschauStand = { pfad, phase: 'laedt' };
+      Promise.resolve()
+        .then(() => opts.datei(abs, sitzung))
+        .then(
+          (res) => {
+            if (nr !== vorschauNr) return;
+            vorschauStand = { pfad, phase: 'ok', res };
+            if (!refs.panel.hidden && modus === 'vorschau') zeichne(true);
+          },
+          (fehler) => {
+            if (nr !== vorschauNr) return;
+            vorschauStand = { pfad, phase: 'fehler', fehler };
+            if (!refs.panel.hidden && modus === 'vorschau') zeichne(true);
+          }
+        );
+    }
+    function codeBox(zeilen, pfad) {
+      const box = el('div', 'ae-code-scroll');
+      box.tabIndex = 0;
+      box.setAttribute('role', 'region');
+      box.setAttribute('aria-label', `Inhalt von ${pfad}`);
+      const tab = el('table', 'ae-code');
+      const tb = el('tbody');
+      zeilen.forEach((t, i) => {
+        const tr = el('tr');
+        tr.append(el('td', 'nr', String(i + 1)), el('td', 'code', t));
+        tb.append(tr);
+      });
+      tab.append(tb);
+      box.append(tab);
+      return box;
+    }
+    function zeichneRunnerInhalt(res, d) {
+      if (res.art === 'binaer') {
+        refs.inhalt.append(el('div', 'fp-leer ae-binaer', `Binärdatei, ${res.groesse} Byte`));
+        return;
+      }
+      const v = vorschau({ inhalt: res.text, quelle: 'runner', unsicher: false });
+      const stand = [QUELLE_TEXT.runner];
+      if (res.geaendert > 0) stand.push(`Geändert: ${new Date(res.geaendert).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}.`);
+      if (res.abgeschnitten) stand.push(`Gekürzt: gezeigt werden die ersten ${utf8Laenge(res.text)} von ${res.groesse} Byte.`);
+      else if (v.gekuerzt) stand.push(`Gekürzt: gezeigt werden die ersten ${v.zeilen.length} Zeilen von ${v.bytes} Byte.`);
+      refs.inhalt.append(el('p', 'ae-quelle', stand.join(' ')));
+      if (res.geschwaerzt) refs.inhalt.append(el('p', 'ae-quelle ae-geschwaerzt', 'Geheimnisse geschwärzt: Teile der Datei sind durch *** ersetzt. Das ist eine Lesehilfe, keine Kopiervorlage.'));
+      if (res.text === '') {
+        refs.inhalt.append(el('div', 'fp-leer ae-leer', 'Die Datei ist leer.'));
+        return;
+      }
+      refs.inhalt.append(codeBox(v.zeilen, d.pfad));
     }
 
     function zeichneVorschau() {
-      const d = erg.beruehrt.find((x) => x.pfad === vorschauPfad);
+      const d = erg.beruehrt.find((x) => x.pfad === vorschauPfad) || (opts.datei && vorschauPfad ? leereDatei(vorschauPfad) : null);
       const kopf = el('div', 'ae-vorschau-kopf');
       const zurueck = el('button', 'leise-knopf ae-zurueck', 'Zurück');
       zurueck.type = 'button';
@@ -390,37 +674,65 @@
         refs.inhalt.append(el('div', 'fp-leer', 'Diese Datei kommt in der Sitzung nicht mehr vor.'));
         return;
       }
+      const st = vorschauStand && vorschauStand.pfad === vorschauPfad ? vorschauStand : null;
+      if (st && st.phase === 'laedt') {
+        refs.inhalt.append(el('div', 'fp-leer ae-laedt', 'Wird gelesen …'));
+        return;
+      }
+      if (st && st.phase === 'ok') {
+        zeichneRunnerInhalt(st.res, d);
+        return;
+      }
+      let vorn = '';
+      if (st && st.phase === 'fehler') {
+        const art = (st.fehler && st.fehler.art) || 'andere';
+        const text = (st.fehler && st.fehler.message) || 'Unbekannter Fehler.';
+        if (HART.has(art)) {
+          // nicht lesbar (gesperrt, außerhalb, …): kein Umweg über den Verlauf
+          const m = el('div', 'fp-leer ae-fehlt ae-grund', text);
+          m.dataset.grund = art;
+          refs.inhalt.append(m);
+          return;
+        }
+        if (art === 'ausserhalb') {
+          if (d.inhalt == null) {
+            const m = el('div', 'fp-leer ae-fehlt ae-grund', text);
+            m.dataset.grund = art;
+            refs.inhalt.append(m);
+            return;
+          }
+          vorn = 'Der Runner gibt diesen Ordner nicht zum Lesen frei; gezeigt wird der Stand aus dem Verlauf.';
+        } else if (art === 'nicht_gefunden') {
+          if (d.inhalt == null) {
+            const m = el('div', 'fp-leer ae-fehlt ae-grund', 'Die Datei gibt es auf dem Runner nicht (mehr).');
+            m.dataset.grund = art;
+            refs.inhalt.append(m);
+            return;
+          }
+          vorn = 'Die Datei gibt es auf dem Runner nicht (mehr); gezeigt wird der Stand aus dem Verlauf.';
+        } else if (art !== 'weg_fehlt') {
+          vorn = `Der Runner hat die Datei nicht geliefert (${text}) Gezeigt wird der Stand aus dem Verlauf.`;
+        }
+      }
       const v = vorschau(d);
       if (v.art === 'fehlt') {
-        refs.inhalt.append(el('div', 'fp-leer ae-fehlt', 'Der aktuelle Inhalt ist nicht verfügbar. Der Runner bietet keinen Weg, Dateien des Arbeitsordners zu lesen; die Vorschau zeigt nur, was der Agent in dieser Sitzung geschrieben oder vollständig gelesen hat.'));
+        const m = el('div', 'fp-leer ae-fehlt', st && st.phase === 'fehler' && vorn ? `${vorn.replace(' Gezeigt wird der Stand aus dem Verlauf.', '')} Der Inhalt ist nicht verfügbar.` : 'Der aktuelle Inhalt ist nicht verfügbar. Der Runner bietet keinen Weg, Dateien des Arbeitsordners zu lesen; die Vorschau zeigt nur, was der Agent in dieser Sitzung geschrieben oder vollständig gelesen hat.');
+        refs.inhalt.append(m);
         return;
       }
       if (v.art === 'binaer') {
         refs.inhalt.append(el('div', 'fp-leer ae-binaer', `Binärdatei, ${v.bytes} Byte`));
         return;
       }
-      const hinweise = [QUELLE_TEXT[v.quelle] || ''];
+      const hinweise = [vorn, QUELLE_TEXT[v.quelle] || ''];
       if (v.unsicher) hinweise.push('Spätere Bearbeitungen ließen sich nicht sicher einarbeiten; der Stand kann abweichen.');
       if (v.gekuerzt) hinweise.push(`Gekürzt: gezeigt werden die ersten ${v.zeilen.length} Zeilen von ${v.bytes} Byte.`);
       refs.inhalt.append(el('p', 'ae-quelle', hinweise.filter(Boolean).join(' ')));
-      const box = el('div', 'ae-code-scroll');
-      box.tabIndex = 0;
-      box.setAttribute('role', 'region');
-      box.setAttribute('aria-label', `Inhalt von ${d.pfad}`);
-      const tab = el('table', 'ae-code');
-      const tb = el('tbody');
-      v.zeilen.forEach((t, i) => {
-        const tr = el('tr');
-        tr.append(el('td', 'nr', String(i + 1)), el('td', 'code', t));
-        tb.append(tr);
-      });
-      tab.append(tb);
-      box.append(tab);
-      refs.inhalt.append(box);
+      refs.inhalt.append(codeBox(v.zeilen, d.pfad));
     }
 
     function sig() {
-      return JSON.stringify([erg.beruehrt.map((d) => [d.pfad, d.art, d.plus, d.minus, d.aenderungen, d.gelesen, d.unsicher, d.inhalt == null ? -1 : d.inhalt.length])]);
+      return JSON.stringify([cwdAbs, erg.beruehrt.map((d) => [d.pfad, d.art, d.plus, d.minus, d.aenderungen, d.gelesen, d.unsicher, d.inhalt == null ? -1 : d.inhalt.length])]);
     }
 
     function zeichne(erzwingen) {
@@ -455,12 +767,26 @@
         modus = 'liste';
         vorschauPfad = null;
         sigAlt = '';
+        vorschauNr += 1;
+        vorschauStand = null;
+        liveZuruecksetzen();
+      }
+      const neueCwd = cwd ? String(cwd) : '';
+      if (neueCwd !== cwdAbs) {
+        cwdAbs = neueCwd;
+        liveZuruecksetzen();
       }
       erg = sammle(aufrufe, cwd);
       const s = sig();
       if (s === sigAlt && !refs.panel.hidden) return false;
+      const geaendert = s !== sigAlt;
       sigAlt = s;
       zeichne(true);
+      // Der Agent hat etwas getan: lebender Baum und geöffnete Vorschau lesen den neuen Stand
+      if (geaendert && !refs.panel.hidden) {
+        if (modus === 'baum') aktualisiereLive();
+        else if (modus === 'vorschau' && vorschauPfad) startVorschauLaden();
+      }
       return true;
     }
 
@@ -469,7 +795,19 @@
       else offen.add(pfad);
       zeichne(true);
     }
-    function schalteOrdner(pfad, an) {
+    /** Ordner im Baum auf- oder zuklappen. `lebend`: Ordner des lebenden Baums (lädt beim ersten Aufklappen), sonst Baum aus berührten Dateien. */
+    function schalteOrdner(pfad, an, lebend) {
+      if (lebend) {
+        const will = an === undefined ? !auf.has(pfad) : an;
+        if (will) {
+          auf.add(pfad);
+          autoAuf.add(pfad);
+          const e = live && live.ordner.get(pfad);
+          if (!e || (!e.geladen && !e.laedt)) ladeLive(pfad);
+        } else auf.delete(pfad);
+        zeichne(true);
+        return;
+      }
       const will = an === undefined ? zu.has(pfad) : an; // will: aufgeklappt
       if (will) zu.delete(pfad);
       else zu.add(pfad);
@@ -479,6 +817,7 @@
       if (modus !== 'vorschau') zurueckModus = modus;
       modus = 'vorschau';
       vorschauPfad = pfad;
+      startVorschauLaden();
       zeichne(true);
       const b = refs.inhalt.querySelector('.ae-zurueck');
       if (b) b.focus();
@@ -487,6 +826,8 @@
       const pfad = vorschauPfad;
       modus = zurueckModus;
       vorschauPfad = null;
+      vorschauNr += 1;
+      vorschauStand = null;
       zeichne(true);
       if (pfad && !fokusSetzen(modus === 'baum' ? `datei:${pfad}` : `name:${pfad}`)) {
         const b = refs.inhalt.querySelector('button');
@@ -496,6 +837,8 @@
     function waehleReiter(art) {
       modus = art;
       vorschauPfad = null;
+      vorschauNr += 1;
+      vorschauStand = null;
       zeichne(true);
     }
 
@@ -573,12 +916,14 @@
           return;
         }
         if (ziel.dataset.ordner !== undefined) {
+          const lebend = ziel.dataset.live === '1';
+          const istAuf = lebend ? auf.has(ziel.dataset.ordner) : !zu.has(ziel.dataset.ordner);
           if (k === 'ArrowRight') {
             e.preventDefault();
-            if (zu.has(ziel.dataset.ordner)) schalteOrdner(ziel.dataset.ordner, true);
+            if (!istAuf) schalteOrdner(ziel.dataset.ordner, true, lebend);
           } else if (k === 'ArrowLeft') {
             e.preventDefault();
-            if (!zu.has(ziel.dataset.ordner)) schalteOrdner(ziel.dataset.ordner, false);
+            if (istAuf) schalteOrdner(ziel.dataset.ordner, false, lebend);
           }
         }
       }
@@ -595,6 +940,12 @@
       schalteDiff,
       get modus() {
         return modus;
+      },
+      get lebend() {
+        return istLive();
+      },
+      get vorschauPhase() {
+        return vorschauStand ? vorschauStand.phase : null;
       },
     };
   }
