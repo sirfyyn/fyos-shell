@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="chat.css">
   <link rel="stylesheet" href="arbeitsplatz.css">
   <link rel="stylesheet" href="freigaben.css">
+  <link rel="stylesheet" href="aenderungen.css">
 </head>
 <body>
   <div class="app" id="app">
@@ -79,6 +80,7 @@
         </div>
         <div class="kopf-rechts">
           <button id="freigabenKnopf" type="button" class="leise-knopf freigaben-knopf" aria-controls="freigabenPanel" aria-expanded="false" title="Offene Freigaben" hidden>Freigaben <b id="freigabenZahl">0</b></button>
+          <button id="aenderungenKnopf" type="button" class="leise-knopf aenderungen-knopf" aria-controls="aenderungenPanel" aria-expanded="false" title="Geänderte Dateien dieser Sitzung" hidden>Änderungen (<b id="aenderungenZahl">0</b>)</button>
           <button id="bericht" type="button" class="leise-knopf" title="Schreibt eine Textdatei mit Version, Meldungen und geschwärzten Einstellungen auf den Schreibtisch. Es wird nichts hochgeladen.">Bericht speichern</button>
           <span id="zustand" class="zustand bereit" role="status"><span class="punkt" aria-hidden="true"></span><span id="zustandText">bereit</span></span>
         </div>
@@ -92,6 +94,14 @@
           <div class="fp-panel-kopf"><strong>Offene Freigaben</strong><button id="freigabenZu" type="button" class="leise-knopf" aria-label="Schließen">Schließen</button></div>
           <p id="freigabenHinweis" class="fp-hinweis" role="status" hidden></p>
           <div id="freigabenListe" class="fp-liste"></div>
+        </aside>
+        <aside id="aenderungenPanel" class="ae-panel" aria-label="Änderungen der Sitzung" hidden>
+          <div class="fp-panel-kopf"><strong>Änderungen der Sitzung</strong><button id="aenderungenZu" type="button" class="leise-knopf" aria-label="Schließen">Schließen</button></div>
+          <div id="aenderungenReiter" class="ae-reiter" role="tablist" aria-label="Ansicht">
+            <button id="aenderungenReiterListe" type="button" role="tab" aria-selected="true">Dateien</button>
+            <button id="aenderungenReiterBaum" type="button" role="tab" aria-selected="false" tabindex="-1">Dateibaum</button>
+          </div>
+          <div id="aenderungenInhalt" class="ae-inhalt"></div>
         </aside>
       </div>
 
@@ -135,6 +145,7 @@
   <script src="sitzungen.js"></script>
   <script src="leiste.js"></script>
   <script src="freigaben.js"></script>
+  <script src="aenderungen.js"></script>
   <script src="ordner.js"></script>
   <script src="chat.js"></script>
 </body>

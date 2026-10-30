@@ -111,6 +111,82 @@
     for (const h of (diff && diff.hunks) || []) for (const z of h.zeilen) z[0] === '+' ? plus++ : z[0] === '-' && minus++;
     return { plus, minus };
   }
+  const elIn = (doc) => (tag, cls, text) => {
+    const e = doc.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  /** Diff-Tabelle (Kopf mit Dateiname und Zählern, Zeilen mit Nummern, Hervorhebung): von den Karten im Verlauf und vom Änderungen-Panel benutzt. */
+  function baueDiff(doc, diff) {
+    const el = elIn(doc);
+    const z = diff.zahlen || diffZahlen(diff); // `zahlen`: Gesamtzahlen, wenn die gezeigten Zeilen gekürzt sind (Änderungen-Panel)
+    const wrap = el('div', 'diff');
+    const kopf = el('div', 'diff-kopf');
+    kopf.append(el('span', 'datei', diff.datei || 'Datei'), baueDiffChips(doc, z));
+    const tab = el('table', 'diff-tabelle');
+    tab.setAttribute('aria-label', `Änderungen in ${diff.datei || 'Datei'}: ${z.plus} hinzugefügt, ${z.minus} entfernt`);
+    const tb = el('tbody');
+    const lang = sprachVonDatei(diff.datei);
+    let letzteAltEnde = null;
+    let hunkNr = 0;
+    for (const h of diff.hunks || []) {
+      let a = h.alt;
+      let b = h.neu;
+      if (letzteAltEnde != null && a != null && a > letzteAltEnde) {
+        const tr = el('tr', 'trenn');
+        const td = el('td', null, `${a - letzteAltEnde} unveränderte Zeilen`);
+        td.colSpan = 4;
+        tr.appendChild(td);
+        tb.appendChild(tr);
+      } else if (hunkNr > 0 && a == null) {
+        // Änderungen ohne bekannte Zeilennummern (aus der Werkzeugeingabe abgeleitet): getrennte Stellen sichtbar trennen
+        const tr = el('tr', 'trenn');
+        const td = el('td', null, `Änderung ${hunkNr + 1}`);
+        td.colSpan = 4;
+        tr.appendChild(td);
+        tb.appendChild(tr);
+      }
+      hunkNr++;
+      for (const [t, text] of h.zeilen) {
+        const tr = el('tr', t === '+' ? 'add' : t === '-' ? 'del' : 'ctx');
+        const nrA = el('td', 'nr', t === '+' || a == null ? '' : String(a));
+        const nrB = el('td', 'nr', t === '-' || b == null ? '' : String(b));
+        const vz = el('td', 'vz', t === ' ' ? '' : t === '+' ? '+' : '−');
+        vz.setAttribute('aria-label', t === '+' ? 'hinzugefügt' : t === '-' ? 'entfernt' : 'unverändert');
+        const code = el('td', 'code');
+        FP.haengeZeile(doc, code, text, lang);
+        tr.append(nrA, nrB, vz, code);
+        tb.appendChild(tr);
+        if (t !== '+' && a != null) a++;
+        if (t !== '-' && b != null) b++;
+      }
+      letzteAltEnde = a;
+    }
+    if (diff.weitere > 0) {
+      const tr = el('tr', 'trenn');
+      const td = el('td', null, `… ${diff.weitere} weitere Zeilen nicht gezeigt`);
+      td.colSpan = 4;
+      tr.appendChild(td);
+      tb.appendChild(tr);
+    }
+    tab.appendChild(tb);
+    const scrollbox = el('div', 'diff-scroll');
+    scrollbox.tabIndex = 0;
+    scrollbox.setAttribute('role', 'region');
+    scrollbox.setAttribute('aria-label', `Diff ${diff.datei || ''}`);
+    scrollbox.appendChild(tab);
+    wrap.append(kopf, scrollbox);
+    return wrap;
+  }
+  function baueDiffChips(doc, z) {
+    const el = elIn(doc);
+    const c = el('span', 'diffzahl');
+    c.append(el('span', 'plus', `+${z.plus}`), doc.createTextNode(' '), el('span', 'minus', `−${z.minus}`));
+    return c;
+  }
+
+
   function sprachVonDatei(name) {
     const m = /\.([A-Za-z0-9]+)$/.exec(String(name || ''));
     return m ? m[1].toLowerCase() : '';
@@ -633,64 +709,8 @@
       }
     }
 
-    function erzeugeDiff(diff) {
-      const z = diffZahlen(diff);
-      const wrap = el('div', 'diff');
-      const kopf = el('div', 'diff-kopf');
-      kopf.append(el('span', 'datei', diff.datei || 'Datei'), diffChips(z));
-      const tab = el('table', 'diff-tabelle');
-      tab.setAttribute('aria-label', `Änderungen in ${diff.datei || 'Datei'}: ${z.plus} hinzugefügt, ${z.minus} entfernt`);
-      const tb = el('tbody');
-      const lang = sprachVonDatei(diff.datei);
-      let letzteAltEnde = null;
-      let hunkNr = 0;
-      for (const h of diff.hunks || []) {
-        let a = h.alt;
-        let b = h.neu;
-        if (letzteAltEnde != null && a != null && a > letzteAltEnde) {
-          const tr = el('tr', 'trenn');
-          const td = el('td', null, `${a - letzteAltEnde} unveränderte Zeilen`);
-          td.colSpan = 4;
-          tr.appendChild(td);
-          tb.appendChild(tr);
-        } else if (hunkNr > 0 && a == null) {
-          // Änderungen ohne bekannte Zeilennummern (aus der Werkzeugeingabe abgeleitet): getrennte Stellen sichtbar trennen
-          const tr = el('tr', 'trenn');
-          const td = el('td', null, `Änderung ${hunkNr + 1}`);
-          td.colSpan = 4;
-          tr.appendChild(td);
-          tb.appendChild(tr);
-        }
-        hunkNr++;
-        for (const [t, text] of h.zeilen) {
-          const tr = el('tr', t === '+' ? 'add' : t === '-' ? 'del' : 'ctx');
-          const nrA = el('td', 'nr', t === '+' || a == null ? '' : String(a));
-          const nrB = el('td', 'nr', t === '-' || b == null ? '' : String(b));
-          const vz = el('td', 'vz', t === ' ' ? '' : t === '+' ? '+' : '−');
-          vz.setAttribute('aria-label', t === '+' ? 'hinzugefügt' : t === '-' ? 'entfernt' : 'unverändert');
-          const code = el('td', 'code');
-          FP.haengeZeile(doc, code, text, lang);
-          tr.append(nrA, nrB, vz, code);
-          tb.appendChild(tr);
-          if (t !== '+' && a != null) a++;
-          if (t !== '-' && b != null) b++;
-        }
-        letzteAltEnde = a;
-      }
-      tab.appendChild(tb);
-      const scrollbox = el('div', 'diff-scroll');
-      scrollbox.tabIndex = 0;
-      scrollbox.setAttribute('role', 'region');
-      scrollbox.setAttribute('aria-label', `Diff ${diff.datei || ''}`);
-      scrollbox.appendChild(tab);
-      wrap.append(kopf, scrollbox);
-      return wrap;
-    }
-    function diffChips(z) {
-      const c = el('span', 'diffzahl');
-      c.append(el('span', 'plus', `+${z.plus}`), doc.createTextNode(' '), el('span', 'minus', `−${z.minus}`));
-      return c;
-    }
+    const erzeugeDiff = (diff) => baueDiff(doc, diff);
+    const diffChips = (z) => baueDiffChips(doc, z);
 
     function gruppeSicher() {
       if (gruppe) return gruppe;
@@ -1080,5 +1100,5 @@
     };
   }
 
-  Object.assign(FP, { createChatView, createScrollFollower, createAnsager, diffZeilen, diffZahlen, dauerText, dauerKurz, kurz, zahlK, artVon, kurzfassung });
+  Object.assign(FP, { baueDiff, baueDiffChips, createChatView, createScrollFollower, createAnsager, diffZeilen, diffZahlen, dauerText, dauerKurz, kurz, zahlK, artVon, kurzfassung });
 })(typeof globalThis !== 'undefined' ? globalThis : window);

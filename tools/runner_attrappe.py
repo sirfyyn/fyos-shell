@@ -42,6 +42,7 @@ SZENARIEN = {
     "werkzeug": "ein Werkzeugaufruf mit Ergebnis (Karte)",
     "terminal": "Bash-Aufruf mit farbiger Ausgabe in Teilen (Terminal-Ansicht, ANSI)",
     "diff": "Edit- und Write-Aufruf (Diff-Ansicht)",
+    "aenderungen": "Datei-Werkzeuge (write, read, edit, ein Fehlschlag) mit toolCall im Verlauf: Futter für das Panel „Änderungen“",
     "freigabe": "eine Freigabe, die entschieden werden muss (nur Erlauben/Ablehnen); mit „hoch“ im Text hohes Risiko (und zerstörerisch), mit „zerst“ mittleres Risiko und zerstörerisch",
     "reset": "ein Reset-Marker (neuer Kontext)",
     "lang": "zwölf Teile über sechs Sekunden (Abbruch mitten im Strom)",
@@ -208,6 +209,8 @@ class Sitzung:
                 self.freigabe_szenario(hoch="hoch" in t, zerst="zerst" in t)
             elif "terminal" in t:
                 self.terminal_szenario()
+            elif "aenderung" in t:
+                self.aenderungen_szenario()
             elif "diff" in t:
                 self.diff_szenario()
             elif "werkzeug" in t:
@@ -273,6 +276,27 @@ class Sitzung:
         self.pause(0.2)
         self.werkzeug_ende(tid2, "write", "neu.txt geschrieben")
         self.antwort_in_teilen(["Diff fertig."], 0.1)
+
+    def werkzeug_mit_aufruf(self, tid, name, args, ergebnis, fehler=False):
+        """Ein Werkzeugschritt in der Form des echten Runners: die Assistenten-Nachricht trägt den toolCall-Block (so steht er im Verlauf und
+        kommt beim Neuladen zurück), dann Start und Ergebnis des Werkzeugs."""
+        m = self.eintrag("pi.message", model=[{"role": "assistant", "content": [{"type": "toolCall", "id": tid, "name": name, "arguments": args}], "usage": USAGE_ANTWORT, "stopReason": "toolUse"}])
+        self.senden([{"type": "message_end", "entry": m}])
+        self.senden([{"type": "tool_execution_start", "toolCallId": tid, "toolName": name, "args": args}])
+        self.zeile("werkzeug", f"{name} {args.get('path', '')}".strip(), name)
+        self.pause(0.1)
+        self.werkzeug_ende(tid, name, ergebnis, fehler)
+
+    def aenderungen_szenario(self):
+        """Datei-Werkzeuge für das Panel „Änderungen“: eine neue Datei (write, danach zweimal bearbeitet), eine gelesene und bearbeitete Datei,
+        ein fehlgeschlagenes Bearbeiten. Pfade relativ zum Arbeitsordner, wie sie das Modell meist schreibt."""
+        n = self.z.nr()
+        self.werkzeug_mit_aufruf(f"aw{n}", "write", {"path": "notizen/plan.md", "content": "# Plan\nerster Punkt\nzweiter Punkt\n"}, "notizen/plan.md geschrieben")
+        self.werkzeug_mit_aufruf(f"ar{n}", "read", {"path": "src/probe.txt"}, "alte Zeile\ngleich\nEnde alt\n")
+        self.werkzeug_mit_aufruf(f"ae{n}", "edit", {"path": "src/probe.txt", "edits": [{"oldText": "alte Zeile", "newText": "neue Zeile"}, {"oldText": "Ende alt", "newText": "Ende neu\nund ein Nachtrag"}]}, "2 Änderungen in src/probe.txt")
+        self.werkzeug_mit_aufruf(f"ap{n}", "edit", {"path": "notizen/plan.md", "edits": [{"oldText": "zweiter Punkt", "newText": "zweiter Punkt\ndritter Punkt"}]}, "1 Änderung in notizen/plan.md")
+        self.werkzeug_mit_aufruf(f"af{n}", "edit", {"path": "src/fehlt.txt", "edits": [{"oldText": "x", "newText": "y"}]}, "Text nicht gefunden", fehler=True)
+        self.antwort_in_teilen(["Änderungen fertig."], 0.1)
 
     def freigabe_szenario(self, hoch=False, zerst=False):
         fid = f"f{self.z.nr()}"

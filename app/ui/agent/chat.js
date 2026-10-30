@@ -121,7 +121,10 @@
     } catch (e) {
       rec.cwd = ''; // der Arbeitsbereich aus der Liste genügt
     }
-    if (aktiv === rec) zeigeOrdner(rec);
+    if (aktiv === rec) {
+      zeigeOrdner(rec);
+      planeAenderungen(); // relative Pfade hängen am Arbeitsordner
+    }
   }
 
   // --- Freigaben: Knopf mit Zahl im Kopf und Panel mit allen offenen Freigaben (alle Sitzungen) ---
@@ -134,6 +137,37 @@
       beiAenderung: () => zeigeAktiv(),
     }
   );
+
+  // --- Änderungen der Sitzung: Knopf „Änderungen (N)“ und Panel; abgeleitet aus den Datei-Werkzeugen im Verlauf der sichtbaren Sitzung ---
+  const aenderungen = FP.createAenderungen({
+    knopf: $('aenderungenKnopf'),
+    zahl: $('aenderungenZahl'),
+    panel: $('aenderungenPanel'),
+    zu: $('aenderungenZu'),
+    reiter: $('aenderungenReiter'),
+    reiterListe: $('aenderungenReiterListe'),
+    reiterBaum: $('aenderungenReiterBaum'),
+    inhalt: $('aenderungenInhalt'),
+  });
+  /** Arbeitsordner der Sitzung für relative Pfade: die Sitzung selbst, sonst der Arbeitsbereich aus der Liste. */
+  function ordnerPfad(rec) {
+    if (rec.cwd) return rec.cwd;
+    const g = gespraeche.find((x) => String(x.id) === String(rec.id));
+    const b = g && bereiche[g.arbeitsbereich];
+    return (b && b.pfad) || '';
+  }
+  let aenderungenGeplant = false;
+  function aenderungenNachziehen() {
+    aenderungenGeplant = false;
+    if (!aktiv || !aktiv.chat.adapter) return;
+    aenderungen.setze(aktiv.chat.adapter.aufrufe(), ordnerPfad(aktiv), aktiv.id);
+  }
+  /** Gebündelt (beim Abspielen des Verlaufs enden viele Werkzeuge auf einmal): ein Neuzeichnen pro Runde. */
+  function planeAenderungen() {
+    if (aenderungenGeplant) return;
+    aenderungenGeplant = true;
+    Promise.resolve().then(aenderungenNachziehen);
+  }
 
   // --- Seitenleiste ---
   // Sitzungen, die dieses Fenster archiviert hat: GET /api/gespraeche nennt archivierte nicht mehr, so bleibt „Wiederherstellen“ möglich (bis zum Neuladen)
@@ -284,6 +318,10 @@
       },
       // der Verlauf hat die Liste geholt oder eine Karte entschieden: Zahl und Panel ziehen nach
       beiFreigaben: (liste) => freigaben.setze(liste),
+      // ein Datei-Werkzeug (read, write, edit …) der Sitzung ist zu Ende: gilt nur für die sichtbare Sitzung, die anderen holen es beim Wechsel nach
+      beiWerkzeug: () => {
+        if (aktiv === rec) planeAenderungen();
+      },
       beiLaufEnde: () => {
         setTimeout(ladeListe, 300);
         planeZeichnen();
@@ -360,6 +398,7 @@
     kopfStift();
     zeigeOrdner(rec);
     ladeOrdner(rec);
+    aenderungenNachziehen();
     zeichneListe();
     abbauen();
   }
@@ -772,7 +811,7 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)

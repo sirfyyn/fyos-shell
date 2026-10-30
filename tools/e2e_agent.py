@@ -12,6 +12,7 @@ Die Chat-Seite bedient sich im Prüfmodus selbst (ui/agent/e2e.js, nur mit FYOS_
       Arbeitsplatz: Sitzungsliste, Arbeitsordner im Kopf, Terminal-Ansicht (ANSI, Fortschrittszeile), Diff-Ansicht, Wechsel ohne Neuaufbau,
       laufende Sitzung markiert, neue Sitzung mit Arbeitsordner, neue Sitzung nur mit Namen (Enter im Namensfeld), Umbenennen im Kopf
       und in der Leiste (PATCH durch die Brücke, Esc, ohne Neuaufbau, Entwurf bleibt), Fehler des Runners klar, Archivieren und Wiederherstellen
+      Panel „Änderungen“ (aenderungen-*: Knopf mit Zahl, Liste der Dateien aus den Datei-Werkzeugen, Diff, Vorschau, Dateibaum, Esc)
       Kontextanzeige (kontext-plausibel: Füllung der letzten Antwort, nicht die Lebenszeitsumme) und Einstellungen-Knopf (einstellungen-knopf:
       der Befehl läuft ohne Fehler; A2b: danach gibt es ein zweites sichtbares Fenster, die Einstellungen; braucht die Bedienungshilfen-Erlaubnis
       für osascript, sonst "nicht prüfbar")
@@ -63,7 +64,8 @@ ERWARTET = ["seite-geladen", "verbunden", "streaming-teilweise", "streaming-ganz
             "freigabe-nur-erlauben-ablehnen", "freigabe-erteilt", "freigaben-zahl", "freigaben-live-strom", "freigaben-banner", "freigaben-banner-oeffnet-panel",
             "freigaben-panel-alle-sitzungen", "freigaben-zerstoererisch-marke", "freigaben-zerstoererisch-zweite-bestaetigung", "freigaben-erlauben-im-panel", "freigaben-notiz-beim-runner",
             "freigaben-spaeter", "freigaben-sprung", "freigaben-sprung-ohne-neuaufbau", "freigaben-verlauf-zieht-nach", "reset-marker", "neuverbunden-vollstaendig", "neuverbunden-nichts-doppelt",
-            "sitzungsliste", "ordner-im-kopf", "terminal-ansicht", "terminal-fortschrittszeile", "diff-ansicht", "wechsel-zu-zweiter", "wechsel-eigener-verlauf",
+            "sitzungsliste", "ordner-im-kopf", "terminal-ansicht", "terminal-fortschrittszeile", "diff-ansicht", "aenderungen-knopf", "aenderungen-liste", "aenderungen-diff", "aenderungen-vorschau",
+            "aenderungen-baum", "aenderungen-esc", "wechsel-zu-zweiter", "wechsel-eigener-verlauf",
             "laufende-sitzung-markiert", "markierung-endet", "wechsel-erhaelt-sitzung", "wechsel-nichts-doppelt", "neue-sitzung",
             "neue-sitzung-mit-namen", "umbenennen-kopf", "umbenennen-ohne-neuaufbau", "umbenennen-esc", "umbenennen-leiste", "umbenennen-fehler-klar",
             "archivieren", "wiederherstellen", "ende"]

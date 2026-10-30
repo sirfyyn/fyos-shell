@@ -240,6 +240,8 @@
           status();
         },
         onHinweis: (text, fehler) => view.addNote(text, fehler ? 'fehler' : ''),
+        // ein Datei-Werkzeug (read, write, edit …) ist zu Ende: das Änderungen-Panel zieht nach
+        onWerkzeug: (a) => opts.beiWerkzeug && opts.beiWerkzeug(a),
         befehlFuer: (id) => {
           const f = S.freigaben.find((x) => String(x.id) === String(id));
           return f ? f.befehl || '' : '';

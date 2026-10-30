@@ -1432,3 +1432,365 @@ dom('Statuszeile: ohne Antwort im Verlauf (nur die Summe) und nach einem Marker 
     marker.schliesse();
   }
 });
+
+// --- Änderungen der Sitzung (aenderungen.js): Liste, Diff, Vorschau, Baum, Knopf, Tasten ---
+const AE_HTML = '<!doctype html><body><div id="verlauf"><div id="spalte"></div></div><button id="ende" hidden></button><div id="ansage"></div>'
+  + '<button id="kn" hidden>Änderungen (<b id="za">0</b>)</button>'
+  + '<aside id="pa" hidden><button id="zu"></button><div id="re"><button id="rl" aria-selected="true"></button><button id="rb" aria-selected="false"></button></div><div id="in"></div></aside></body>';
+const A_SKRIPTE = ['markdown-strom.js', 'terminal.js', 'chat-renderer.js', 'runner-adapter.js', 'aenderungen.js'];
+const aufruf = (name, args, extra) => ({ id: `t${Math.random().toString(36).slice(2, 8)}`, name, args, status: 'fertig', ...extra });
+const schreibe = (pfad, content) => aufruf('write', { path: pfad, content });
+const aendere = (pfad, alt, neu) => aufruf('edit', { path: pfad, edits: [{ oldText: alt, newText: neu }] });
+const lese = (pfad, output, args) => aufruf('read', { path: pfad, ...args }, { output });
+
+function aenderungenMit(aufrufe, cwd = '/probe/standard') {
+  const w = fenster(A_SKRIPTE, AE_HTML);
+  const d = w.document;
+  const g = (id) => d.getElementById(id);
+  const ae = w.FyosPrototyp.createAenderungen({ knopf: g('kn'), zahl: g('za'), panel: g('pa'), zu: g('zu'), reiter: g('re'), reiterListe: g('rl'), reiterBaum: g('rb'), inhalt: g('in') });
+  const f = { w, d, g, ae, cwd, sammle: (a) => plain(w.FyosPrototyp.aenderungen.sammle(a, cwd)) };
+  f.setze = (a) => ae.setze(a, cwd, 's1');
+  if (aufrufe) f.setze(aufrufe);
+  return f;
+}
+const datei = (erg, pfad) => erg.dateien.find((x) => x.pfad === pfad);
+
+dom('Änderungen: Liste aus den Werkzeugaufrufen, neu gegen geändert, mehrere Änderungen derselben Datei, Zähler', () => {
+  const f = aenderungenMit();
+  const erg = f.sammle([
+    schreibe('/probe/standard/src/neu.js', 'eins\nzwei\ndrei\n'),
+    aendere('/probe/standard/src/neu.js', 'zwei', 'zwei\nzwei-b'),
+    lese('src/alt.js', 'a\nb\nc\n'),
+    aendere('src/alt.js', 'b', 'B'),
+    aendere('src/alt.js', 'c', 'C\nD'),
+    aufruf('bash', { command: 'ls' }),
+    aendere('src/nie.js', 'x', 'y', {}),
+  ]);
+  assert.deepEqual(erg.dateien.map((x) => x.pfad), ['src/neu.js', 'src/alt.js', 'src/nie.js'], 'relativ zum Arbeitsordner, in der Reihenfolge der ersten Änderung; bash zählt nicht');
+  const neu = datei(erg, 'src/neu.js');
+  assert.equal(neu.art, 'neu');
+  assert.equal(neu.name, 'neu.js');
+  assert.equal(neu.ordner, 'src');
+  assert.deepEqual([neu.plus, neu.minus], [4, 0], 'eine neue Datei zählt ihren heutigen Inhalt: 4 Zeilen, nichts entfernt');
+  assert.equal(neu.aenderungen, 2);
+  const alt = datei(erg, 'src/alt.js');
+  assert.equal(alt.art, 'geaendert');
+  assert.equal(alt.aenderungen, 2);
+  assert.equal(alt.hunks.length, 2, 'ein Hunk je Änderung, in der Reihenfolge');
+  assert.deepEqual([alt.plus, alt.minus], [3, 2], 'B + C + D hinzugefügt, b + c entfernt');
+  assert.equal(erg.beruehrt.length, 3);
+});
+
+dom('Änderungen: fehlgeschlagene Aufrufe zählen nicht, Pfade außerhalb des Arbeitsordners werden markiert, ein Schreiben gegen den bekannten Stand zeigt nur die Änderung', () => {
+  const f = aenderungenMit();
+  const erg = f.sammle([
+    aufruf('edit', { path: 'a.txt', edits: [{ oldText: 'x', newText: 'y' }] }, { status: 'fehler' }),
+    schreibe('/anderswo/b.txt', 'b\n'),
+    lese('c.txt', 'eins\nzwei\ndrei\nvier\nfuenf\nsechs\nsieben\nacht\nneun\nzehn\n'),
+    schreibe('c.txt', 'eins\nzwei\ndrei\nvier\nfuenf\nsechs\nsieben\nacht\nneun\nZEHN\n'),
+  ]);
+  assert.equal(datei(erg, 'a.txt'), undefined);
+  const b = datei(erg, '/anderswo/b.txt');
+  assert.equal(b.ausserhalb, true);
+  const c = datei(erg, 'c.txt');
+  assert.equal(c.art, 'geaendert', 'zuvor gelesen: das Schreiben ändert eine bestehende Datei');
+  assert.deepEqual([c.plus, c.minus], [1, 1]);
+  assert.equal(c.hunks.length, 1);
+  assert.equal(c.hunks[0].alt, 8, 'Zeilennummer des Ausschnitts (2 Zeilen Kontext davor)');
+  assert.ok(c.hunks[0].zeilen.length <= 6);
+});
+
+dom('Änderungen: Knopf „Änderungen (N)“ zählt Dateien, ist bei null versteckt und bleibt bei offenem Panel sichtbar', () => {
+  const f = aenderungenMit();
+  assert.equal(f.g('kn').hidden, true);
+  f.setze([schreibe('a.txt', 'a\n')]);
+  assert.equal(f.g('kn').hidden, false);
+  assert.equal(f.g('za').textContent, '1');
+  f.setze([schreibe('a.txt', 'a\n'), aendere('a.txt', 'a', 'b'), schreibe('b.txt', 'b\n'), lese('c.txt', 'c')]);
+  assert.equal(f.g('za').textContent, '2', 'Dateien, nicht Aufrufe; nur Gelesenes zählt nicht');
+  f.g('kn').click();
+  assert.equal(f.g('pa').hidden, false);
+  assert.equal(f.g('kn').getAttribute('aria-expanded'), 'true');
+  f.ae.setze([], f.cwd, 's1');
+  assert.equal(f.g('kn').hidden, false, 'bei offenem Panel bleibt der Knopf, damit man es schließen kann');
+  assert.match(f.g('in').textContent, /noch keine Dateien geändert/);
+  f.g('zu').click();
+  assert.equal(f.g('kn').hidden, true);
+});
+
+dom('Änderungen: Liste mit Name, Ordner, Art und +/−; der Diff je Datei klappt auf und zu (zusammengefasst über alle Änderungen)', () => {
+  const f = aenderungenMit([
+    schreibe('src/neu.js', 'eins\nzwei\n'),
+    lese('src/alt.js', 'a\nb\nc\n'),
+    aendere('src/alt.js', 'b', 'B'),
+    aendere('src/alt.js', 'c', 'C\nD'),
+  ]);
+  f.ae.zeige(true);
+  const zeilen = [...f.d.querySelectorAll('.ae-datei')];
+  assert.equal(zeilen.length, 2);
+  assert.equal(zeilen[0].querySelector('.ae-dname').textContent, 'neu.js');
+  assert.equal(zeilen[0].querySelector('.ae-dordner').textContent, 'src');
+  assert.equal(zeilen[0].querySelector('.ae-art').textContent, 'neu');
+  assert.equal(zeilen[1].querySelector('.ae-art').textContent, 'geändert');
+  assert.match(zeilen[1].querySelector('.diffzahl').textContent, /\+3\s+−2/);
+  assert.equal(f.d.querySelector('.ae-diff'), null, 'Diffs sind eingeklappt');
+  zeilen[1].querySelector('.ae-auf').click();
+  const diff = f.d.querySelector('.ae-datei[data-pfad="src/alt.js"] .diff');
+  assert.ok(diff, 'Diff aufgeklappt');
+  assert.equal(diff.querySelector('.datei').textContent, 'src/alt.js');
+  assert.equal(diff.querySelectorAll('tr.add').length, 3);
+  assert.equal(diff.querySelectorAll('tr.del').length, 2);
+  assert.equal(diff.querySelectorAll('tr.trenn').length, 1, 'zwei Änderungen, getrennt');
+  assert.equal(f.d.querySelector('.ae-auf.offen').getAttribute('aria-expanded'), 'true');
+  f.d.querySelector('.ae-datei[data-pfad="src/alt.js"] .ae-auf').click();
+  assert.equal(f.d.querySelector('.ae-diff'), null, 'wieder eingeklappt');
+  // die neue Datei: lauter hinzugefügte Zeilen
+  f.d.querySelector('.ae-datei[data-pfad="src/neu.js"] .ae-auf').click();
+  const neu = f.d.querySelector('.ae-datei[data-pfad="src/neu.js"] .diff');
+  assert.equal(neu.querySelectorAll('tr.add').length, 2);
+  assert.equal(neu.querySelectorAll('tr.del').length, 0);
+});
+
+dom('Änderungen: Dateivorschau mit Zeilennummern; der Stand folgt den späteren Bearbeitungen; Zurück führt zur Liste', () => {
+  const f = aenderungenMit([schreibe('n.txt', 'eins\nzwei\ndrei\n'), aendere('n.txt', 'zwei', 'ZWEI')]);
+  f.ae.zeige(true);
+  f.d.querySelector('.ae-name').click();
+  assert.equal(f.ae.modus, 'vorschau');
+  assert.equal(f.g('re').hidden, true, 'Reiter in der Vorschau weg');
+  const zeilen = [...f.d.querySelectorAll('.ae-code tr')].map((tr) => [tr.querySelector('.nr').textContent, tr.querySelector('.code').textContent]);
+  assert.deepEqual(zeilen, [['1', 'eins'], ['2', 'ZWEI'], ['3', 'drei']]);
+  assert.match(f.d.querySelector('.ae-quelle').textContent, /geschrieben/);
+  f.d.querySelector('.ae-zurueck').click();
+  assert.equal(f.ae.modus, 'liste');
+  assert.equal(f.d.activeElement.className, 'ae-name', 'der Fokus kehrt zum Dateinamen zurück');
+});
+
+dom('Änderungen: Vorschau aus dem letzten Lesen, Binärdatei, unbekannter Inhalt und Größenlimit', () => {
+  const f = aenderungenMit([lese('l.txt', 'lesen\n'), aendere('l.txt', 'lesen', 'gelesen'), aendere('ohne.txt', 'a', 'b'), schreibe('bild.bin', 'PNG\u0000\u0001\u0002ä'), schreibe('gross.txt', Array.from({ length: 2500 }, (_, i) => `z${i}`).join('\n'))]);
+  f.ae.zeige(true);
+  f.ae.oeffneVorschau('l.txt');
+  assert.equal(f.d.querySelector('.ae-code .code').textContent, 'gelesen');
+  assert.match(f.d.querySelector('.ae-quelle').textContent, /Lesen/);
+  f.d.querySelector('.ae-zurueck').click();
+  f.ae.oeffneVorschau('ohne.txt');
+  assert.match(f.d.querySelector('.ae-fehlt').textContent, /nicht verfügbar/);
+  assert.match(f.d.querySelector('.ae-fehlt').textContent, /keinen Weg/);
+  f.d.querySelector('.ae-zurueck').click();
+  f.ae.oeffneVorschau('bild.bin');
+  assert.equal(f.d.querySelector('.ae-binaer').textContent, 'Binärdatei, 8 Byte');
+  assert.equal(f.d.querySelector('.ae-code'), null, 'kein Inhalt einer Binärdatei');
+  f.d.querySelector('.ae-zurueck').click();
+  f.ae.oeffneVorschau('gross.txt');
+  assert.equal(f.d.querySelectorAll('.ae-code tr').length, 2000);
+  assert.match(f.d.querySelector('.ae-quelle').textContent, /Gekürzt/);
+  // Diff einer großen neuen Datei: Zähler für die ganze Datei, gezeigt werden 400 Zeilen
+  f.d.querySelector('.ae-zurueck').click();
+  f.ae.schalteDiff('gross.txt');
+  const diff = f.d.querySelector('.ae-datei[data-pfad="gross.txt"] .diff');
+  assert.equal(diff.querySelectorAll('tr.add').length, 400);
+  assert.match(diff.querySelector('.diffzahl').textContent, /\+2500/);
+  assert.match(diff.querySelector('tr.trenn').textContent, /2100 weitere Zeilen/);
+});
+
+dom('Änderungen: ein Lese-Ergebnis in der Größe der Kürzungsgrenze des Werkzeugs (2000 Zeilen, 50 KB) und ein teilweises Lesen gelten nicht als Stand der Datei', () => {
+  const f = aenderungenMit([
+    lese('lang.txt', Array.from({ length: 2000 }, (_, i) => `z${i}`).join('\n')),
+    aendere('lang.txt', 'z1', 'Z1'),
+    lese('teil.txt', 'ab Zeile 5', { offset: 5 }),
+    aendere('teil.txt', 'ab', 'AB'),
+  ]);
+  f.ae.zeige(true);
+  assert.equal(datei({ dateien: f.ae.dateien() }, 'lang.txt').inhalt, null);
+  assert.equal(datei({ dateien: f.ae.dateien() }, 'teil.txt').inhalt, null);
+  f.ae.oeffneVorschau('lang.txt');
+  assert.match(f.d.querySelector('.ae-fehlt').textContent, /nicht verfügbar/);
+});
+
+dom('Änderungen: unlesbarer Inhalt wird nur als Text eingesetzt (kein HTML)', () => {
+  const f = aenderungenMit([schreibe('<img src=x onerror=alert(1)>.html', '<script>x</script>\n<b>fett</b>\n')]);
+  f.ae.zeige(true);
+  f.ae.schalteDiff('<img src=x onerror=alert(1)>.html');
+  f.ae.oeffneVorschau('<img src=x onerror=alert(1)>.html');
+  assert.equal(f.d.querySelectorAll('#in img, #in script, #in b').length, 0, 'nichts davon wurde zu einem Element');
+  assert.match(f.d.querySelector('.ae-code').textContent, /<script>x<\/script>/);
+});
+
+dom('Änderungen: Dateibaum aus den berührten Dateien mit aufklappbaren Ordnern, Marken und Sprung in die Vorschau', () => {
+  const f = aenderungenMit([schreibe('src/a/neu.js', 'x\n'), lese('src/b.js', 'b'), aendere('src/b.js', 'b', 'c'), lese('README.md', 'text'), schreibe('/anderswo/x.txt', 'x')]);
+  f.ae.zeige(true);
+  f.g('rb').click();
+  assert.equal(f.ae.modus, 'baum');
+  assert.equal(f.g('rb').getAttribute('aria-selected'), 'true');
+  const baumTexte = [...f.d.querySelectorAll('.ae-knoten')].map((b) => `${b.dataset.ordner !== undefined ? 'O' : 'D'}:${b.querySelector('.ae-dname').textContent}`);
+  assert.deepEqual(baumTexte, ['O:(außerhalb)', 'O:anderswo', 'D:x.txt', 'O:src', 'O:a', 'D:neu.js', 'D:b.js', 'D:README.md'], 'Ordner vor Dateien, alphabetisch');
+  assert.equal(f.d.querySelector('.ae-knoten[data-datei="README.md"] .ae-art').textContent, 'gelesen');
+  assert.equal(f.d.querySelector('.ae-knoten[data-datei="src/b.js"] .ae-art').textContent, 'geändert');
+  assert.equal(f.d.querySelector('.ae-knoten[data-datei="src/a/neu.js"] .ae-art').textContent, 'neu');
+  assert.match(f.d.querySelector('.ae-fuss').textContent, /nicht als Dateiliste/);
+  // Ordner zuklappen
+  f.d.querySelector('.ae-knoten[data-ordner="src/a"]').click();
+  assert.equal(f.d.querySelector('.ae-knoten[data-datei="src/a/neu.js"]'), null);
+  f.d.querySelector('.ae-knoten[data-ordner="src/a"]').click();
+  assert.ok(f.d.querySelector('.ae-knoten[data-datei="src/a/neu.js"]'));
+  // Datei anklicken: Vorschau; Zurück kehrt in den Baum zurück
+  f.d.querySelector('.ae-knoten[data-datei="src/b.js"]').click();
+  assert.equal(f.d.querySelector('.ae-code .code').textContent, 'c');
+  f.d.querySelector('.ae-zurueck').click();
+  assert.equal(f.ae.modus, 'baum');
+});
+
+dom('Änderungen: Tasten – Pfeile in der Liste, Enter öffnet den Diff, Umschalt+Enter die Vorschau, Esc geht zurück und schließt; die Tasten erreichen den Verlauf nicht', () => {
+  const f = aenderungenMit([schreibe('a.txt', 'a\n'), schreibe('b.txt', 'b\n'), schreibe('c.txt', 'c\n')]);
+  const amDokument = [];
+  f.d.addEventListener('keydown', (e) => amDokument.push(e.key));
+  f.g('kn').click();
+  const namen = () => [...f.d.querySelectorAll('.ae-name')];
+  assert.equal(f.d.activeElement, namen()[0], 'Öffnen setzt den Fokus in die Liste');
+  taste(f.w, f.d.activeElement, 'ArrowDown');
+  assert.equal(f.d.activeElement, namen()[1]);
+  taste(f.w, f.d.activeElement, 'ArrowDown');
+  taste(f.w, f.d.activeElement, 'ArrowDown');
+  assert.equal(f.d.activeElement, namen()[2], 'am Ende ist Schluss');
+  taste(f.w, f.d.activeElement, 'ArrowUp');
+  assert.equal(f.d.activeElement, namen()[1]);
+  taste(f.w, f.d.activeElement, 'Enter');
+  assert.ok(f.d.querySelector('.ae-datei[data-pfad="b.txt"] .diff'), 'Enter öffnet den Diff');
+  assert.equal(f.d.activeElement, namen()[1], 'der Fokus bleibt auf der Zeile');
+  taste(f.w, f.d.activeElement, 'ArrowLeft');
+  assert.equal(f.d.querySelector('.ae-diff'), null);
+  taste(f.w, f.d.activeElement, 'Enter', { shiftKey: true });
+  assert.equal(f.ae.modus, 'vorschau');
+  assert.equal(f.d.querySelector('.ae-code .code').textContent, 'b');
+  taste(f.w, f.d.activeElement, 'Escape');
+  assert.equal(f.ae.modus, 'liste', 'Esc in der Vorschau führt zurück');
+  assert.equal(f.g('pa').hidden, false);
+  assert.equal(f.d.activeElement.dataset.fokus, 'name:b.txt');
+  taste(f.w, f.d.activeElement, 'Escape');
+  assert.equal(f.g('pa').hidden, true, 'Esc in der Liste schließt');
+  assert.equal(f.d.activeElement, f.g('kn'));
+  assert.deepEqual(amDokument, [], 'das Dokument (chat.js: Stopp, Freigabe-Tasten) hört nichts davon');
+  // Tasten mit Cmd/Strg gehören weiter der Seite
+  f.ae.zeige(true);
+  taste(f.w, f.d.activeElement, 'b', { metaKey: true });
+  assert.deepEqual(amDokument, ['b']);
+});
+
+dom('Änderungen: Tasten im Baum – Pfeile, Rechts/Links klappen Ordner, Enter öffnet die Vorschau', () => {
+  const f = aenderungenMit([schreibe('o/a.txt', 'a\n'), schreibe('o/b.txt', 'b\n')]);
+  f.ae.zeige(true);
+  f.g('rb').click();
+  f.d.querySelector('.ae-knoten').focus();
+  assert.equal(f.d.activeElement.dataset.ordner, 'o');
+  taste(f.w, f.d.activeElement, 'ArrowLeft');
+  assert.equal(f.d.querySelectorAll('.ae-knoten').length, 1, 'zugeklappt');
+  assert.equal(f.d.activeElement.dataset.ordner, 'o', 'Fokus bleibt');
+  taste(f.w, f.d.activeElement, 'ArrowRight');
+  assert.equal(f.d.querySelectorAll('.ae-knoten').length, 3);
+  taste(f.w, f.d.activeElement, 'ArrowDown');
+  taste(f.w, f.d.activeElement, 'ArrowDown');
+  assert.equal(f.d.activeElement.dataset.datei, 'o/b.txt');
+  f.d.activeElement.click();
+  assert.equal(f.d.querySelector('.ae-code .code').textContent, 'b');
+});
+
+dom('Änderungen: eine andere Sitzung setzt Diffs, Vorschau und Baum zurück; gleiche Aufrufe zeichnen nichts neu', () => {
+  const f = aenderungenMit([schreibe('a.txt', 'a\n')]);
+  f.ae.zeige(true);
+  f.ae.schalteDiff('a.txt');
+  const diff = f.d.querySelector('.ae-diff');
+  assert.equal(f.ae.setze([schreibe('a.txt', 'a\n')], f.cwd, 's1'), false, 'keine Änderung: kein Neuzeichnen');
+  f.ae.oeffneVorschau('a.txt');
+  f.ae.setze([schreibe('z.txt', 'z\n')], f.cwd, 's2');
+  assert.equal(f.ae.modus, 'liste');
+  assert.equal(f.d.querySelector('.ae-datei').dataset.pfad, 'z.txt');
+  assert.equal(f.d.querySelector('.ae-diff'), null);
+  assert.ok(diff);
+});
+
+// Die ganze Seite: Verlauf mit Werkzeugaufrufen laden, live ergänzen, Sitzung wechseln
+const toolCall = (id, name, args) => ({ type: 'toolCall', id, name, arguments: args });
+const verlaufMit = (...schritte) => schritte.flatMap(([name, args, ergebnis, fehler], i) => [
+  { id: 100 + i * 2, kind: 'pi.message', model: [{ role: 'assistant', content: [toolCall(`c${i}`, name, args)], stopReason: 'toolUse' }] },
+  { id: 101 + i * 2, kind: 'pi.tool', model: [{ role: 'toolResult', toolCallId: `c${i}`, toolName: name, content: [{ type: 'text', text: ergebnis || 'ok' }], isError: !!fehler }] },
+]);
+
+dom('Seite: der Knopf zählt die geänderten Dateien aus dem Verlauf, das Panel zeigt Liste, Diff und Vorschau; neue Werkzeugergebnisse ziehen nach', async () => {
+  const entries = verlaufMit(
+    ['write', { path: '/probe/standard/neu.txt', content: 'a\nb\n' }],
+    ['read', { path: 'src/x.js' }, 'eins\nzwei\n'],
+    ['edit', { path: 'src/x.js', edits: [{ oldText: 'zwei', newText: 'zwei\ndrei' }] }],
+    ['edit', { path: 'kaputt.js', edits: [{ oldText: 'a', newText: 'b' }] }, 'nicht gefunden', true],
+  );
+  const { w, d, g, schliesse } = arbeitsplatz({ ansicht: (id) => ({ entries: id === 1 ? entries : [] }) });
+  try {
+    await bis(() => !g('aenderungenKnopf').hidden);
+    assert.equal(g('aenderungenZahl').textContent, '2', 'neu.txt und src/x.js; das fehlgeschlagene Bearbeiten zählt nicht');
+    assert.match(g('aenderungenKnopf').textContent, /Änderungen \(2\)/);
+    g('aenderungenKnopf').click();
+    assert.equal(g('aenderungenPanel').hidden, false);
+    const pfade = [...d.querySelectorAll('#aenderungenInhalt .ae-datei')].map((x) => x.dataset.pfad);
+    assert.deepEqual(pfade, ['neu.txt', 'src/x.js'], 'Pfad relativ zum Arbeitsordner der Sitzung');
+    d.querySelector('.ae-datei[data-pfad="src/x.js"] .ae-auf').click();
+    assert.equal(d.querySelectorAll('.ae-datei[data-pfad="src/x.js"] tr.add').length, 1, 'nur „drei“ ist neu');
+    d.querySelector('.ae-datei[data-pfad="src/x.js"] .ae-name').click();
+    assert.deepEqual([...d.querySelectorAll('.ae-code .code')].map((x) => x.textContent), ['eins', 'zwei', 'drei'], 'Stand aus dem Lesen plus Bearbeiten');
+    d.querySelector('.ae-zurueck').click();
+    // live: ein weiteres Werkzeug der offenen Sitzung zu Ende
+    const ad = w.__chat.adapter;
+    ad.apply({ type: 'tool_execution_start', toolCallId: 'live1', toolName: 'write', args: { path: 'live.md', content: 'x\n' } });
+    assert.equal(g('aenderungenZahl').textContent, '2', 'solange das Werkzeug läuft, zählt es nicht');
+    ad.apply({ type: 'tool_execution_end', toolCallId: 'live1', toolName: 'write', entry: { id: 900, model: [{ role: 'toolResult', content: [{ type: 'text', text: 'ok' }], isError: false }] } });
+    await bis(() => g('aenderungenZahl').textContent === '3');
+    assert.ok(d.querySelector('.ae-datei[data-pfad="live.md"]'), 'die offene Liste zeichnet sich neu');
+    // Panel und Freigaben-Panel sind getrennte Schubladen
+    assert.equal(g('freigabenPanel').hidden, true);
+    // Sitzungswechsel: die andere Sitzung hat keine Änderungen
+    await w.__arbeitsplatz.wechsle(2);
+    await bis(() => g('titel').textContent === 'Zweite');
+    await bis(() => g('aenderungenZahl').textContent === '0');
+    assert.match(d.querySelector('#aenderungenInhalt').textContent, /noch keine Dateien geändert/);
+    g('aenderungenZu').click();
+    assert.equal(g('aenderungenKnopf').hidden, true, 'bei null Änderungen ist der Knopf weg');
+    await w.__arbeitsplatz.wechsle(1);
+    await bis(() => g('aenderungenZahl').textContent === '3');
+    assert.equal(g('aenderungenKnopf').hidden, false);
+  } finally {
+    schliesse();
+  }
+});
+
+dom('Seite: Esc im Änderungen-Panel hält den laufenden Lauf nicht an; mit dem Freigaben-Panel liegen beide nebeneinander', async () => {
+  const entries = verlaufMit(['write', { path: 'a.txt', content: 'a\n' }]);
+  const { w, d, g, st, schliesse } = arbeitsplatz({ ansicht: () => ({ entries }) });
+  try {
+    await bis(() => !g('aenderungenKnopf').hidden);
+    g('aenderungenKnopf').click();
+    taste(w, d.activeElement, 'Escape');
+    assert.equal(g('aenderungenPanel').hidden, true);
+    assert.equal(st.aufrufe.filter((a) => /abbrechen/.test(a.url)).length, 0, 'kein Stopp');
+    // Panels getrennt zu öffnen
+    g('aenderungenKnopf').click();
+    g('freigabenPanel').hidden = false;
+    assert.equal(g('aenderungenPanel').hidden, false);
+    assert.ok(lies('aenderungen.css').includes('.fp-panel:not([hidden]) ~ .ae-panel'), 'bei beiden offen rückt das Änderungen-Panel nach links');
+    assert.ok(d.querySelector('#freigabenPanel').compareDocumentPosition(d.querySelector('#aenderungenPanel')) & 4, 'das Änderungen-Panel steht nach dem Freigaben-Panel');
+  } finally {
+    schliesse();
+  }
+});
+
+test('Änderungen: eingebunden in chat.js, neutral formuliert, keine eigenen Wege zum Runner (Quelltext-Prüfung)', () => {
+  const chat = lies('chat.js');
+  assert.match(chat, /FP\.createAenderungen\(/);
+  assert.match(chat, /beiWerkzeug: \(\) => \{\s*if \(aktiv === rec\) planeAenderungen\(\);/, 'jedes beendete Datei-Werkzeug der offenen Sitzung zieht das Panel nach');
+  assert.match(chat, /aenderungen\.setze\(aktiv\.chat\.adapter\.aufrufe\(\), ordnerPfad\(aktiv\), aktiv\.id\)/);
+  const html = lies('chat.html');
+  for (const id of ['aenderungenKnopf', 'aenderungenZahl', 'aenderungenPanel', 'aenderungenZu', 'aenderungenReiter', 'aenderungenReiterListe', 'aenderungenReiterBaum', 'aenderungenInhalt']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.includes('src="aenderungen.js"') && html.includes('href="aenderungen.css"'));
+  assert.ok(html.indexOf('src="chat-renderer.js"') < html.indexOf('src="aenderungen.js"') && html.indexOf('src="aenderungen.js"') < html.indexOf('src="chat.js"'));
+  const eigen = lies('aenderungen.js');
+  assert.ok(!/transport|fetch|XMLHttp|\/api\//.test(eigen.replace(/\/\*[\s\S]*?\*\//g, '')), 'das Panel spricht nie selbst mit dem Runner: alles kommt aus dem Verlauf der Sitzung');
+  assert.ok(!/innerHTML\s*=\s*(?!icon)/.test(eigen.replace(/e\.innerHTML = icon;[^\n]*/, '')), 'innerHTML nur für die festen Symbole');
+  const verboten = new RegExp(['gin', 'ny|perse', 'phone|ti', 'tan|rh', 'ea|sirf', 'yyn|/Users/'].join(''), 'i');
+  assert.ok(!verboten.test(eigen + lies('aenderungen.css') + html), 'kein Agenten-, Rechner- oder Pfadname im Quelltext');
+});

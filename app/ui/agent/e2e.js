@@ -161,6 +161,31 @@
     const d = spalteAktiv().querySelector('.diff');
     await melde('diff-ansicht', diff && d.querySelector('tr.add') && d.querySelector('tr.del') && d.textContent.includes('src/probe.txt') && d.querySelector('.diff-tabelle[aria-label*="hinzugefügt"]'), d ? d.textContent.slice(0, 120) : 'kein Diff');
 
+    { // Panel „Änderungen“: Liste, Diff, Vorschau und Baum aus den Datei-Werkzeugen der Sitzung (das Szenario „aenderungen“ der Attrappe, dazu die zwei Dateien des Szenarios „diff“)
+    await chat.sende('aenderungen');
+    const knopfOk = await warte(() => text().includes('Änderungen fertig.') && !$('aenderungenKnopf').hidden && $('aenderungenZahl').textContent === '3', 15000);
+    await melde('aenderungen-knopf', knopfOk, `Knopf verborgen=${$('aenderungenKnopf').hidden} Zahl=${$('aenderungenZahl').textContent}`);
+    $('aenderungenKnopf').click();
+    const zeilen = () => [...document.querySelectorAll('#aenderungenInhalt .ae-datei')];
+    const pfade = () => zeilen().map((z) => z.dataset.pfad).sort();
+    const listeOk = await warte(() => !$('aenderungenPanel').hidden && pfade().length === 3, 5000);
+    await melde('aenderungen-liste', listeOk && pfade().join(',') === 'neu.txt,notizen/plan.md,src/probe.txt' && zeilen().find((z) => z.dataset.pfad === 'notizen/plan.md').dataset.art === 'neu' && zeilen().find((z) => z.dataset.pfad === 'src/probe.txt').dataset.art === 'geaendert', pfade().join(','));
+    document.querySelector('.ae-datei[data-pfad="notizen/plan.md"] .ae-auf').click();
+    const diffOk = await warte(() => document.querySelectorAll('.ae-datei[data-pfad="notizen/plan.md"] .diff tr.add').length === 4, 5000);
+    await melde('aenderungen-diff', diffOk && document.querySelectorAll('.ae-datei[data-pfad="notizen/plan.md"] .diff tr.del').length === 0 && /\+4/.test(document.querySelector('.ae-datei[data-pfad="notizen/plan.md"] .diffzahl').textContent), 'neue Datei mit 4 hinzugefügten Zeilen');
+    document.querySelector('.ae-datei[data-pfad="notizen/plan.md"] .ae-name').click();
+    const vorschauOk = await warte(() => document.querySelectorAll('#aenderungenInhalt .ae-code tr').length === 4, 5000);
+    const zeilenText = [...document.querySelectorAll('#aenderungenInhalt .ae-code .code')].map((x) => x.textContent).join('|');
+    await melde('aenderungen-vorschau', vorschauOk && zeilenText === '# Plan|erster Punkt|zweiter Punkt|dritter Punkt', zeilenText);
+    document.querySelector('#aenderungenInhalt .ae-zurueck').click();
+    $('aenderungenReiterBaum').click();
+    const baumOk = await warte(() => document.querySelector('.ae-knoten[data-datei="src/probe.txt"]') && document.querySelector('.ae-knoten[data-ordner="notizen"]'), 5000);
+    await melde('aenderungen-baum', !!baumOk && !!document.querySelector('.ae-knoten[data-datei="notizen/plan.md"]'), [...document.querySelectorAll('.ae-knoten')].map((b) => b.querySelector('.ae-dname').textContent).join('|'));
+    ($('aenderungenInhalt').querySelector('.ae-knoten') || $('aenderungenZu')).focus();
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await melde('aenderungen-esc', $('aenderungenPanel').hidden && !window.__chat.view.busy, `Panel verborgen=${$('aenderungenPanel').hidden}`);
+    }
+
     // Wechsel: Sitzung 1 bleibt als dasselbe Element erhalten (kein Neuaufbau), Sitzung 2 hat einen eigenen Verlauf
     const pane1 = spalteAktiv();
     pane1.dataset.marke = 'bleibt';

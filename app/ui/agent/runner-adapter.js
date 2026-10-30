@@ -21,8 +21,8 @@
   };
 
   /** Edit-Argumente → Diff. Unterstützt { path, oldText/newText }, { edits: [...] } und old_string/new_string. Ohne Zeilennummern (nur Ausschnitt bekannt). */
-  function diffAusEdit(args) {
-    if (!args || typeof args !== 'object') return null;
+  function editPaare(args) {
+    if (!args || typeof args !== 'object') return [];
     const paare = [];
     const nimm = (o) => {
       const alt = o.oldText ?? o.old_string ?? o.oldString ?? o.old_text;
@@ -31,15 +31,19 @@
     };
     nimm(args);
     if (Array.isArray(args.edits)) args.edits.forEach((e) => e && typeof e === 'object' && nimm(e));
+    return paare;
+  }
+  function diffAusEdit(args) {
+    const paare = editPaare(args);
     if (!paare.length) return null;
     const hunks = paare.map(([a, n]) => ({ alt: null, neu: null, zeilen: FP.diffZeilen(a, n) }));
     return { datei: String(args.path || args.file_path || args.pfad || 'Datei'), hunks };
   }
-  /** Write-Aufruf → Diff mit lauter hinzugefügten Zeilen (bei langen Dateien nur die ersten 60). */
-  function diffAusWrite(args) {
+  /** Write-Aufruf → Diff mit lauter hinzugefügten Zeilen (bei langen Dateien nur die ersten `max`, Vorgabe 60). */
+  function diffAusWrite(args, max) {
     if (!args || typeof args.content !== 'string') return null;
     const z = args.content.replace(/\n$/, '').split('\n');
-    const zeilen = z.slice(0, 60).map((t) => ['+', t]);
+    const zeilen = z.slice(0, max || 60).map((t) => ['+', t]);
     return { datei: String(args.path || args.file_path || 'Datei'), hunks: [{ alt: null, neu: 1, zeilen }] };
   }
 
@@ -64,6 +68,7 @@
     const bekannt = new Set(); // Eintrags-Ids: Wiederholungen (Snapshot, doppelte Zustellung) zeichnen nichts doppelt
     const werkzeuge = new Map(); // id → { name, args, beendet }
     const entscheidungen = new Map(); // Freigabe-Id → { wert, notiz } aus Entscheidungs-Einträgen
+    const aufrufe = []; // beendete Datei-Werkzeuge der Sitzung (siehe merkeAufruf)
     let denkt = false;
     let laeuft = false;
     let live = { texte: {}, denken: {} }; // schon gezeigter Text der laufenden Nachricht je Blockindex
@@ -96,6 +101,17 @@
       else view.addNote(text, fehler ? 'fehler' : '');
     };
 
+    /** Beendete Datei-Werkzeuge (read, write, edit, multiedit, str_replace) in der Reihenfolge ihres Endes: Quelle des Änderungen-Panels (aenderungen.js). */
+    const DATEI_WERKZEUGE = new Set(['read', 'write', 'edit', 'multiedit', 'str_replace']);
+    const LESE_GRENZE = 400000; // längere Lese-Ergebnisse werden nicht behalten (die Vorschau zeigt ohnehin nur den Anfang)
+    function merkeAufruf(id, w, status, output) {
+      const n = String(w.name || '').toLowerCase();
+      if (!DATEI_WERKZEUGE.has(n)) return;
+      const a = { id, name: n, args: w.args || {}, status, output: n === 'read' && typeof output === 'string' && output.length <= LESE_GRENZE ? output : undefined };
+      aufrufe.push(a);
+      if (opts.onWerkzeug) opts.onWerkzeug(a);
+    }
+
     function werkzeugStart(id, name, args, ts) {
       if (!id) return false;
       const schon = werkzeuge.get(id);
@@ -121,6 +137,7 @@
       }
       if (!w || w.beendet) return;
       w.beendet = true;
+      merkeAufruf(id, w, status, output);
       let diff;
       if (status !== 'fehler') {
         const n = String(w.name || '').toLowerCase();
@@ -393,10 +410,12 @@
       if (!mitteImLauf) zugZu();
     }
 
-    return { apply, replay, eintrag, snapshot, diffAusEdit, get laeuft() { return laeuft; }, get bekannt() { return bekannt; } };
+    return { apply, replay, eintrag, snapshot, diffAusEdit, aufrufe: () => aufrufe.slice(), get laeuft() { return laeuft; }, get bekannt() { return bekannt; } };
   }
 
   FP.createRunnerAdapter = createRunnerAdapter;
   FP.kontextAusNutzung = kontextAusNutzung;
   FP.diffAusEdit = diffAusEdit;
+  FP.diffAusWrite = diffAusWrite;
+  FP.editPaare = editPaare;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

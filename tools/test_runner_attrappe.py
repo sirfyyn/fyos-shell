@@ -262,6 +262,32 @@ class Tests(Basis):
                 self.assertIn("edits", starts[0]["args"])
                 self.assertEqual(starts[1]["toolName"], "write")
 
+    def test_aenderungen_szenario_liefert_datei_werkzeuge_mit_toolcall_im_verlauf(self):
+        threading.Timer(0.1, lambda: self.anfrage("/api/gespraech/2/nachricht", {"text": "aenderungen"})).start()
+        req = urllib.request.Request(self.basis + "/api/gespraech/2/ereignisse", headers={"Authorization": f"Bearer {TOKEN}"})
+        evs, art = [], None
+        with urllib.request.urlopen(req, timeout=8) as a:
+            for zeile in a:
+                z = zeile.decode().rstrip("\n")
+                if z.startswith("event: "):
+                    art = z[7:]
+                elif z.startswith("data: ") and art == "ereignisse":
+                    evs.extend(json.loads(z[6:]))
+                    if any(x["type"] == "run_end" for x in evs):
+                        break
+        starts = [x for x in evs if x["type"] == "tool_execution_start"]
+        self.assertEqual([x["toolName"] for x in starts], ["write", "read", "edit", "edit", "edit"])
+        self.assertEqual(starts[0]["args"]["path"], "notizen/plan.md")
+        self.assertIn("content", starts[0]["args"])
+        self.assertIn("edits", starts[2]["args"])
+        # im Verlauf steht je Schritt die Assistenten-Nachricht mit dem toolCall-Block, danach das Ergebnis (nach dem Neuladen baut die Oberfläche daraus die Liste)
+        modelle = [m for e in self.anfrage("/api/gespraech/2/ansicht?voll=1")["entries"] for m in (e.get("model") or [])]
+        aufrufe = [b for m in modelle if m["role"] == "assistant" for b in m["content"] if b.get("type") == "toolCall"]
+        self.assertEqual([b["name"] for b in aufrufe], ["write", "read", "edit", "edit", "edit"])
+        ergebnisse = [m for m in modelle if m["role"] == "toolResult"]
+        self.assertEqual([m["toolCallId"] for m in ergebnisse], [b["id"] for b in aufrufe])
+        self.assertEqual([m["isError"] for m in ergebnisse], [False, False, False, False, True])
+
     def test_aktivitaetsstrom_meldet_zeilen_je_sitzung(self):
         threading.Timer(0.3, lambda: self.anfrage("/api/gespraech/2/nachricht", {"text": "reset"})).start()
         req = urllib.request.Request(self.basis + "/api/strom", headers={"Authorization": f"Bearer {TOKEN}"})
