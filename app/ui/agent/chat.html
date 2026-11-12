@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="dateien.css">
   <link rel="stylesheet" href="palette.css">
   <link rel="stylesheet" href="start.css">
+  <link rel="stylesheet" href="rueckmeldung.css">
 </head>
 <body>
   <div class="app" id="app">
@@ -213,6 +214,8 @@
           </span>
           <span id="tokens" class="leise"></span>
           <span id="kosten" class="leise"></span>
+          <button id="anzeigeKnopf" type="button" class="rm-knopf" aria-label="Anzeige des Verlaufs: kompakt, normal oder detailliert">Anzeige: normal</button>
+          <button id="tonKnopf" type="button" class="rm-knopf" aria-label="Töne: aus, dezent oder deutlich">Töne: aus</button>
         </div>
       </footer>
     </div>
@@ -249,6 +252,7 @@
     </aside>
     <div id="ansage" class="sr" aria-live="polite" aria-atomic="true"></div>
     <div id="palette" hidden></div>
+    <div id="rmToast" class="rm-toast" role="status" hidden></div>
   </div>
 
   <script src="markdown-strom.js"></script>
@@ -276,6 +280,7 @@
   <script src="plattform.js"></script>
   <script src="palette.js"></script>
   <script src="start.js"></script>
+  <script src="rueckmeldung.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

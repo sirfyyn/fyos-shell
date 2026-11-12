@@ -231,6 +231,8 @@
       // im Gespräch angeklickt: eine Datei (auch an einer Zeile), die Änderung eines Aufrufs, ein Anhang. Die Seite öffnet dafür eine Fläche.
       onDatei: (d) => opts.beiDatei && opts.beiDatei(d),
       onAnhang: (a) => opts.beiAnhang && opts.beiAnhang(a),
+      // Reaktionen unter einer eben beendeten Antwort (gut, nicht gut, kürzer, noch einmal): was daraus wird, entscheidet die Seite
+      ...(opts.beiReaktion && opts.reaktionen ? { reaktionen: opts.reaktionen, onReaktion: (id) => opts.beiReaktion(id) } : {}),
     });
 
     function neuerAdapter() {
@@ -261,6 +263,8 @@
         onWerkzeug: (a) => opts.beiWerkzeug && opts.beiWerkzeug(a),
         // irgendein Werkzeug ist zu Ende (Name und Zustand): Aufgabenliste und Läufe der Seitenleiste ziehen nach
         onWerkzeugEnde: (w) => opts.beiWerkzeugEnde && opts.beiWerkzeugEnde(w),
+        // ein Moment, der eben geschah (fertig, braucht, fehler, werkzeug): die Seite gibt dazu Rückmeldung (Ton)
+        onMoment: (name) => opts.beiMoment && opts.beiMoment(name),
         // im Verlauf steht ein Zurückspulen (Eintrag fyos.zurueck): die Tafel „Änderungen“ zieht nach
         onZurueck: (z) => opts.beiZurueck && opts.beiZurueck(z),
         befehlFuer: (id) => {

@@ -248,14 +248,18 @@
         laeuft = true;
       }
     };
+    let bittetEben = false; // in diesem Zug kam eine Freigabe-Bitte: sein Ende ist dann kein „fertig“
     let letzteZeit = null; // Zeit der letzten Nachricht des laufenden Zugs (für die Zeitmarke am Ende, wenn ein Verlauf abgespielt wird)
-    const zugZu = () => {
+    const zugZu = (laufEnde) => {
       if (laeuft) {
         denkenZu();
         // live endet der Zug jetzt; beim Abspielen gilt die Zeit der letzten Nachricht, ohne die bleibt die Marke weg
         view.endTurn(abspielen > 0 ? { zeit: letzteZeit } : {});
         laeuft = false;
+        // der Lauf ist eben zu Ende und es wartet keine Freigabe (die hat ihren eigenen Moment); eine Nachricht mitten im Zug ist kein „fertig“
+        if (laufEnde && abspielen === 0 && opts.onMoment && !bittetEben) opts.onMoment('fertig');
       }
+      bittetEben = false;
       letzteZeit = null;
     };
     const denkenZu = () => {
@@ -327,6 +331,7 @@
       // jedes beendete Werkzeug mit Name und Zustand: Aufgabenliste und Läufe der Seitenleiste ziehen danach nach (werkbank.js).
       // `live`: eben geschehen, nicht aus einem abgespielten Verlauf (dann öffnet sich etwa die Browser-Fläche nicht von selbst).
       // `pfad` und `diff`: bei einem Datei-Werkzeug die Datei und, wenn es sie geändert hat, die Änderung (Fläche „Diff und Datei“).
+      if (abspielen === 0 && opts.onMoment && status !== 'abgebrochen') opts.onMoment(status === 'fehler' ? 'fehler' : 'werkzeug');
       if (opts.onWerkzeugEnde) opts.onWerkzeugEnde({ id, name: n, status, live: abspielen === 0, ...(typeof pfad === 'string' && pfad ? { pfad } : {}), ...(diff ? { diff } : {}) });
       const gemessen = mehr && typeof mehr.durationMs === 'number' && Number.isFinite(mehr.durationMs) && mehr.durationMs >= 0 ? mehr.durationMs : null;
       view.endTool(id, {
@@ -403,6 +408,10 @@
           ...(d.sitzungMoeglich === true ? { sitzung: true } : {}),
         });
         const vorab = entscheidungen.get(id);
+        if (!vorab && abspielen === 0) {
+          bittetEben = true;
+          if (opts.onMoment) opts.onMoment('braucht');
+        }
         if (vorab) view.resolveApproval(id, vorab.wert, vorab.notiz, { sitzung: vorab.sitzung });
         // Nur was in diesem Fenster entschieden wurde, geht zum Runner; eine Entscheidung von dort (Panel, anderes Gerät) nicht noch einmal
         else p.then((w) => !w.extern && opts.onEntscheidung && opts.onEntscheidung(id, w.wert, w.notiz, { sitzung: !!w.sitzung }));
@@ -588,7 +597,7 @@
         case 'turn_end':
           break; // ein Lauf hat mehrere Züge (Modell, Werkzeug, Modell): die Antwort bleibt bis run_end eine
         case 'run_end':
-          zugZu();
+          zugZu(true);
           break;
         case 'compaction_start':
           hinweis('Verlauf wird verdichtet …', false);

@@ -1,0 +1,31 @@
+/* Rückmeldung (rueckmeldung.js): Wahl der Anzeige, Töne, kurze Meldung, Reaktionen unter einer Antwort. Kürzel rm-. */
+
+.rm-knopf { padding: 1px 10px; border-color: var(--linie); color: var(--leise); font-size: 12px; }
+.rm-knopf:hover { color: var(--text); }
+.rm-knopf[data-anzeige="kompakt"], .rm-knopf[data-anzeige="detail"], .rm-knopf[data-stufe="dezent"], .rm-knopf[data-stufe="deutlich"] { color: var(--text); border-color: var(--linie-stark); }
+
+/* kompakt: nur Antworten, Freigaben, Fehler und was gerade läuft */
+.anz-kompakt .denken { display: none; }
+.anz-kompakt .karte:not([data-zustand="laeuft"]):not([data-zustand="fehler"]) { display: none; }
+.anz-kompakt .gruppe:not([data-zustand="laeuft"]):not(:has(.karte[data-zustand="fehler"])) { display: none; }
+
+/* detailliert: Denken und Ausgaben stehen offen */
+.anz-detail .aufklapp { grid-template-rows: 1fr; }
+.anz-detail .aufklapp > .aufklapp-innen { visibility: visible; transition-delay: 0s; }
+
+/* Reaktionen im Fuß eines Zugs */
+.rm-reaktionen { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 10px; vertical-align: middle; opacity: .55; transition: opacity .15s; }
+.zugfuss:hover .rm-reaktionen, .rm-reaktionen:focus-within, .rm-reaktionen[data-gewaehlt] { opacity: 1; }
+.rm-reaktionen button { padding: 0 9px; min-height: 22px; font-size: 12px; border-radius: 999px; border-color: var(--linie); color: var(--leise); background: transparent; }
+.rm-reaktionen button:hover { color: var(--text); border-color: var(--linie-stark); }
+.rm-reaktionen button[aria-pressed="true"] { color: var(--gut); border-color: var(--gut); animation: rm-hupf .3s ease-out; }
+@keyframes rm-hupf { 50% { transform: scale(1.15); } }
+
+/* kurze Meldung am unteren Rand */
+.rm-toast { position: fixed; left: 50%; bottom: 176px; transform: translateX(-50%); z-index: 60; max-width: min(560px, calc(100vw - 32px)); padding: 7px 14px; border: 1px solid var(--linie-stark); border-radius: 999px; background: var(--flaeche); color: var(--text); font-size: 13px; text-align: center; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); animation: rm-ein .18s ease-out both; }
+.rm-toast[hidden] { display: none; }
+@keyframes rm-ein { from { opacity: 0; transform: translate(-50%, 6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .rm-toast, .rm-reaktionen button[aria-pressed="true"] { animation: none; }
+}

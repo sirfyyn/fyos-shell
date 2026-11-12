@@ -1426,6 +1426,25 @@
               fuss.appendChild(doc.createTextNode(' · '));
               fuss.appendChild(wann);
             }
+            // Reaktionen nur unter einem Zug, der eben zu Ende ging (nicht beim Abspielen, nicht nach einem Stopp)
+            if (!r.stopped && r.zeit === undefined && opts.onReaktion && Array.isArray(opts.reaktionen) && opts.reaktionen.length) {
+              const reihe = el('span', 'rm-reaktionen');
+              reihe.setAttribute('role', 'group');
+              reihe.setAttribute('aria-label', 'Rückmeldung zu dieser Antwort');
+              for (const x of opts.reaktionen) {
+                const b = el('button', null, String(x.zeichen || x.id));
+                b.type = 'button';
+                b.title = String(x.hilfe || '');
+                b.setAttribute('aria-pressed', 'false');
+                b.addEventListener('click', () => {
+                  for (const y of reihe.querySelectorAll('button')) y.setAttribute('aria-pressed', String(y === b));
+                  reihe.dataset.gewaehlt = String(x.id);
+                  opts.onReaktion(String(x.id));
+                });
+                reihe.appendChild(b);
+              }
+              fuss.appendChild(reihe);
+            }
             teil(fuss);
             ansage.sage(text);
           }

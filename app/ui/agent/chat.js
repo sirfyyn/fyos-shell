@@ -780,6 +780,42 @@
     return { pane, verlauf, spalte, zumEnde };
   }
 
+  // --- Rückmeldung: Wahl der Anzeige (kompakt, normal, detailliert), Töne, kurze Meldung, Reaktionen (rueckmeldung.js) ---
+  const rueck = FP.rueckmeldung.createRueckmeldung({
+    wurzel: $('panes'),
+    anzeigeKnopf: $('anzeigeKnopf'),
+    tonKnopf: $('tonKnopf'),
+    toast: $('rmToast'),
+    speicher: (() => {
+      try {
+        return window.localStorage;
+      } catch (e) {
+        return null;
+      }
+    })(),
+  });
+  function reagiere(rec, art) {
+    const R = FP.rueckmeldung;
+    const r = R.REAKTIONEN.find((x) => x.id === art);
+    if (!r || !rec) return;
+    const text = R.reaktionsText(art);
+    if (r.sendet) {
+      void rec.chat.sende(text, false, []);
+      rueck.moment('gesendet');
+      rueck.toast(`Gesendet: „${r.zeichen}“`);
+    } else if (r.ergaenzen) {
+      if (aktiv !== rec) return;
+      if (!eingabe.value.trim()) eingabe.value = text;
+      waechst();
+      eingabe.focus();
+      eingabe.setSelectionRange(eingabe.value.length, eingabe.value.length);
+      rueck.toast('Was hat gefehlt? Ein Satz reicht.');
+    } else {
+      rec.vermerk = text; // geht mit der nächsten Nachricht dieser Sitzung mit
+      rueck.toast('Vermerkt. Geht mit deiner nächsten Nachricht mit.');
+    }
+  }
+
   function ansichtErzeugen(id) {
     const d = paneBauen(id);
     const rec = { id, pane: d.pane, chat: null, benutzt: Date.now(), entwurf: '', anhaenge: [], sendeArt: 'folgen', wechselt: false, cwd: undefined };
@@ -825,6 +861,11 @@
         if (a.art === 'bild') dateiFlaeche.oeffneBild({ pfad: a.pfad, name: a.name });
         else dateiFlaeche.oeffneDatei({ pfad: a.pfad, name: a.name });
       },
+      // ein Moment, der eben geschah (fertig, braucht dich, Fehler, Werkzeug fertig): der Ton dazu, auch aus einer Sitzung im Hintergrund
+      beiMoment: (name) => rueck.moment(name),
+      // eine Reaktion unter einer Antwort: vermerken, ins Feld legen oder sofort senden
+      reaktionen: FP.rueckmeldung.REAKTIONEN,
+      beiReaktion: (art) => reagiere(rec, art),
       beiLaufEnde: () => {
         setTimeout(ladeListe, 300);
         planeZeichnen();
@@ -1210,7 +1251,10 @@
       rec.gesendet = (rec.gesendet || []).filter((x) => x !== satz).concat(satz).slice(-50);
       rec.gesendetStelle = null;
     }
-    const text = anhaenge.text(satz);
+    // eine vermerkte Reaktion („gut so“) steht als eigene Zeile vor der Nachricht, sichtbar im Verlauf
+    const vermerk = satz && !satz.startsWith('/') && rec.vermerk ? rec.vermerk : '';
+    rec.vermerk = '';
+    const text = anhaenge.text(vermerk ? `${vermerk}\n\n${satz}` : satz);
     // Bilder und abgelegte Dateien gehen als eigenes Feld an den Runner (nur wenn er sie annimmt, sonst ist die Liste leer)
     const fuerRunner = anhaenge.fuerRunner();
     const angehaengt = anhaenge.nimm();
@@ -1220,6 +1264,7 @@
     anhaenge.leere();
     waechst();
     eingabeHilfe.schliesse();
+    rueck.moment('gesendet');
     const r = await rec.chat.sende(text, sofort || rec.sendeArt === 'steuern', fuerRunner);
     if (r && r.ok === false && !r.befehl && aktiv === rec) {
       eingabe.value = satz;
@@ -1452,7 +1497,7 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, rueck, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)
