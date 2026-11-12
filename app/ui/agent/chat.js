@@ -1322,12 +1322,32 @@
         punkte: [
           ...modelle
             .filter((x) => x && x.id)
-            .map((x) => ({ wert: x.id, text: x.name || x.id, hilfe: typeof x.contextWindow === 'number' ? `Kontextfenster ${zahl(x.contextWindow)}` : '', gewaehlt: !!eintrag && eintrag.id === x.id && eintrag.provider === x.provider })),
+            .map((x) => ({
+              wert: x.id,
+              text: x.name || x.id,
+              hilfe: [x.gefunden ? `gerade erreichbar: ${x.quelle || x.provider}` : '', typeof x.contextWindow === 'number' ? `Kontextfenster ${zahl(x.contextWindow)}` : ''].filter(Boolean).join(' · '),
+              gewaehlt: !!eintrag && eintrag.id === x.id && eintrag.provider === x.provider,
+            })),
           { wert: '', text: 'Standard des Runners', hilfe: 'Das Modell, das der Runner ohne eigene Wahl nimmt.', gewaehlt: false },
         ],
       },
     ]);
   }
+  // Was der Runner an Modellen findet (auch eben gestartete, Runner src/modellquellen.js), ändert sich: die Liste zieht alle 30 s
+  // und beim Öffnen des Menüs nach. Der Runner fragt seine Quellen höchstens alle 15 s.
+  async function ladeModelle() {
+    const mod = await transport.api('GET', '/api/modelle').catch(() => null);
+    if (mod && Array.isArray(mod.modelle)) {
+      modelle = mod.modelle;
+      zeichneModellWahl();
+    }
+  }
+  setInterval(ladeModelle, 30000);
+  $('modell').addEventListener('pointerdown', () => void ladeModelle());
+  $('modell').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') void ladeModelle();
+  });
+
   async function modellWechseln(modellId) {
     const rec = aktiv;
     if (!rec || rec.wechselt) return;
@@ -1516,7 +1536,7 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, rueck, ladeLage, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, rueck, ladeLage, ladeModelle, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)

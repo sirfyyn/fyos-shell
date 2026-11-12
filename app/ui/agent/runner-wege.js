@@ -537,7 +537,8 @@
       if (typeof modell.provider === 'string') anbieter = modell.provider;
     }
     const gut = (m) => m && (!nurMitFenster || (typeof m.contextWindow === 'number' && Number.isFinite(m.contextWindow) && m.contextWindow > 0));
-    const passt = (m) => ids.includes(m.id) || ids.includes(m.name) || ids.includes(`${m.provider}/${m.id}`);
+    // gefundene Modelle (Runner src/modellquellen.js) tragen `modelId` und ihren eigenen Provider; ihre Kennung ist `<modelId>@<provider>`
+    const passt = (m) => ids.includes(m.id) || ids.includes(m.name) || ids.includes(`${m.provider}/${m.id}`) || (typeof m.modelId === 'string' && ids.includes(m.modelId) && (!anbieter || m.provider === anbieter));
     const treffer = modelle.filter((m) => gut(m) && passt(m));
     return treffer.find((m) => anbieter && m.provider === anbieter) || treffer[0] || null;
   }

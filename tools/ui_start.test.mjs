@@ -116,6 +116,20 @@ test('Betrieb: nur was der Runner meldet; Pause, Modell und Hub in ihren Zustän
   assert.deepEqual(kopie(betriebSicht({ gespraeche: 1, hub: { erreichbar: false, eingerichtet: false, text: 'Kein Hub konfiguriert' } })[1]), { titel: 'Hub', wert: 'Kein Hub eingerichtet', chip: 'aus', art: '' });
 });
 
+test('Modellwahl: ein gefundenes Modell (Kennung <modelId>@<provider>) wird über Provider und modelId der Sitzung erkannt', () => {
+  const W = logik('runner-wege.js').wege;
+  const modelle = [
+    { id: 'fest-a', provider: 'rhea', name: 'Lokales Modell (fest-a)', contextWindow: 163840 },
+    { id: 'bolt@q-127-0-0-1-18491', modelId: 'bolt', provider: 'q-127-0-0-1-18491', name: 'bolt · dieser Rechner :18491', contextWindow: 16384, gefunden: true },
+    { id: 'bolt@q-192-0-2-10-8080', modelId: 'bolt', provider: 'q-192-0-2-10-8080', name: 'bolt · 192.0.2.10:8080', contextWindow: 8192, gefunden: true },
+  ];
+  assert.equal(W.modellEintrag(modelle, { provider: 'q-192-0-2-10-8080', modelId: 'bolt' }).contextWindow, 8192, 'gleicher Name, die richtige Quelle');
+  assert.equal(W.modellEintrag(modelle, 'q-127-0-0-1-18491/bolt').contextWindow, 16384);
+  assert.equal(W.modellEintrag(modelle, 'bolt@q-127-0-0-1-18491').provider, 'q-127-0-0-1-18491');
+  assert.equal(W.modellEintrag(modelle, { provider: 'rhea', modelId: 'fest-a' }).id, 'fest-a');
+  assert.equal(W.fensterAusModellen(modelle, { provider: 'q-127-0-0-1-18491', modelId: 'bolt' }), 16384);
+});
+
 test('Wege: Betrieb und Hub-Werkzeuge kommen bereinigt an (nur bekannte Felder), die Pfade stimmen', async () => {
   const W = logik('runner-wege.js').wege;
   // voller Runner: kein Modell, keine Schlange
