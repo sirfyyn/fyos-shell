@@ -13,6 +13,11 @@
 .anz-detail .aufklapp { grid-template-rows: 1fr; }
 .anz-detail .aufklapp > .aufklapp-innen { visibility: visible; transition-delay: 0s; }
 
+/* „Kopieren“ im Fuß eines Zugs */
+.rm-kopieren { margin-left: 10px; padding: 0 9px; min-height: 22px; font-size: 12px; border-radius: 999px; border-color: transparent; background: transparent; color: var(--leise); opacity: .55; transition: opacity .15s; }
+.zugfuss:hover .rm-kopieren, .rm-kopieren:focus-visible { opacity: 1; }
+.rm-kopieren:hover { color: var(--text); border-color: var(--linie-stark); }
+
 /* Reaktionen im Fuß eines Zugs */
 .rm-reaktionen { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 10px; vertical-align: middle; opacity: .55; transition: opacity .15s; }
 .zugfuss:hover .rm-reaktionen, .rm-reaktionen:focus-within, .rm-reaktionen[data-gewaehlt] { opacity: 1; }

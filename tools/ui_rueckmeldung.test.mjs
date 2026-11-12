@@ -240,6 +240,41 @@ dom('Reaktionen: stehen nur unter einem eben beendeten Zug, ein Klick meldet die
   assert.equal(reihe.dataset.gewaehlt, 'kuerzer');
 });
 
+dom('Kopieren: am Fuß jedes Zugs mit Antworttext, auch unter alten; kopiert wird der Text, wie er kam', async () => {
+  const kopiert = [];
+  const { w, d, view, adapter } = ansicht({}, { onKopiert: (t) => kopiert.push(t) });
+  const geschrieben = [];
+  Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: (t) => { geschrieben.push(t); return Promise.resolve(); } }, configurable: true });
+  adapter.replay([mensch(1, 'Bitte'), antwort(2, 'Erledigt: **zwei** Dateien.\n\n```js\nconst a = 1;\n```')], false);
+  view.flush();
+  const knopf = d.querySelector('.zugfuss .rm-kopieren');
+  assert.ok(knopf, 'auch unter einem abgespielten Zug');
+  knopf.click();
+  assert.deepEqual(geschrieben, ['Erledigt: **zwei** Dateien.\n\n```js\nconst a = 1;\n```']);
+  assert.deepEqual(kopiert, geschrieben);
+  assert.equal(knopf.textContent, 'Kopiert');
+  // ein Zug ohne Antworttext (nur Werkzeug) trägt keinen Knopf
+  adapter.apply({ type: 'entry_appended', entry: mensch(3, 'Noch eine') });
+  adapter.apply({ type: 'run_start' });
+  adapter.apply({ type: 'tool_execution_start', toolCallId: 'a', toolName: 'bash', args: { command: 'ls' } });
+  adapter.apply(werkzeugEnde('a', false));
+  adapter.apply({ type: 'run_end' });
+  view.flush();
+  const fuesse = [...d.querySelectorAll('.zugfuss')];
+  assert.equal(fuesse.length, 2);
+  assert.equal(fuesse[1].querySelector('.rm-kopieren'), null);
+});
+
+dom('Kopieren ohne Zwischenablage: der Knopf sagt es, nichts bricht', () => {
+  const { w, d, view, adapter } = ansicht({}, {});
+  Object.defineProperty(w.navigator, 'clipboard', { value: undefined, configurable: true });
+  adapter.replay([mensch(1, 'Bitte'), antwort(2, 'Erledigt.')], false);
+  view.flush();
+  const knopf = d.querySelector('.rm-kopieren');
+  knopf.click();
+  assert.equal(knopf.textContent, 'Kopieren nicht möglich');
+});
+
 dom('Stil: kompakt lässt Laufendes, Fehler und Freigaben stehen; detailliert klappt auf', () => {
   const css = lies('rueckmeldung.css');
   assert.match(css, /\.anz-kompakt \.karte:not\(\[data-zustand="laeuft"\]\):not\(\[data-zustand="fehler"\]\)/);

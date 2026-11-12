@@ -392,6 +392,7 @@
     let turn = null;
     let turnStart = 0;
     let turnSchritte = 0;
+    let turnText = ''; // der Antworttext des laufenden Zugs, wie er kam (Markdown): für „Kopieren“ am Fuß des Zugs
     let seg = null; // { md, el }
     let denken = null;
     let gruppe = null;
@@ -552,7 +553,9 @@
         const e = el('div', 'text md');
         teil(e);
         seg = { el: e, md: FP.createMarkdownStream(e) };
+        if (turnText) turnText += '\n\n'; // ein neuer Textabschnitt nach einem Werkzeug
       }
+      turnText += s;
       seg.md.write(s);
       stats.textZeichen += s.length;
       ansage.textHin(s);
@@ -677,6 +680,7 @@
       spalte.appendChild(turn);
       turnStart = now();
       turnSchritte = 0;
+      turnText = '';
       busy = true;
       gruppe = null;
       folge.follow();
@@ -1425,6 +1429,28 @@
             if (wann) {
               fuss.appendChild(doc.createTextNode(' · '));
               fuss.appendChild(wann);
+            }
+            // „Kopieren“: der ganze Antworttext des Zugs als Markdown, auch unter alten Zügen
+            const antwort = turnText.trim();
+            if (antwort) {
+              const kn = el('button', 'rm-kopieren', 'Kopieren');
+              kn.type = 'button';
+              kn.title = 'Die Antwort dieses Zugs kopieren (Markdown)';
+              kn.addEventListener('click', () => {
+                let ging = false;
+                try {
+                  if (win.navigator && win.navigator.clipboard && win.navigator.clipboard.writeText) {
+                    win.navigator.clipboard.writeText(antwort);
+                    ging = true;
+                  }
+                } catch (e) {
+                  ging = false;
+                }
+                kn.textContent = ging ? 'Kopiert' : 'Kopieren nicht möglich';
+                setTo(() => (kn.textContent = 'Kopieren'), 1500);
+                if (ging && opts.onKopiert) opts.onKopiert(antwort);
+              });
+              fuss.appendChild(kn);
             }
             // Reaktionen nur unter einem Zug, der eben zu Ende ging (nicht beim Abspielen, nicht nach einem Stopp)
             if (!r.stopped && r.zeit === undefined && opts.onReaktion && Array.isArray(opts.reaktionen) && opts.reaktionen.length) {
