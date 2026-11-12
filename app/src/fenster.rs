@@ -182,6 +182,16 @@ pub fn inhalt(app: &AppHandle, adresse: &str) -> Result<(), Fehler> {
 /// Ein Deeplink (`fyos://` / `fle://`): geprüft, dann relativ zur Start-URL des Profils geöffnet.
 /// Abgelehnte Links erscheinen als Meldung im Hauptfenster.
 pub fn deeplink(app: &AppHandle, h: &Huelle, link: &str) {
+    // Profil Agent: `fyos://neu?ordner=…` (Start aus dem Terminal) öffnet „Neue Sitzung“ mit dem Ordner
+    match links::agent_neu_ordner(link, h.profil) {
+        Ok(Some(ordner)) => return crate::agent::fenster::neue_sitzung(app, ordner),
+        Ok(None) => {}
+        Err(f) => {
+            nach_vorn(app);
+            let _ = app.emit_to(HAUPT, "meldung", f.meldung());
+            return;
+        }
+    }
     let ergebnis = links::pruefe(link, h.profil).and_then(|pfad| {
         if h.profil == Profil::Agent {
             // Profil Agent: jeder gültige Link öffnet das Chat-Fenster (es gibt keine Seite des Runners im Fenster)

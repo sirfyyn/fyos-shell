@@ -61,6 +61,8 @@ pub struct AgentZustand {
     /// Das Chat-Fenster wurde durch die Freigaben-Zeile im Tray geöffnet und soll sein Freigaben-Panel zeigen: die frisch geladene Seite holt das
     /// Flag mit `ziel_info` ab (ein schon offenes Fenster bekommt stattdessen das Ereignis `freigaben-zeigen`).
     pub freigaben_zeigen: AtomicBool,
+    /// Ein Link `fyos://neu?ordner=…` kam, bevor das Chat-Fenster offen war: die Seite holt den Ordner einmal mit `ziel_info` ab.
+    pub neu_ordner: Mutex<Option<String>>,
     /// Der lokale Runner (Fremdprogramm als Kindprozess), falls eingerichtet und gestartet.
     pub lokal: lokal::Lokal,
 }

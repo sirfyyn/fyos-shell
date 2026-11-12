@@ -45,6 +45,22 @@ pub fn freigaben_zeigen(app: &AppHandle) {
     }
 }
 
+/// Link `fyos://neu?ordner=…` (Kommando `fyos-agent` im Terminal): das Chat-Fenster nach vorn und dort „Neue Sitzung“ mit dem Ordner
+/// öffnen. Wie bei `freigaben_zeigen` bekommt ein offenes Fenster das Ereignis `neue-sitzung`, ein neu gebautes holt den Ordner beim
+/// Start mit `ziel_info` ab. Angelegt wird nichts: der Mensch bestätigt im Formular.
+pub fn neue_sitzung(app: &AppHandle, ordner: String) {
+    let schon_offen = app.get_webview_window(CHAT).is_some();
+    if let (Some(a), Some(h)) = (app.try_state::<Arc<super::AgentZustand>>(), app.try_state::<Arc<Huelle>>()) {
+        if !schon_offen && sperre(&h.einstellungen).agent.eingerichtet() {
+            *sperre(&a.neu_ordner) = Some(ordner.clone());
+        }
+    }
+    huelle_fenster::nach_vorn(app);
+    if schon_offen {
+        let _ = tauri::Emitter::emit_to(app, CHAT, "neue-sitzung", ordner);
+    }
+}
+
 /// Das Einstellungsfenster („FYOS Agent“: Runner, Adressen, lokaler Runner) öffnen oder nach vorn holen. Ein Weg für den Tray-Eintrag
 /// „Einstellungen …“ und den Knopf im Chat-Fenster (Befehl `einstellungen_oeffnen`).
 pub fn einstellungen_zeigen(app: &AppHandle) -> tauri::Result<()> {

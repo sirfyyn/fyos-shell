@@ -156,6 +156,8 @@ pub fn ziel_info(h: H<'_>, a: A<'_>) -> Result<Value, Meldung> {
         "e2e": e2e,
         // einmalig: das Fenster wurde über die Freigaben-Zeile im Tray geöffnet
         "freigaben_zeigen": a.freigaben_zeigen.swap(false, Ordering::SeqCst),
+        // einmalig: das Fenster wurde über `fyos://neu?ordner=…` geöffnet (Kommando `fyos-agent`)
+        "neu_ordner": sperre(&a.neu_ordner).take(),
         "e2e_skript": if e2e && !skript.is_empty() { skript } else { "e2e".to_string() },
     }))
 }

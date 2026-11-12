@@ -827,6 +827,35 @@
   void ladeLage();
   setInterval(ladeLage, 30000);
 
+  // Abschluss eines eben beendeten Zugs (Prototyp „Abschluss mit nächsten Schritten“): was geändert, ob Tests liefen, ob etwas zu
+  // committen ist, und Knöpfe dafür. Steht nur unter einem Zug, den diese Seite live gesehen hat.
+  async function abschlussZeigen(rec) {
+    const zug = rec.zug;
+    rec.zug = { dateien: new Set(), tests: null };
+    if (!zug) return;
+    let git = null;
+    try {
+      const s = FP.git.gitBereinigen(await wege.git(rec.id));
+      git = { offen: s.dateien.length };
+    } catch (f) {
+      git = null; // kein eigener Arbeitsbaum
+    }
+    const sicht = FP.rueckmeldung.abschlussSicht({ dateien: zug.dateien.size, tests: zug.tests, git });
+    if (!sicht) return;
+    const oeffne = () => {
+      if (aktiv !== rec) return;
+      leisteUmschalten(true);
+      werkbank.zeige('aenderungen');
+      void gitKasten.neu();
+    };
+    const knoepfe = sicht.knoepfe.map((k) =>
+      k === 'commit'
+        ? { text: 'Commit vorbereiten', beiKlick: () => { oeffne(); setTimeout(() => $('gitNachricht').focus(), 50); } }
+        : { text: 'Änderungen ansehen', beiKlick: oeffne },
+    );
+    rec.chat.view.addAbschluss({ text: sicht.text, knoepfe });
+  }
+
   function reagiere(rec, art) {
     const R = FP.rueckmeldung;
     const r = R.REAKTIONEN.find((x) => x.id === art);
@@ -872,6 +901,11 @@
       },
       // irgendein Werkzeug der sichtbaren Sitzung ist zu Ende: die Aufgabenliste (todo) oder die Läufe ziehen nach
       beiWerkzeugEnde: (w) => {
+        // für den Abschluss des Zugs: geänderte Dateien und der letzte Testlauf (auch für Sitzungen im Hintergrund)
+        if (w && w.live && rec.zug) {
+          if ((w.name === 'write' || w.name === 'edit') && w.status !== 'fehler' && w.pfad) rec.zug.dateien.add(w.pfad);
+          if (w.name === 'bash' && FP.rueckmeldung.istTestbefehl(w.befehl)) rec.zug.tests = { ok: w.exit === 0, exit: Number.isInteger(w.exit) ? w.exit : null };
+        }
         if (aktiv !== rec || !w) return;
         if (w.name === 'todo') planeWerkbank('aufgaben');
         else if (/^(hintergrund_|unteragent$|job_ende$)/.test(w.name)) planeWerkbank('laeufe');
@@ -895,7 +929,10 @@
         else dateiFlaeche.oeffneDatei({ pfad: a.pfad, name: a.name });
       },
       // ein Moment, der eben geschah (fertig, braucht dich, Fehler, Werkzeug fertig): der Ton dazu, auch aus einer Sitzung im Hintergrund
-      beiMoment: (name) => rueck.moment(name),
+      beiMoment: (name) => {
+        rueck.moment(name);
+        if (name === 'fertig') void abschlussZeigen(rec);
+      },
       // eine Reaktion unter einer Antwort: vermerken, ins Feld legen oder sofort senden
       reaktionen: FP.rueckmeldung.REAKTIONEN,
       beiReaktion: (art) => reagiere(rec, art),
@@ -1178,12 +1215,29 @@
     legacy(false);
     $('neuBaum').checked = false;
     $('neuBaumLabel').hidden = true;
-    ordnerAuswahl.starte(runnerArt).then((ok) => {
+    return ordnerAuswahl.starte(runnerArt).then((ok) => {
       ordnerNutzbar = ok;
       legacy(ok);
       // Git je Sitzung (Runner src/arbeitsbaum.js) geht nur mit einem gewählten Ordner; ob er in einem Repo liegt, prüft der Runner
       $('neuBaumLabel').hidden = !ok;
+      return ok;
     });
+  }
+  /**
+   * Start aus dem Terminal (`fyos-agent [ordner]`, Link fyos://neu?ordner=…): „Neue Sitzung“ mit dem Ordner vorgewählt und seinem Namen
+   * als Vorschlag. Angelegt wird erst mit Enter oder „Anlegen“. Ein Ordner auf diesem Rechner gehört an den lokalen Runner.
+   */
+  async function neuMitOrdner(ordner) {
+    const ok = await neuOeffnen();
+    if (runnerArt !== 'lokal' || !ok) {
+      $('neuFehler').textContent = `Für den Ordner ${ordner} auf „Dieser Rechner (lokal)“ umschalten und noch einmal öffnen.`;
+      $('neuFehler').hidden = false;
+      return;
+    }
+    ordnerAuswahl.setze(ordner);
+    if (!$('neuTitel').value) $('neuTitel').value = ordner.split(/[\\/]/).filter(Boolean).pop() || '';
+    $('neuTitel').focus();
+    $('neuTitel').select();
   }
   function pfadZeigen() {
     const b = bereiche[$('neuOrdner').value];
@@ -1304,6 +1358,7 @@
     waechst();
     eingabeHilfe.schliesse();
     rueck.moment('gesendet');
+    rec.zug = { dateien: new Set(), tests: null };
     const r = await rec.chat.sende(text, sofort || rec.sendeArt === 'steuern', fuerRunner);
     if (r && r.ok === false && !r.befehl && aktiv === rec) {
       eingabe.value = satz;
@@ -1532,6 +1587,9 @@
     window.__TAURI__.event.listen('ziel-gewechselt', () => window.location.reload());
     // Tray-Zeile „Freigaben“: Rust holt das Fenster nach vorn und sagt hier, dass das Panel aufgehen soll
     window.__TAURI__.event.listen('freigaben-zeigen', () => freigaben.zeige(true));
+    window.__TAURI__.event.listen('neue-sitzung', (e) => {
+      if (e && typeof e.payload === 'string' && e.payload) void neuMitOrdner(e.payload);
+    });
   }
   window.addEventListener('focus', () => freigaben.lade());
   // War der Runner beim Laden der Seite noch nicht erreichbar, fragt die Browser-Fläche beim Zurückkehren noch einmal
@@ -1561,6 +1619,8 @@
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)
       if (i && i.freigaben_zeigen) freigaben.zeige(true);
+      // Das Fenster wurde über `fyos-agent <ordner>` im Terminal geöffnet (Link fyos://neu?ordner=…)
+      if (i && typeof i.neu_ordner === 'string' && i.neu_ordner) void neuMitOrdner(i.neu_ordner);
       if (i && i.e2e) {
         const s = document.createElement('script');
         s.src = `${i.e2e_skript || 'e2e'}.js`;

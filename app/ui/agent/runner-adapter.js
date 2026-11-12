@@ -332,7 +332,11 @@
       // `live`: eben geschehen, nicht aus einem abgespielten Verlauf (dann öffnet sich etwa die Browser-Fläche nicht von selbst).
       // `pfad` und `diff`: bei einem Datei-Werkzeug die Datei und, wenn es sie geändert hat, die Änderung (Fläche „Diff und Datei“).
       if (abspielen === 0 && opts.onMoment && status !== 'abgebrochen') opts.onMoment(status === 'fehler' ? 'fehler' : 'werkzeug');
-      if (opts.onWerkzeugEnde) opts.onWerkzeugEnde({ id, name: n, status, live: abspielen === 0, ...(typeof pfad === 'string' && pfad ? { pfad } : {}), ...(diff ? { diff } : {}) });
+      // bei bash der Befehl (gekürzt) und der Exit-Code: daraus liest der Abschluss des Zugs, ob Tests liefen (rueckmeldung.js abschlussSicht)
+      const befehl = n === 'bash' && w.args && typeof w.args.command === 'string' ? w.args.command.slice(0, 400) : null;
+      // der Lauf nennt den Exit-Code nur, wenn er nicht 0 ist (ausgabeTeile); ein fertiger Befehl ohne Angabe ist 0
+      const exitCode = n !== 'bash' ? null : teile.exit != null ? teile.exit : status === 'fertig' ? 0 : null;
+      if (opts.onWerkzeugEnde) opts.onWerkzeugEnde({ id, name: n, status, live: abspielen === 0, ...(typeof pfad === 'string' && pfad ? { pfad } : {}), ...(diff ? { diff } : {}), ...(befehl ? { befehl } : {}), ...(exitCode !== null ? { exit: exitCode } : {}) });
       const gemessen = mehr && typeof mehr.durationMs === 'number' && Number.isFinite(mehr.durationMs) && mehr.durationMs >= 0 ? mehr.durationMs : null;
       view.endTool(id, {
         status,

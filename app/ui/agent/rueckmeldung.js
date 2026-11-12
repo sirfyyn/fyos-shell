@@ -1,7 +1,7 @@
 /* Rückmeldung der Oberfläche: wie viel der Verlauf zeigt (kompakt, normal, detailliert), Töne zu den Momenten eines Zugs, eine kurze Meldung
  * am unteren Rand und die Reaktionen unter einer Antwort.
  *
- *   FP.rueckmeldung = { createRueckmeldung, tonFuer, naechste, reaktionsText, modellLage, ANZEIGEN, STUFEN, REAKTIONEN, KLAENGE }
+ *   FP.rueckmeldung = { createRueckmeldung, tonFuer, naechste, reaktionsText, modellLage, abschlussSicht, istTestbefehl, ANZEIGEN, STUFEN, REAKTIONEN, KLAENGE }
  *
  * Alle Töne entstehen hier aus Sinus- und Dreieckswellen, es gibt keine Klangdateien. Die Wahl steht im Speicher des Fensters (localStorage);
  * ohne ihn gilt sie bis zum Schließen. Nichts hiervon spricht mit dem Runner: was eine Reaktion sendet, sendet die Seite.
@@ -64,6 +64,33 @@
     nochmal: 'Bitte noch einmal: geh die letzte Aufgabe neu an, auf einem anderen Weg als eben.',
   };
   const reaktionsText = (id) => TEXTE[id] || '';
+
+  // Befehle, die als Testlauf gelten (für den Abschluss eines Zugs)
+  const TESTBEFEHL = /(^|[\s;&|(])(npm (run )?test|pnpm (run )?test|yarn test|node --test|pytest|python3? -m (pytest|unittest)|cargo test|go test|vitest|jest|make test|deno test|bun test)\b/;
+
+  /**
+   * Der Abschluss eines eben beendeten Zugs (Prototyp „Abschluss mit nächsten Schritten“): ein Satz über das, was geschah, und die
+   * passenden nächsten Schritte. `zug`: { dateien: Zahl geänderter Dateien, tests: null | { ok, exit }, git: null | { offen: Zahl } }.
+   * → null, wenn nichts zu sagen ist (keine Datei, kein Test), sonst { text, knoepfe: ['aenderungen'|'commit'] }.
+   */
+  function abschlussSicht(zug) {
+    const z = zug && typeof zug === 'object' ? zug : {};
+    const n = Number.isFinite(z.dateien) ? Math.max(0, Math.trunc(z.dateien)) : 0;
+    const t = z.tests && typeof z.tests === 'object' ? z.tests : null;
+    if (!n && !t) return null;
+    const teile = [];
+    teile.push(n === 0 ? 'Keine Datei geändert' : n === 1 ? 'Eine Datei geändert' : `${n} Dateien geändert`);
+    if (t) teile.push(t.ok ? 'Tests grün' : `Tests rot${Number.isInteger(t.exit) ? ` (Exit ${t.exit})` : ''}`);
+    else if (n) teile.push('keine Tests gelaufen');
+    const knoepfe = [];
+    if (z.git && Number.isFinite(z.git.offen)) {
+      teile.push(z.git.offen > 0 ? 'nichts committet' : 'alles committet');
+      if (z.git.offen > 0) knoepfe.push('commit');
+    }
+    if (n) knoepfe.push('aenderungen');
+    return { text: `${teile.join(', ')}.`, knoepfe };
+  }
+  const istTestbefehl = (befehl) => TESTBEFEHL.test(String(befehl || ''));
 
   /**
    * Was neben dem Zustand der Sitzung über Modell und Agent zu sagen ist, aus `betrieb()` (runner-wege.js). „bereit“ meint nur
@@ -230,5 +257,5 @@
     };
   }
 
-  FP.rueckmeldung = { createRueckmeldung, tonFuer, naechste, reaktionsText, modellLage, ANZEIGEN, STUFEN, REAKTIONEN, KLAENGE };
+  FP.rueckmeldung = { createRueckmeldung, tonFuer, naechste, reaktionsText, modellLage, abschlussSicht, istTestbefehl, ANZEIGEN, STUFEN, REAKTIONEN, KLAENGE };
 })();

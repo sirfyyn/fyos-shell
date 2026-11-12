@@ -1481,6 +1481,31 @@
       });
     }
 
+    /**
+     * Abschluss eines eben beendeten Zugs (rueckmeldung.js abschlussSicht): ein Satz und Knöpfe für die nächsten Schritte.
+     * `knoepfe`: [{ text, beiKlick }], der erste ist der vorgeschlagene. Steht nach dem Fuß des Zugs.
+     */
+    function addAbschluss({ text, knoepfe } = {}) {
+      if (!text) return;
+      enqueue({
+        fn: () => {
+          const box = el('div', 'abschluss');
+          box.setAttribute('role', 'group');
+          box.setAttribute('aria-label', 'Abschluss dieses Zugs');
+          box.appendChild(el('p', 'abschluss-text', String(text)));
+          const reihe = el('div', 'abschluss-knoepfe');
+          (Array.isArray(knoepfe) ? knoepfe : []).slice(0, 3).forEach((k, i) => {
+            const b = el('button', i === 0 ? 'primaer-leise' : null, String(k.text || ''));
+            b.type = 'button';
+            b.addEventListener('click', () => k.beiKlick && k.beiKlick());
+            reihe.appendChild(b);
+          });
+          if (reihe.childNodes.length) box.appendChild(reihe);
+          teil(box);
+        },
+      });
+    }
+
     function clear() {
       flush();
       for (const id of alleTimer) clearIv(id);
@@ -1506,6 +1531,7 @@
       askApproval,
       resolveApproval: (id, wert, notiz, extra) => enqueue({ fn: () => entscheide(id, wert, true, notiz, extra) }),
       addNote,
+      addAbschluss,
       addMarker,
       addZurueck,
       zeigeStaende,

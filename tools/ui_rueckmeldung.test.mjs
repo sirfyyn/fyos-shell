@@ -80,6 +80,47 @@ test('Lage neben „bereit“: lokal zählt, ob das Modell antwortet; am vollen 
   assert.equal(FP.wege.betriebBereinigen({}).arbeit, null);
 });
 
+test('Abschluss eines Zugs: Satz und Knöpfe aus geänderten Dateien, Testlauf und Git', () => {
+  const { abschlussSicht, istTestbefehl } = logik('rueckmeldung.js').rueckmeldung;
+  assert.equal(abschlussSicht({ dateien: 0, tests: null }), null, 'nichts geändert, nichts getestet: kein Kasten');
+  assert.deepEqual(abschlussSicht({ dateien: 2, tests: { ok: true, exit: 0 }, git: { offen: 2 } }), { text: '2 Dateien geändert, Tests grün, nichts committet.', knoepfe: ['commit', 'aenderungen'] });
+  assert.deepEqual(abschlussSicht({ dateien: 1, tests: null }), { text: 'Eine Datei geändert, keine Tests gelaufen.', knoepfe: ['aenderungen'] });
+  assert.deepEqual(abschlussSicht({ dateien: 0, tests: { ok: false, exit: 1 } }), { text: 'Keine Datei geändert, Tests rot (Exit 1).', knoepfe: [] });
+  assert.deepEqual(abschlussSicht({ dateien: 3, tests: { ok: true }, git: { offen: 0 } }).text, '3 Dateien geändert, Tests grün, alles committet.');
+  for (const b of ['npm test', 'cd x && node --test test/', 'python3 -m pytest -q', 'cargo test --workspace', 'npm run test -- --watch=false']) assert.ok(istTestbefehl(b), b);
+  for (const b of ['ls test/', 'cat test.txt', 'git status', 'echo testen', '']) assert.ok(!istTestbefehl(b), b);
+});
+
+dom('Abschluss im Verlauf: nach dem Fuß des Zugs, Knöpfe rufen ihre Handlung', () => {
+  const { d, view } = ansicht({}, {});
+  const geklickt = [];
+  view.startTurn({ modell: 'm' });
+  view.appendText('Fertig.');
+  view.endTurn({});
+  view.addAbschluss({ text: '2 Dateien geändert, Tests grün.', knoepfe: [{ text: 'Änderungen ansehen', beiKlick: () => geklickt.push('a') }] });
+  view.flush();
+  const box = d.querySelector('.abschluss');
+  assert.ok(box);
+  const fuss = d.querySelector('.zugfuss');
+  assert.ok(fuss, 'der Zug hat seinen Fuß');
+  // der Abschluss steht nach dem Fuß (im Dokument dahinter, nicht im Zug selbst)
+  assert.ok(fuss.compareDocumentPosition(box) & 4, 'Abschluss nach dem Fuß');
+  assert.equal(box.querySelector('.abschluss-text').textContent, '2 Dateien geändert, Tests grün.');
+  box.querySelector('button').click();
+  assert.deepEqual(geklickt, ['a']);
+});
+
+dom('Adapter meldet bei bash Befehl und Exit-Code an das Werkzeugende', () => {
+  const enden = [];
+  const { adapter } = ansicht({ onWerkzeugEnde: (w) => enden.push(w) });
+  adapter.apply({ type: 'run_start' });
+  adapter.apply({ type: 'tool_execution_start', toolCallId: 'a', toolName: 'bash', args: { command: 'npm test' } });
+  adapter.apply(werkzeugEnde('a', false));
+  adapter.apply({ type: 'tool_execution_start', toolCallId: 'b', toolName: 'bash', args: { command: 'npm test' } });
+  adapter.apply({ type: 'tool_execution_end', toolCallId: 'b', toolName: 'bash', entry: { id: 91, model: [{ role: 'toolResult', content: [{ type: 'text', text: 'rot\n' }, { type: 'text', text: '<harness>\n[error] Command exited with code 1\n</harness>' }], isError: true }] } });
+  assert.deepEqual(enden.map((w) => [w.befehl, w.exit]), [['npm test', 0], ['npm test', 1]]);
+});
+
 test('Quelltext: kein Netz, kein HTML aus Text, keine Klangdatei, keine Signalfarbe im Stil', () => {
   const js = lies('rueckmeldung.js');
   assert.doesNotMatch(js, /\bfetch\(|XMLHttpRequest|innerHTML|insertAdjacentHTML|document\.write|transport\.api|new Audio\(|\.mp3|\.wav|\.ogg/);

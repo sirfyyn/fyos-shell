@@ -1,0 +1,17 @@
+#!/bin/sh
+# fyos-agent [ordner] — öffnet den FYOS Agent mit „Neue Sitzung“ in diesem Ordner (Vorgabe: der aktuelle), wie `claude` im Terminal.
+# Angelegt wird erst, wenn du im Formular bestätigst. Der Ordner muss am lokalen Runner freigegeben sein (Einstellungen).
+# Einrichten: ln -s "<repo>/apps/fyos-shell/tools/fyos-agent" ~/.local/bin/fyos-agent
+set -eu
+ziel="${1:-.}"
+if ! abs=$(cd "$ziel" 2>/dev/null && pwd -P); then
+  echo "fyos-agent: Ordner nicht gefunden: $ziel" >&2
+  exit 2
+fi
+kodiert=$(printf '%s' "$abs" | python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe="/"))')
+link="fyos://neu?ordner=$kodiert"
+case "$(uname -s)" in
+  # Das Schema fyos gehört auch FYOS OS: der Link geht deshalb ausdrücklich an diese App
+  Darwin) exec open -a "${FYOS_AGENT_APP:-FYOS Agent}" "$link" ;;
+  *) exec xdg-open "$link" ;;
+esac

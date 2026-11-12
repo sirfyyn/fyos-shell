@@ -26,6 +26,35 @@ fn eingabe_ok(e: &str) -> bool {
     e.len() <= EINGABE_MAX && e.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '='))
 }
 
+/// Höchste Länge eines Ordners im Link `fyos://neu?ordner=…` (Profil Agent).
+pub const ORDNER_MAX: usize = 1024;
+
+/// Profil Agent: `fyos://neu?ordner=<absoluter Pfad>` öffnet „Neue Sitzung“ mit diesem Ordner (Start aus dem Terminal, `fyos-agent`).
+/// `Ok(None)`: kein solcher Link (dann gilt `pruefe`). Der Ordner muss absolut sein, ohne Steuerzeichen und höchstens `ORDNER_MAX` lang;
+/// ob er freigegeben ist, prüft der Runner. Angelegt wird nichts: die Seite zeigt nur das Formular, der Mensch bestätigt.
+pub fn agent_neu_ordner(link: &str, profil: Profil) -> Result<Option<String>, Fehler> {
+    if profil != Profil::Agent {
+        return Ok(None);
+    }
+    let Ok(url) = Url::parse(link) else { return Ok(None) };
+    if url.scheme() != profil.schema() || url.host_str() != Some("neu") {
+        return Ok(None);
+    }
+    let mut ordner = None;
+    for (k, v) in url.query_pairs() {
+        match k.as_ref() {
+            "ordner" if ordner.is_none() => ordner = Some(v.into_owned()),
+            _ => return Err(abgelehnt(link, &format!("unbekannter oder doppelter Parameter „{k}“"))),
+        }
+    }
+    let o = ordner.ok_or_else(|| abgelehnt(link, "es fehlt der Ordner"))?;
+    let absolut = o.starts_with('/') || (o.len() > 2 && o.as_bytes()[1] == b':' && (o.as_bytes()[2] == b'\\' || o.as_bytes()[2] == b'/'));
+    if !absolut || o.len() > ORDNER_MAX || o.chars().any(|c| c.is_control()) {
+        return Err(abgelehnt(link, "der Ordner muss ein absoluter Pfad ohne Steuerzeichen sein"));
+    }
+    Ok(Some(o))
+}
+
 /// Prüft einen Link und liefert den Pfad samt Abfrage (`/os?offen=…&eingabe=…`), der an die Start-URL angehängt wird.
 pub fn pruefe(link: &str, profil: Profil) -> Result<String, Fehler> {
     let url = Url::parse(link).map_err(|_| abgelehnt(link, "kein gültiger Link"))?;
@@ -71,6 +100,22 @@ pub fn pruefe(link: &str, profil: Profil) -> Result<String, Fehler> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agent_neu_ordner_nur_im_profil_agent_und_nur_absolut() {
+        use super::agent_neu_ordner as neu;
+        assert_eq!(neu("fyos://neu?ordner=%2Fsrv%2Fprojekt", Profil::Agent).unwrap(), Some("/srv/projekt".to_string()));
+        assert_eq!(neu("fyos://neu?ordner=C%3A%5Cprojekt", Profil::Agent).unwrap(), Some("C:\\projekt".to_string()));
+        assert_eq!(neu("fyos://oeffnen?ziel=app:x", Profil::Agent).unwrap(), None, "andere Befehle gehen an pruefe");
+        assert_eq!(neu("fyos://neu?ordner=%2Fx", Profil::Os).unwrap(), None, "nur im Profil Agent");
+        assert!(neu("fyos://neu?ordner=relativ", Profil::Agent).is_err());
+        assert!(neu("fyos://neu", Profil::Agent).is_err());
+        assert!(neu("fyos://neu?ordner=%2Fx&ordner=%2Fy", Profil::Agent).is_err());
+        assert!(neu("fyos://neu?ordner=%2Fx%0Ay", Profil::Agent).is_err(), "keine Steuerzeichen");
+        assert!(neu("fyos://neu?ordner=%2Fx&ziel=app:y", Profil::Agent).is_err());
+        let lang = format!("fyos://neu?ordner=%2F{}", "a".repeat(super::ORDNER_MAX));
+        assert!(neu(&lang, Profil::Agent).is_err());
+    }
+
     use super::*;
 
     #[test]
