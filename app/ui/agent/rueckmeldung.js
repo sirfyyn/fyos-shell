@@ -1,7 +1,7 @@
 /* Rückmeldung der Oberfläche: wie viel der Verlauf zeigt (kompakt, normal, detailliert), Töne zu den Momenten eines Zugs, eine kurze Meldung
  * am unteren Rand und die Reaktionen unter einer Antwort.
  *
- *   FP.rueckmeldung = { createRueckmeldung, tonFuer, naechste, reaktionsText, ANZEIGEN, STUFEN, REAKTIONEN, KLAENGE }
+ *   FP.rueckmeldung = { createRueckmeldung, tonFuer, naechste, reaktionsText, modellLage, ANZEIGEN, STUFEN, REAKTIONEN, KLAENGE }
  *
  * Alle Töne entstehen hier aus Sinus- und Dreieckswellen, es gibt keine Klangdateien. Die Wahl steht im Speicher des Fensters (localStorage);
  * ohne ihn gilt sie bis zum Schließen. Nichts hiervon spricht mit dem Runner: was eine Reaktion sendet, sendet die Seite.
@@ -64,6 +64,29 @@
     nochmal: 'Bitte noch einmal: geh die letzte Aufgabe neu an, auf einem anderen Weg als eben.',
   };
   const reaktionsText = (id) => TEXTE[id] || '';
+
+  /**
+   * Was neben dem Zustand der Sitzung über Modell und Agent zu sagen ist, aus `betrieb()` (runner-wege.js). „bereit“ meint nur
+   * die Sitzung; ob das Modell antwortet, steht hier. `stufe` 'warn': sichtbar als eigene Marke; 'gut': nur im Hinweistext.
+   * Meldet der Runner nichts dazu, kommt null.
+   */
+  function modellLage(betrieb) {
+    const b = betrieb && typeof betrieb === 'object' ? betrieb : null;
+    if (!b) return null;
+    if (b.modell && typeof b.modell.antwortet === 'boolean') {
+      const name = b.modell.name ? ` (${b.modell.name})` : '';
+      return b.modell.antwortet
+        ? { stufe: 'gut', text: '', hinweis: `Das Modell antwortet${name}.` }
+        : { stufe: 'warn', text: 'Modell antwortet nicht', hinweis: `Das Modell antwortet nicht${name}. Nachrichten werden erst angenommen, wenn es wieder da ist.` };
+    }
+    if (b.arbeit && typeof b.arbeit.offen === 'boolean') {
+      const warum = String(b.arbeit.warum || '').trim();
+      return b.arbeit.offen
+        ? { stufe: 'gut', text: '', hinweis: `Der Agent darf von selbst arbeiten${warum ? `: ${warum}` : '.'}` }
+        : { stufe: 'warn', text: 'Agent wartet', hinweis: `Der Agent arbeitet gerade nicht von selbst${warum ? `: ${warum}` : '.'}` };
+    }
+    return null;
+  }
 
   /**
    * opts: wurzel (Element, das die Klasse der Anzeige trägt), anzeigeKnopf, tonKnopf, toast (Element für die kurze Meldung),
@@ -207,5 +230,5 @@
     };
   }
 
-  FP.rueckmeldung = { createRueckmeldung, tonFuer, naechste, reaktionsText, ANZEIGEN, STUFEN, REAKTIONEN, KLAENGE };
+  FP.rueckmeldung = { createRueckmeldung, tonFuer, naechste, reaktionsText, modellLage, ANZEIGEN, STUFEN, REAKTIONEN, KLAENGE };
 })();

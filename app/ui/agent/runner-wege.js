@@ -202,7 +202,7 @@
   /**
    * GET /api/health als das, was die Startseite zeigt. Was der Runner nicht meldet, bleibt null (der volle Runner nennt kein Modell):
    * { pausiert, spielmodus, gespraeche, modell: { name, antwortet: true|false|null } | null, wartend: Zahl | null,
-   *   hub: { erreichbar, eingerichtet, text } | null }
+   *   arbeit: { offen, warum, geprueft } | null, hub: { erreichbar, eingerichtet, text } | null }
    */
   function betriebBereinigen(r) {
     r = r && typeof r === 'object' ? r : {};
@@ -228,6 +228,8 @@
       gespraeche: Math.max(0, Math.trunc(zahlOder(r.gespraeche, 0))),
       modell: m && (typeof m.name === 'string' || typeof m.answers === 'boolean') ? { name: text(m.name, 120), antwortet: typeof m.answers === 'boolean' ? m.answers : null } : null,
       wartend: q && Number.isFinite(q.waiting) ? Math.max(0, Math.trunc(q.waiting)) : null,
+      // voller Runner: darf der Agent gerade von selbst arbeiten (Hintergrund-Tor)? Zu ist es auch, wenn das Modell nicht antwortet.
+      arbeit: r.arbeit && typeof r.arbeit === 'object' && typeof r.arbeit.offen === 'boolean' ? { offen: r.arbeit.offen, warum: text(r.arbeit.warum, 200), geprueft: Number.isFinite(r.arbeit.geprueft) ? r.arbeit.geprueft : null } : null,
       hub,
     };
   }

@@ -58,6 +58,28 @@ test('Wahl im Kreis und Texte der Reaktionen', () => {
   assert.equal(R.reaktionsText('fremd'), '');
 });
 
+test('Lage neben „bereit“: lokal zählt, ob das Modell antwortet; am vollen Runner, ob der Agent von selbst arbeiten darf', () => {
+  const FP = logik('runner-wege.js', 'rueckmeldung.js');
+  const { modellLage } = FP.rueckmeldung;
+  assert.equal(modellLage(null), null);
+  assert.equal(modellLage({ modell: null, arbeit: null }), null, 'meldet der Runner nichts dazu, steht nichts da');
+  const gut = modellLage({ modell: { name: 'klein', antwortet: true } });
+  assert.deepEqual([gut.stufe, gut.text], ['gut', '']);
+  assert.match(gut.hinweis, /antwortet \(klein\)/);
+  const weg = modellLage({ modell: { name: '', antwortet: false } });
+  assert.deepEqual([weg.stufe, weg.text], ['warn', 'Modell antwortet nicht']);
+  const wartet = modellLage({ modell: null, arbeit: { offen: false, warum: 'das Tor antwortet nicht' } });
+  assert.deepEqual([wartet.stufe, wartet.text], ['warn', 'Agent wartet']);
+  assert.match(wartet.hinweis, /das Tor antwortet nicht/);
+  assert.equal(modellLage({ arbeit: { offen: true, warum: 'seit 6 Minuten ruhig' } }).stufe, 'gut');
+  // bereinigt aus der Antwort des Runners: nur bekannte Felder, Text gekürzt, Unsinn fällt weg
+  const b = FP.wege.betriebBereinigen({ arbeit: { offen: false, warum: 'x'.repeat(500), geprueft: 17, fremd: 1 } });
+  assert.deepEqual(Object.keys(b.arbeit), ['offen', 'warum', 'geprueft']);
+  assert.ok(b.arbeit.warum.length <= 200);
+  assert.equal(FP.wege.betriebBereinigen({ arbeit: { offen: 'ja' } }).arbeit, null);
+  assert.equal(FP.wege.betriebBereinigen({}).arbeit, null);
+});
+
 test('Quelltext: kein Netz, kein HTML aus Text, keine Klangdatei, keine Signalfarbe im Stil', () => {
   const js = lies('rueckmeldung.js');
   assert.doesNotMatch(js, /\bfetch\(|XMLHttpRequest|innerHTML|insertAdjacentHTML|document\.write|transport\.api|new Audio\(|\.mp3|\.wav|\.ogg/);

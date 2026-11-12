@@ -120,15 +120,15 @@ test('Wege: Betrieb und Hub-Werkzeuge kommen bereinigt an (nur bekannte Felder),
   const W = logik('runner-wege.js').wege;
   // voller Runner: kein Modell, keine Schlange
   assert.deepEqual(kopie(W.betriebBereinigen({ ok: true, pausiert: false, spielmodus: null, gespraeche: 7, hub: { ok: true, daten: { plugins: [{ name: 'a', healthy: true }, { name: 'b', healthy: false }] } }, geheim: 'x' })), {
-    pausiert: false, spielmodus: '', gespraeche: 7, modell: null, wartend: null, hub: { erreichbar: true, eingerichtet: true, text: '2 Erweiterungen · 1 nicht gesund' },
+    pausiert: false, spielmodus: '', gespraeche: 7, modell: null, wartend: null, arbeit: null, hub: { erreichbar: true, eingerichtet: true, text: '2 Erweiterungen · 1 nicht gesund' },
   });
   // lokaler Runner: Modell und Schlange in englischen Feldern
   assert.deepEqual(kopie(W.betriebBereinigen({ pausiert: true, spielmodus: 'spiel', gespraeche: 2.9, model: { name: 'klein-1b', url: 'http://127.0.0.1:1/v1', answers: false }, queue: { waiting: 3, paused: false }, hub: { ok: false, fehler: 'Kein Hub konfiguriert' } })), {
-    pausiert: true, spielmodus: 'spiel', gespraeche: 2, modell: { name: 'klein-1b', antwortet: false }, wartend: 3, hub: { erreichbar: false, eingerichtet: false, text: 'Kein Hub konfiguriert' },
+    pausiert: true, spielmodus: 'spiel', gespraeche: 2, modell: { name: 'klein-1b', antwortet: false }, wartend: 3, arbeit: null, hub: { erreichbar: false, eingerichtet: false, text: 'Kein Hub konfiguriert' },
   });
   assert.deepEqual(kopie(W.betriebBereinigen({ hub: { ok: false, fehler: 'Zeitüberschreitung' } }).hub), { erreichbar: false, eingerichtet: true, text: 'Zeitüberschreitung' });
   assert.deepEqual(kopie(W.betriebBereinigen({ hub: { ok: true, daten: { plugins: 12 } } }).hub), { erreichbar: true, eingerichtet: true, text: '12 Erweiterungen' });
-  assert.deepEqual(kopie(W.betriebBereinigen(null)), { pausiert: false, spielmodus: '', gespraeche: 0, modell: null, wartend: null, hub: null });
+  assert.deepEqual(kopie(W.betriebBereinigen(null)), { pausiert: false, spielmodus: '', gespraeche: 0, modell: null, wartend: null, arbeit: null, hub: null });
   // Werkzeuge: Name und erste Zeile der Beschreibung
   assert.deepEqual(kopie(W.werkzeugBereinigen({ name: ' hub.suchen ', description: 'Sucht Werkzeuge.\nZweite Zeile', inputSchema: {} })), { name: 'hub.suchen', beschreibung: 'Sucht Werkzeuge.' });
   assert.deepEqual(kopie(W.werkzeugBereinigen({ name: 'a.b', beschreibung: 'deutsch' })), { name: 'a.b', beschreibung: 'deutsch' });

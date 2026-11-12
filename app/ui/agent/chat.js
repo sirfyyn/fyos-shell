@@ -794,6 +794,25 @@
       }
     })(),
   });
+  // „bereit“ oben rechts meint die Sitzung. Ob das Modell antwortet (lokaler Runner) oder der Agent gerade von selbst arbeiten
+  // darf (voller Runner), liest die Seite alle 30 s aus GET /api/health und zeigt es daneben: als Marke nur, wenn etwas wartet.
+  async function ladeLage() {
+    let lage = null;
+    try {
+      lage = FP.rueckmeldung.modellLage(await wege.betrieb());
+    } catch (e) {
+      lage = null; // der Runner antwortet nicht: das sagt schon „getrennt“
+    }
+    const marke = $('lage');
+    marke.hidden = !(lage && lage.stufe === 'warn');
+    marke.textContent = lage && lage.stufe === 'warn' ? lage.text : '';
+    marke.title = lage ? lage.hinweis : '';
+    $('zustand').title = `Zustand dieser Sitzung („bereit“: sie wartet auf deine Nachricht).${lage ? ` ${lage.hinweis}` : ''}`;
+    return lage;
+  }
+  void ladeLage();
+  setInterval(ladeLage, 30000);
+
   function reagiere(rec, art) {
     const R = FP.rueckmeldung;
     const r = R.REAKTIONEN.find((x) => x.id === art);
@@ -1497,7 +1516,7 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, rueck, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, rueck, ladeLage, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)

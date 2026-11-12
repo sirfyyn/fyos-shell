@@ -13,6 +13,10 @@
 .anz-detail .aufklapp { grid-template-rows: 1fr; }
 .anz-detail .aufklapp > .aufklapp-innen { visibility: visible; transition-delay: 0s; }
 
+/* Lage von Modell und Agent neben dem Zustand der Sitzung: nur sichtbar, wenn etwas nicht antwortet oder wartet */
+.rm-lage { display: inline-flex; align-items: center; max-width: 260px; padding: 1px 9px; border: 1px solid var(--warn); border-radius: 999px; color: var(--warn); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rm-lage[hidden] { display: none; }
+
 /* „Kopieren“ im Fuß eines Zugs */
 .rm-kopieren { margin-left: 10px; padding: 0 9px; min-height: 22px; font-size: 12px; border-radius: 999px; border-color: transparent; background: transparent; color: var(--leise); opacity: .55; transition: opacity .15s; }
 .zugfuss:hover .rm-kopieren, .rm-kopieren:focus-visible { opacity: 1; }
