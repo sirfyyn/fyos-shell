@@ -29,7 +29,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14, windows-latest]
+        # macos-15 (arm64): GitHub hat die macOS-14-Läufer am 02.11.2026 abgeschaltet
+        os: [ubuntu-22.04, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -80,7 +81,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-22.04, buendel: appimage }
-          - { os: macos-14, buendel: "app,dmg" }
+          - { os: macos-15, buendel: "app,dmg" }
           - { os: windows-latest, buendel: nsis }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
