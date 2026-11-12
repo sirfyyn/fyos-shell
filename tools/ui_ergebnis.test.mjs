@@ -322,3 +322,31 @@ test('Quelltext: der Adapter reicht Details und gemessene Dauer durch; die Ansic
   const css = lies('chat.css');
   for (const k of ['.terminal-fuss', '.meta .exit', '.karte-hinweis.warn', '.karte-hinweis.fehler']) assert.ok(css.includes(`${k} {`), k);
 });
+
+test('Blockanfang: Text, der schon im Start des Blocks steht, wird als Stück nachgereicht; was noch als Stück folgt, zählt nicht doppelt', () => {
+  const { mitBlockanfang } = logik('runner-adapter.js');
+  const kurz = (l) => JSON.parse(JSON.stringify(l.map((c) => [c.type, c.delta || ''])));
+  // der Anfang steht nur im Block
+  assert.deepEqual(kurz(mitBlockanfang([{ type: 'text_start', contentIndex: 0, block: { type: 'text', text: 'Num' } }, { type: 'text_delta', contentIndex: 0, delta: 'mer 21' }])), [['text_start', ''], ['text_delta', 'Num'], ['text_delta', 'mer 21']]);
+  // der Block trägt schon, was im selben Stapel noch folgt
+  assert.deepEqual(kurz(mitBlockanfang([{ type: 'text_start', contentIndex: 0, block: { type: 'text', text: 'Nummer' } }, { type: 'text_delta', contentIndex: 0, delta: 'mer' }])), [['text_start', ''], ['text_delta', 'Num'], ['text_delta', 'mer']]);
+  // Denken ebenso, je Block für sich; ein leerer Blockanfang ändert nichts
+  assert.deepEqual(kurz(mitBlockanfang([{ type: 'thinking_start', contentIndex: 0, block: { thinking: 'Ich ' } }, { type: 'text_start', contentIndex: 1, block: { text: '' } }, { type: 'text_delta', contentIndex: 1, delta: 'ok' }])), [['thinking_start', ''], ['thinking_delta', 'Ich '], ['text_start', ''], ['text_delta', 'ok']]);
+  // reicht der Runner das Stück schon selbst nach, bleibt die Liste
+  const schon = [{ type: 'text_start', contentIndex: 0, block: { text: 'Num' } }, { type: 'text_delta', contentIndex: 0, delta: 'Num', ausBlockanfang: true }];
+  assert.equal(mitBlockanfang(schon).length, 2);
+  assert.deepEqual(mitBlockanfang(null), []);
+});
+
+dom('Blockanfang im Gespräch: der Anfang der Antwort fehlt nicht, und der Abgleich mit der ganzen Nachricht hängt das Ende nicht doppelt an', () => {
+  const { d, view, adapter } = ansicht();
+  const ganz = 'Nummer 21 fertig. Weiter mit FLE-NACHTPLAN.md.';
+  adapter.apply({ type: 'run_start' });
+  adapter.apply({ type: 'message_start', message: { role: 'assistant', content: [] } });
+  adapter.apply({ type: 'message_update', changes: [{ type: 'text_start', contentIndex: 0, block: { type: 'text', text: 'Num' } }, { type: 'text_delta', contentIndex: 0, delta: 'mer 21 fertig. Weiter mit FLE-NACHTPLAN' }] });
+  adapter.apply({ type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 0, delta: '.md.' }] });
+  adapter.apply({ type: 'message_update', changes: [{ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: ganz }] } }] });
+  view.flush();
+  assert.equal(d.getElementById('spalte').textContent.includes(ganz), true, d.getElementById('spalte').textContent);
+  assert.equal(d.getElementById('spalte').textContent.split('.md.').length, 2, 'das Ende steht einmal da');
+});

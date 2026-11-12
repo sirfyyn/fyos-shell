@@ -179,6 +179,32 @@
    * opts: modell, onEntscheidung(id, 'erlauben'|'ablehnen'|'aendern', notiz, { sitzung }), onUsage(usage), onKontext(tokens|null), onAgent(agent), onHinweis(text, fehler),
    *       befehlFuer(freigabeId) → Befehl oder '' (aus GET /api/freigaben), vorMensch(text) (entfernt eine eingereihte Blase)
    */
+  /**
+   * Der Runner meldet einen neuen Text- oder Denkblock als `text_start` / `thinking_start` mit dem Block selbst. Kommt das erste Stück
+   * zusammen mit dem Blockanfang, steht es nur dort und nie als Delta: wer nur Deltas liest, verliert den Anfang, und der spätere
+   * Abgleich mit der ganzen Nachricht hängt dann das Ende doppelt an. Hier wird der Anfangstext als Delta direkt hinter den Start
+   * gestellt; was im selben Stapel noch als Delta folgt, wird abgezogen. Reicht der Runner das Delta schon selbst nach
+   * (`ausBlockanfang`), bleibt die Liste, wie sie ist.
+   */
+  function mitBlockanfang(changes) {
+    const liste = Array.isArray(changes) ? changes : [];
+    if (!liste.some((c) => c && (c.type === 'text_start' || c.type === 'thinking_start'))) return liste;
+    const aus = [];
+    liste.forEach((c, i) => {
+      aus.push(c);
+      if (!c || (c.type !== 'text_start' && c.type !== 'thinking_start')) return;
+      const feld = c.type === 'text_start' ? 'text' : 'thinking';
+      const deltaTyp = c.type === 'text_start' ? 'text_delta' : 'thinking_delta';
+      const danach = liste.slice(i + 1).filter((b) => b && b.type === deltaTyp && b.contentIndex === c.contentIndex);
+      if (danach.some((b) => b.ausBlockanfang)) return;
+      let anfang = String((c.block && c.block[feld]) || '');
+      const folgt = danach.map((b) => String(b.delta || '')).join('');
+      if (folgt && anfang.endsWith(folgt)) anfang = anfang.slice(0, anfang.length - folgt.length);
+      if (anfang) aus.push({ type: deltaTyp, contentIndex: c.contentIndex, delta: anfang, ausBlockanfang: true });
+    });
+    return aus;
+  }
+
   function createRunnerAdapter(view, opts) {
     opts = opts || {};
     const bekannt = new Set(); // Eintrags-Ids: Wiederholungen (Snapshot, doppelte Zustellung) zeichnen nichts doppelt
@@ -450,7 +476,7 @@
           break;
         case 'message_update':
           sicherZug();
-          for (const a of ev.changes || []) {
+          for (const a of mitBlockanfang(ev.changes)) {
             const i = a.contentIndex;
             if (a.type === 'message' && a.message) {
               // vollständige Nachricht: nur den noch nicht gezeigten Rest anhängen
@@ -636,6 +662,7 @@
   }
 
   FP.createRunnerAdapter = createRunnerAdapter;
+  FP.mitBlockanfang = mitBlockanfang;
   FP.kontextAusNutzung = kontextAusNutzung;
   FP.diffAusEdit = diffAusEdit;
   FP.diffAusWrite = diffAusWrite;
