@@ -205,6 +205,24 @@
     return aus;
   }
 
+  /**
+   * Was vom ganzen Text noch fehlt, wenn `gezeigt` schon dasteht. Der Abgleich zählte früher nur Zeichen: fehlte dem Gezeigten ein
+   * Stück vom Anfang, hängte er so viele Zeichen vom Ende noch einmal an. Jetzt zählt der Inhalt: steht das Gezeigte am Anfang, kommt
+   * der Rest; steht es am Ende oder mittendrin (der Anfang ging verloren), kommt nur, was dahinter folgt; sonst das längste Stück, in
+   * dem das Ende des Gezeigten in den Anfang des Ganzen übergeht.
+   */
+  function restNach(gezeigt, ganz) {
+    if (!gezeigt) return ganz;
+    if (ganz.startsWith(gezeigt)) return ganz.slice(gezeigt.length);
+    const stelle = ganz.lastIndexOf(gezeigt);
+    if (stelle >= 0) return ganz.slice(stelle + gezeigt.length);
+    for (let n = Math.min(gezeigt.length, ganz.length); n > 0; n -= 1) {
+      if (gezeigt.endsWith(ganz.slice(0, n))) return ganz.slice(n);
+    }
+    // nichts passt zusammen: lieber nichts anhängen als ein falsches Ende
+    return ganz.length > gezeigt.length ? ganz.slice(gezeigt.length) : '';
+  }
+
   function createRunnerAdapter(view, opts) {
     opts = opts || {};
     const bekannt = new Set(); // Eintrags-Ids: Wiederholungen (Snapshot, doppelte Zustellung) zeichnen nichts doppelt
@@ -218,8 +236,11 @@
     let live = { texte: {}, denken: {} }; // schon gezeigter Text der laufenden Nachricht je Blockindex
     let argsVon = {}; // toolCall-Blöcke der laufenden Nachricht: id → arguments
 
+    let vorab = {}; // Text aus dem Blockanfang je Blockindex, der auf das erste echte Stück wartet
+
     const neuesLive = () => {
       live = { texte: {}, denken: {} };
+      vorab = {};
     };
     const sicherZug = () => {
       if (!laeuft) {
@@ -227,12 +248,15 @@
         laeuft = true;
       }
     };
+    let letzteZeit = null; // Zeit der letzten Nachricht des laufenden Zugs (für die Zeitmarke am Ende, wenn ein Verlauf abgespielt wird)
     const zugZu = () => {
       if (laeuft) {
         denkenZu();
-        view.endTurn({});
+        // live endet der Zug jetzt; beim Abspielen gilt die Zeit der letzten Nachricht, ohne die bleibt die Marke weg
+        view.endTurn(abspielen > 0 ? { zeit: letzteZeit } : {});
         laeuft = false;
       }
+      letzteZeit = null;
     };
     const denkenZu = () => {
       if (denkt) {
@@ -347,7 +371,7 @@
         if (e.id !== undefined) aufrufeVor.set(String(e.id), aufrufe.length);
         // Anhänge der Nachricht (Paket A7): Bilder mit der kleinen Vorschau des Runners, Dateien mit Namen; eine Nachricht kann nur aus Anhängen bestehen
         const anhaenge = FP.wege && FP.wege.nachrichtAnhaenge ? FP.wege.nachrichtAnhaenge(d.anhaenge) : [];
-        if (t || anhaenge.length) view.addUserMessage({ text: t, kenn: e.id, ...(anhaenge.length ? { anhaenge } : {}) });
+        if (t || anhaenge.length) view.addUserMessage({ text: t, kenn: e.id, zeit: d.zeit, ...(anhaenge.length ? { anhaenge } : {}) });
       } else if (kind === 'fyos.zurueck') {
         // Der Mensch hat zurückgespult: was ab `ab` kam, zählt nicht mehr und steht blass da; darunter, was geschah
         zugZu();
@@ -424,14 +448,14 @@
         }
       } else if (m.role === 'assistant') {
         sicherZug();
+        if (typeof m.timestamp === 'number' && m.timestamp > 0) letzteZeit = m.timestamp;
         const ktx = kontextAusNutzung(m.usage);
         if (ktx != null && opts.onKontext) opts.onKontext(ktx);
         const bloecke = Array.isArray(m.content) ? m.content : typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : [];
         bloecke.forEach((b, i) => {
           if (!b) return;
           if (b.type === 'thinking' && b.thinking) {
-            const schon = abgleich ? (live.denken[i] || '').length : 0;
-            const rest = String(b.thinking).slice(schon);
+            const rest = abgleich ? restNach(live.denken[i] || '', String(b.thinking)) : String(b.thinking);
             if (abgleich) live.denken[i] = String(b.thinking);
             if (rest || !abgleich) {
               if (!denkt) {
@@ -442,8 +466,7 @@
             }
             if (!abgleich) denkenZu();
           } else if (b.type === 'text' && b.text) {
-            const schon = abgleich ? (live.texte[i] || '').length : 0;
-            const rest = String(b.text).slice(schon);
+            const rest = abgleich ? restNach(live.texte[i] || '', String(b.text)) : String(b.text);
             if (abgleich) live.texte[i] = String(b.text);
             if (rest) {
               denkenZu();
@@ -496,9 +519,19 @@
             } else if (a.type === 'thinking_end') denkenZu();
             else if (a.type === 'text_start') denkenZu();
             else if (a.type === 'text_delta') {
+              // Der Anfang aus dem Blockstart wartet auf das erste echte Stück und kommt mit ihm zusammen in die Ansicht: dazwischen
+              // kann das Denken noch schließen, und ein einzeln gesetzter Anfang stünde dann als eigener Absatz da („Num“ / „mer …“).
+              if (a.ausBlockanfang) {
+                vorab[i] = (vorab[i] || '') + String(a.delta || '');
+                continue;
+              }
+              // steht der Anfang schon da (die Startnachricht trug ihn), kommt er nicht noch einmal
+              const anfang = vorab[i] && !(live.texte[i] || '').endsWith(vorab[i]) ? vorab[i] : '';
+              const stueck = anfang + String(a.delta || '');
+              vorab[i] = '';
               denkenZu();
-              live.texte[i] = (live.texte[i] || '') + String(a.delta || '');
-              view.appendText(String(a.delta || ''));
+              live.texte[i] = (live.texte[i] || '') + stueck;
+              view.appendText(stueck);
             } else if (a.type === 'block' && a.block && a.block.type === 'toolCall') {
               argsVon[a.block.id] = a.block.arguments;
               const w = werkzeuge.get(a.block.id);
@@ -663,6 +696,7 @@
 
   FP.createRunnerAdapter = createRunnerAdapter;
   FP.mitBlockanfang = mitBlockanfang;
+  FP.restNach = restNach;
   FP.kontextAusNutzung = kontextAusNutzung;
   FP.diffAusEdit = diffAusEdit;
   FP.diffAusWrite = diffAusWrite;

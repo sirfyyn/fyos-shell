@@ -338,6 +338,77 @@ test('Blockanfang: Text, der schon im Start des Blocks steht, wird als Stück na
   assert.deepEqual(mitBlockanfang(null), []);
 });
 
+test('Zeitmarke: Uhrzeit und Abstand; ab einem Tag das Datum; eine Zeit in der Zukunft gilt als gerade eben', () => {
+  const { zeitText } = logik('chat-renderer.js');
+  const jetzt = new Date(2026, 10, 12, 14, 40, 0).getTime();
+  assert.equal(zeitText(jetzt - 10_000, jetzt), '14:39 · gerade eben');
+  assert.equal(zeitText(jetzt - 5 * 60_000, jetzt), '14:35 · vor 5 Min.');
+  assert.equal(zeitText(jetzt - 3 * 3600_000, jetzt), '11:40 · vor 3 Std.');
+  assert.match(zeitText(jetzt - 26 * 3600_000, jetzt), /^11\. Nov\.?, 12:40$/);
+  assert.equal(zeitText(jetzt + 60_000, jetzt), '14:41 · gerade eben');
+});
+
+dom('Zeitmarken im Gespräch: an der Nachricht des Menschen die Zeit des Eintrags, am Ende eines Zugs die der letzten Antwort; ohne Zeit keine Marke', () => {
+  const { d, view, adapter } = ansicht();
+  const t0 = Date.now() - 7 * 60_000;
+  adapter.replay([
+    { id: 1, kind: 'fyos.mensch', data: { text: 'Wie spät?', von: 'mensch', zeit: t0 } },
+    { id: 2, kind: 'pi.message', model: [{ role: 'assistant', content: [{ type: 'text', text: 'Gleich.' }], stopReason: 'stop', timestamp: t0 + 60_000 }] },
+    { id: 3, kind: 'fyos.mensch', data: { text: 'Ohne Zeit', von: 'mensch' } },
+    { id: 4, kind: 'pi.message', model: [{ role: 'assistant', content: [{ type: 'text', text: 'Ja.' }], stopReason: 'stop' }] },
+  ]);
+  view.flush();
+  const marken = [...d.querySelectorAll('time.zeitmarke')];
+  assert.equal(marken.length, 2, 'eine an der ersten Nachricht, eine am Ende des ersten Zugs');
+  assert.equal(marken[0].closest('.mensch') !== null, true);
+  assert.match(marken[0].textContent, /^\d\d:\d\d · vor 7 Min\.$/);
+  assert.equal(marken[0].dataset.zeit, String(t0));
+  assert.equal(marken[1].closest('.zugfuss') !== null, true);
+  assert.match(marken[1].textContent, /vor 6 Min\.$/);
+});
+
+test('Abgleich mit der ganzen Nachricht: es zählt der Inhalt, nicht die Länge; ein verlorener Anfang hängt kein Ende doppelt an', () => {
+  const { restNach } = logik('runner-adapter.js');
+  const ganz = 'Nummer 95 fertig (95/190, 50 %!). Ich aktualisiere den Fortschritt und arbeite weiter.';
+  assert.equal(restNach('', ganz), ganz);
+  assert.equal(restNach('Nummer 95 fertig', ganz), ' (95/190, 50 %!). Ich aktualisiere den Fortschritt und arbeite weiter.');
+  assert.equal(restNach(ganz, ganz), '');
+  // der Anfang ging verloren: früher kam „er.“ noch einmal
+  assert.equal(restNach(ganz.slice(3), ganz), '');
+  assert.equal(restNach('mer 95 fertig', ganz), ' (95/190, 50 %!). Ich aktualisiere den Fortschritt und arbeite weiter.');
+  // das Gezeigte hat vorn mehr als das Ganze (anderer Zuschnitt): nur der überlappende Rest fehlt
+  assert.equal(restNach('xx Nummer 95', ganz), ' fertig (95/190, 50 %!). Ich aktualisiere den Fortschritt und arbeite weiter.');
+  assert.equal(restNach('ganz anderes', 'kurz'), '');
+});
+
+dom('Blockanfang und Denken: schließt das Denken erst nach dem Start des Textblocks, steht der Anfang trotzdem im selben Absatz', () => {
+  const { d, view, adapter } = ansicht();
+  adapter.apply({ type: 'run_start' });
+  adapter.apply({ type: 'message_start', message: { role: 'assistant', content: [] } });
+  adapter.apply({ type: 'message_update', changes: [{ type: 'thinking_start', contentIndex: 0, block: { thinking: '' } }, { type: 'thinking_delta', contentIndex: 0, delta: 'kurz überlegt' }] });
+  adapter.apply({ type: 'message_update', changes: [{ type: 'text_start', contentIndex: 1, block: { type: 'text', text: 'Num' } }, { type: 'thinking_end', contentIndex: 0 }] });
+  adapter.apply({ type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 1, delta: 'mer 111 fertig.' }] });
+  adapter.apply({ type: 'message_update', changes: [{ type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'kurz überlegt' }, { type: 'text', text: 'Nummer 111 fertig.' }] } }] });
+  view.flush();
+  const text = d.getElementById('spalte').textContent;
+  assert.ok(text.includes('Nummer 111 fertig.'), text);
+  assert.equal(text.split('fertig.').length, 2);
+  const absaetze = [...d.querySelectorAll('#spalte p')].map((p) => p.textContent).filter((t) => /Num|mer/.test(t));
+  assert.deepEqual(absaetze, ['Nummer 111 fertig.'], 'ein Absatz, nicht „Num“ und „mer …“');
+});
+
+dom('Abgleich im Gespräch: fehlt dem Gezeigten der Anfang, steht das Ende trotzdem nur einmal da', () => {
+  const { d, view, adapter } = ansicht();
+  const ganz = 'Nummer 95 fertig (95/190, 50 %!). Ich arbeite weiter.';
+  adapter.apply({ type: 'run_start' });
+  adapter.apply({ type: 'message_start', message: { role: 'assistant', content: [] } });
+  // ein Runner, der den Blockanfang nicht mitschickt: der Anfang ist für die Hülle verloren
+  adapter.apply({ type: 'message_update', changes: [{ type: 'text_start', contentIndex: 0 }, { type: 'text_delta', contentIndex: 0, delta: ganz.slice(3) }] });
+  adapter.apply({ type: 'message_update', changes: [{ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: ganz }] } }] });
+  view.flush();
+  assert.equal(d.getElementById('spalte').textContent.split('weiter.').length, 2, d.getElementById('spalte').textContent);
+});
+
 dom('Blockanfang im Gespräch: der Anfang der Antwort fehlt nicht, und der Abgleich mit der ganzen Nachricht hängt das Ende nicht doppelt an', () => {
   const { d, view, adapter } = ansicht();
   const ganz = 'Nummer 21 fertig. Weiter mit FLE-NACHTPLAN.md.';

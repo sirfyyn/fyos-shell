@@ -1205,6 +1205,11 @@
       return;
     }
     const rec = aktiv;
+    // für „Pfeil nach oben“: die gesendeten Nachrichten dieser Sitzung, die neueste zuletzt (nur im Speicher dieses Fensters)
+    if (satz) {
+      rec.gesendet = (rec.gesendet || []).filter((x) => x !== satz).concat(satz).slice(-50);
+      rec.gesendetStelle = null;
+    }
     const text = anhaenge.text(satz);
     // Bilder und abgelegte Dateien gehen als eigenes Feld an den Runner (nur wenn er sie annimmt, sonst ist die Liste leer)
     const fuerRunner = anhaenge.fuerRunner();
@@ -1285,6 +1290,26 @@
   });
   eingabe.addEventListener('keydown', (e) => {
     if (eingabeHilfe.beiTaste(e)) return;
+    // Pfeil nach oben im leeren Feld holt die zuletzt gesendete Nachricht zurück, weiter nach oben die davor; Pfeil nach unten
+    // geht wieder vor bis zum leeren Feld. Gilt nur, solange das Feld leer ist oder genau eine geholte Nachricht zeigt.
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing && aktiv) {
+      const liste = aktiv.gesendet || [];
+      const stelle = typeof aktiv.gesendetStelle === 'number' ? aktiv.gesendetStelle : null;
+      const zeigtGeholtes = stelle !== null && eingabe.value === liste[stelle];
+      if (liste.length && (eingabe.value === '' || zeigtGeholtes)) {
+        let neu = null;
+        if (e.key === 'ArrowUp') neu = zeigtGeholtes ? Math.max(0, stelle - 1) : liste.length - 1;
+        else if (zeigtGeholtes) neu = stelle + 1 < liste.length ? stelle + 1 : -1;
+        if (neu !== null) {
+          e.preventDefault();
+          aktiv.gesendetStelle = neu < 0 ? null : neu;
+          eingabe.value = neu < 0 ? '' : liste[neu];
+          eingabe.setSelectionRange(eingabe.value.length, eingabe.value.length);
+          waechst();
+          return;
+        }
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       senden(e.metaKey || e.ctrlKey);

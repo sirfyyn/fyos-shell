@@ -19,6 +19,22 @@
     const t = String(wert == null ? '' : wert).replace(/\s+/g, ' ').trim();
     return t.length > n ? `${t.slice(0, n - 1)}…` : t;
   }
+  /**
+   * Zeitmarke einer Nachricht: Uhrzeit und Abstand zu jetzt („14:32 · vor 5 Min.“). Ab einem Tag das Datum mit Uhrzeit, ohne
+   * Abstand („11. Nov., 14:32“). Liegt die Zeit in der Zukunft (Uhren weichen ab), gilt „gerade eben“.
+   */
+  function zeitText(ms, jetzt) {
+    const d = new Date(ms);
+    const uhr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const s = Math.max(0, Math.round((jetzt - ms) / 1000));
+    if (s < 45) return `${uhr} · gerade eben`;
+    const min = Math.round(s / 60);
+    if (min < 60) return `${uhr} · vor ${min} Min.`;
+    const h = Math.round(min / 60);
+    if (h < 24) return `${uhr} · vor ${h} Std.`;
+    return `${d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })}, ${uhr}`;
+  }
+
   function dauerText(ms) {
     if (!Number.isFinite(ms) || ms < 0) return '';
     if (ms < 1000) return '<1 s';
@@ -332,6 +348,30 @@
     // Höhenänderungen ohne Ereignis (Aufklappen über Übergang, Bildlauf der Schrift) halten das Ende ebenfalls im Blick
     if (typeof win.ResizeObserver === 'function') new win.ResizeObserver(() => folge.follow()).observe(spalte);
 
+    // Zeitmarken an Nachrichten und am Ende eines Zugs: Uhrzeit und „vor x Min.“; die Angabe „vor …“ läuft alle 30 s nach.
+    const zeitWert = (z) => {
+      const ms = typeof z === 'number' ? z : typeof z === 'string' && z ? Date.parse(z) : NaN;
+      return Number.isFinite(ms) && ms > 0 ? ms : null;
+    };
+    const zeitMarkeText = (ms) => zeitText(ms, now());
+    const zeitMarke = (z) => {
+      const ms = zeitWert(z);
+      if (ms === null) return null;
+      const t = doc.createElement('time');
+      t.className = 'zeitmarke';
+      t.dataset.zeit = String(ms);
+      t.dateTime = new Date(ms).toISOString();
+      t.title = new Date(ms).toLocaleString('de-DE');
+      t.textContent = zeitMarkeText(ms);
+      return t;
+    };
+    setIv(() => {
+      for (const t of spalte.querySelectorAll('time.zeitmarke')) {
+        const neu = zeitMarkeText(Number(t.dataset.zeit));
+        if (t.textContent !== neu) t.textContent = neu;
+      }
+    }, 30000);
+
     let idZaehler = 0;
     const uid = (p) => `${p}${++idZaehler}`;
     const el = (tag, cls, text) => {
@@ -570,6 +610,8 @@
       }
       if (l < text.length) blase.appendChild(doc.createTextNode(text.slice(l)));
       if (text) wrap.appendChild(blase);
+      // wann die Nachricht kam (der Runner nennt es am Eintrag)
+      const wann = zeitMarke(m.zeit);
       // Anhänge der Nachricht: ein Bild mit der kleinen Vorschau des Runners (nur eine geprüfte data-Adresse, runner-wege.js), eine Datei mit Namen
       const anhaenge = Array.isArray(m.anhaenge) ? m.anhaenge : [];
       if (anhaenge.length) {
@@ -607,6 +649,7 @@
       hinweis.hidden = !m.queued;
       if (m.queued) wrap.classList.add('eingereiht');
       wrap.appendChild(hinweis);
+      if (wann) wrap.appendChild(wann);
       spalte.appendChild(wrap);
       turn = null;
       folge.zumEnde();
@@ -1376,7 +1419,14 @@
           const ms = now() - turnStart;
           if (turn) {
             const text = r.stopped ? `Unterbrochen nach ${dauerText(ms)}` : `Fertig in ${dauerText(ms)}${turnSchritte ? ` · ${turnSchritte} ${turnSchritte === 1 ? 'Schritt' : 'Schritte'}` : ''}`;
-            teil(el('div', 'zugfuss', text));
+            const fuss = el('div', 'zugfuss', text);
+            // wann der Zug endete: live jetzt, beim Abspielen eines Verlaufs die Zeit der letzten Nachricht (ohne Angabe keine Marke)
+            const wann = zeitMarke(r.zeit === undefined ? now() : r.zeit);
+            if (wann) {
+              fuss.appendChild(doc.createTextNode(' · '));
+              fuss.appendChild(wann);
+            }
+            teil(fuss);
             ansage.sage(text);
           }
           turn = null;
@@ -1435,5 +1485,5 @@
     };
   }
 
-  Object.assign(FP, { baueDiff, baueDiffChips, createChatView, createScrollFollower, createAnsager, diffZeilen, diffZahlen, dauerText, dauerKurz, kurz, zahlK, artVon, kurzfassung });
+  Object.assign(FP, { baueDiff, baueDiffChips, createChatView, createScrollFollower, createAnsager, diffZeilen, diffZahlen, dauerText, dauerKurz, kurz, zahlK, artVon, kurzfassung, zeitText });
 })(typeof globalThis !== 'undefined' ? globalThis : window);

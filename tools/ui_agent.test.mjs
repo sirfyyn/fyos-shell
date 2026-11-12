@@ -2407,6 +2407,43 @@ dom('Seite: der Überblick steht anstelle des Gesprächs; Knopf und Cmd/Strg+Ums
   }
 });
 
+dom('Seite: Pfeil nach oben im leeren Feld holt die zuletzt gesendete Nachricht zurück, weiter oben die davor, Pfeil nach unten geht wieder vor', async () => {
+  const f = arbeitsplatz();
+  try {
+    await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    await bis(() => f.d.activeElement === f.g('eingabe'));
+    const feld = f.g('eingabe');
+    const taste = (key) => {
+      const e = new f.w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      feld.dispatchEvent(e);
+      return e;
+    };
+    // ohne Gesendetes tut der Pfeil nichts
+    assert.equal(taste('ArrowUp').defaultPrevented, false);
+    for (const text of ['erste Frage', 'zweite Frage']) {
+      feld.value = text;
+      taste('Enter');
+      await bis(() => feld.value === '');
+    }
+    assert.equal(taste('ArrowUp').defaultPrevented, true);
+    assert.equal(feld.value, 'zweite Frage');
+    taste('ArrowUp');
+    assert.equal(feld.value, 'erste Frage');
+    taste('ArrowUp');
+    assert.equal(feld.value, 'erste Frage', 'ganz oben bleibt es stehen');
+    taste('ArrowDown');
+    assert.equal(feld.value, 'zweite Frage');
+    taste('ArrowDown');
+    assert.equal(feld.value, '', 'unten hinaus ist das Feld wieder leer');
+    // in einem Feld mit eigenem Text bewegen die Pfeile nur die Schreibmarke
+    feld.value = 'ich tippe gerade';
+    assert.equal(taste('ArrowUp').defaultPrevented, false);
+    assert.equal(feld.value, 'ich tippe gerade');
+  } finally {
+    f.schliesse();
+  }
+});
+
 dom('Seite: ein Treffer blättert zur Stelle, wenn der geladene Verlauf sie enthält (Text wird nur verglichen, nie eingesetzt)', async () => {
   const entries = [frage(1), antwortMit(2, nutzung(10, 10, 10)), { id: 3, kind: 'pi.message', model: [{ role: 'assistant', content: [{ type: 'text', text: 'Der seltene Zielsatz steht hier.' }], stopReason: 'stop', timestamp: 2000 }] }];
   const f = arbeitsplatz({
