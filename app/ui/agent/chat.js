@@ -27,6 +27,8 @@
       aktiv.sendeArt = art === 'steuern' ? 'steuern' : 'folgen';
       zeigeAktiv();
     },
+    // Modus der Sitzung (planen, fragen, frei, umgehen), wenn der Runner ihn kennt
+    beiModus: (wert) => wechsleModus(wert),
   });
   const aktivitaet = FP.sitzungen.createAktivitaet();
 
@@ -80,6 +82,8 @@
     b.textContent = text;
     $('stopp').hidden = !s.busy;
     $('senden').textContent = s.busy ? 'Einreihen' : 'Senden';
+    // Ein Hauptknopf zur Zeit: arbeitet der Agent („Einreihen“) oder liegt eine Karte zur Entscheidung vor, ist dieser Knopf ruhig
+    $('senden').dataset.art = s.busy ? 'einreihen' : s.wartet ? 'wartet' : 'senden';
     // Anzeigename aus der Modellliste des Runners (GET /api/modelle), sonst, was die Sitzung meldet
     const modellEintrag = aktiv ? FP.wege.modellEintrag(modelle, aktiv.chat.modellRoh() || s.modell) : null;
     $('modell').textContent = aktiv && aktiv.wechselt ? 'wechsle …' : (modellEintrag && (modellEintrag.name || modellEintrag.id)) || s.modell || '–';
@@ -98,7 +102,32 @@
     $('tokens').textContent = s.tokIn != null || s.tokOut != null ? `gesamt ${zahl(s.tokIn || 0)} ein · ${zahl(s.tokOut || 0)} aus` : '';
     $('tokens').title = 'Summe der ganzen Sitzung: gesendete Token (mit Cache-Lesen) und erzeugte Token. Das ist nicht der aktuelle Kontext.';
     $('kosten').textContent = s.kosten != null ? `≈ ${s.kosten.toFixed(2).replace('.', ',')} €` : '';
-    modus.zeichne({ ...s.modus, sendeArt: aktiv ? aktiv.sendeArt : 'folgen' });
+    modus.zeichne({ ...s.modus, sendeArt: aktiv ? aktiv.sendeArt : 'folgen', sitzung: aktivModus(), wechselt: !!(aktiv && aktiv.modusWechselt) });
+  }
+  /** Der Modus der sichtbaren Sitzung, wie ihn die Liste des Runners nennt; null, wenn der Runner keinen Modus je Sitzung kennt. */
+  function aktivModus() {
+    const g = aktiv ? gespraeche.find((x) => String(x.id) === String(aktiv.id)) : null;
+    return g && typeof g.modus === 'string' && FP.modus.sitzungsModus(g.modus) ? g.modus : null;
+  }
+  /** Modus der sichtbaren Sitzung wechseln (Wähler in der Statuszeile, Strg/Cmd+Umschalt+P für den Plan-Modus). */
+  async function wechsleModus(wert) {
+    const rec = aktiv;
+    const g = rec ? gespraeche.find((x) => String(x.id) === String(rec.id)) : null;
+    if (!rec || !g || rec.modusWechselt || g.modus === wert) return;
+    rec.modusWechselt = true;
+    zeigeAktiv();
+    try {
+      const r = await aenderung.sitzungsmodus(rec.id, wert);
+      if (g.modus !== 'planen') rec.modusDavor = g.modus;
+      g.modus = r.modus;
+      const m = FP.modus.sitzungsModus(r.modus);
+      rec.chat.view.addNote(`Modus der Sitzung: ${m ? m.text : r.modus}. Der Agent erfährt es mit deiner nächsten Nachricht.`);
+    } catch (f) {
+      rec.chat.view.addNote(String((f && f.message) || f), 'fehler');
+    } finally {
+      rec.modusWechselt = false;
+      zeigeAktiv();
+    }
   }
   function zeigeAktiv() {
     if (!aktiv) return;
@@ -128,6 +157,7 @@
     if (aktiv === rec) {
       zeigeOrdner(rec);
       planeAenderungen(); // relative Pfade hängen am Arbeitsordner
+      dateienTafel.ordnerNeu(); // der Baum der Tafel „Dateien“ gehört zu diesem Ordner
     }
   }
 
@@ -139,12 +169,22 @@
       // Sprung in die Sitzung der Freigabe: dieselbe Funktion wie in der Leiste, die Ansicht bleibt aufgebaut (kein Neuaufbau)
       beiSprung: (id) => wechsle(id),
       beiAenderung: () => zeigeAktiv(),
+      // ein genehmigter Plan ändert beim Runner den Modus der Sitzung: die Liste zieht nach
+      beiEntschieden: () => setTimeout(ladeListe, 300),
     }
   );
+
+  // --- Vorgänge, Kalender, Ereignisse des Runners (plattform.js); ohne Plattform beim Runner bleibt die Leiste beim Chat ---
+  const plattform = FP.createPlattform(
+    { nav: $('bereiche'), zahl: $('vorgaengeZahl'), haupt: document.querySelector('.haupt'), panes: $('panes'), wurzel: $('plattform') },
+    { transport, beiChat: () => eingabe.focus() }
+  );
+  void plattform.pruefe();
 
   // --- Änderungen der Sitzung: Knopf „Änderungen (N)“ und Panel; abgeleitet aus den Datei-Werkzeugen im Verlauf der sichtbaren Sitzung ---
   // Lesende Wege zum Runner für Archiv, Suche und Datei-Vorschau (GET über die Brücke, runner-wege.js)
   const wege = FP.wege.createWege(transport);
+  let staendePfade = null; // Pfade, die der Runner als geändert nennt (Tafel „Änderungen“); null: Runner ohne Stände
   const aenderungen = FP.createAenderungen(
     {
       knopf: $('aenderungenKnopf'),
@@ -160,6 +200,8 @@
       // Vorschau und Dateibaum lesen den echten Stand vom Runner (GET /api/datei, GET /api/ordner?dateien=1); fehlt der Weg, bleibt der Stand aus dem Verlauf
       datei: (abs, id) => wege.datei(abs, { gespraech: id, max: 200000 }),
       ordner: (abs) => wege.ordner(abs),
+      // führt der Runner Stände, gilt als geändert nur, was er nennt (eine zurückgenommene Datei verschwindet auch hier)
+      nurDiese: () => staendePfade,
     }
   );
   /** Arbeitsordner der Sitzung für relative Pfade: die Sitzung selbst, sonst der Arbeitsbereich aus der Liste. */
@@ -202,8 +244,233 @@
       archivZahl: $('archivZahl'),
       archivLeer: $('archivLeer'),
     },
-    { beiWahl: (id) => wechsle(id), beiUmbenennen: (id, text) => umbenenne(id, text), beiArchivieren: (id, an) => archiviere(id, an) }
+    { beiWahl: (id) => wechsle(id), beiUmbenennen: (id, text) => umbenenne(id, text), beiArchivieren: (id, an) => archiviere(id, an), beiAnpinnen: (id, an) => pinne(id, an) }
   );
+
+  // --- Werkbank: Schiene der Leiste, Aufgabenliste des Agenten mit Streifen über der Eingabe, Läufe (Unteragenten, Befehle im Hintergrund) ---
+  const werkbank = FP.werkbank.createWerkbank(
+    {
+      schiene: $('schiene'),
+      knoepfe: { gespraeche: $('schieneGespraeche'), aufgaben: $('schieneAufgaben'), laeufe: $('schieneLaeufe'), aenderungen: $('schieneAenderungen'), dateien: $('schieneDateien') },
+      tafeln: { gespraeche: $('tafelGespraeche'), aufgaben: $('tafelAufgaben'), laeufe: $('tafelLaeufe'), aenderungen: $('tafelAenderungen'), dateien: $('tafelDateien') },
+      aufgabenMarke: $('aufgabenMarke'),
+      aufgabenLeer: $('aufgabenLeer'),
+      aufgabenKopf: $('aufgabenKopf'),
+      aufgabenKopfText: $('aufgabenKopfText'),
+      aufgabenBalken: $('aufgabenBalken'),
+      aufgabenListe: $('aufgabenListe'),
+      laeufeMarke: $('laeufeMarke'),
+      laeufeLeer: $('laeufeLeer'),
+      laeufeListe: $('laeufeListe'),
+      streifen: $('aufgabenStreifen'),
+      streifenText: $('streifenText'),
+      streifenZahl: $('streifenZahl'),
+      streifenBalken: $('streifenBalken'),
+    },
+    {
+      wege,
+      // Sprung in eine Sitzung oder in den Verlauf eines Unteragenten: dieselbe Funktion wie in der Leiste
+      beiSprung: (id) => wechsle(id),
+      titelVon: (id) => {
+        const g = gespraeche.find((x) => String(x.id) === String(id));
+        return g ? String(g.titel || '') : '';
+      },
+      beiStreifen: () => leisteUmschalten(true),
+      // die Tafel „Änderungen“ liest beim Öffnen den Stand neu; „Dateien“ zieht nach, wenn der Agent inzwischen etwas getan hat
+      beiTafel: (name) => {
+        if (name === 'aenderungen') void staendeTafel.neu();
+        else if (name === 'dateien') dateienTafel.zeige();
+      },
+    }
+  );
+  // --- Flächen rechts neben dem Gespräch (flaechen.js): ein Bereich mit Reitern für den Browser, Dateien, Unterschiede und Bilder. ---
+  // Er ist nur da, solange eine Fläche offen ist; das Gespräch wird daneben schmaler.
+  const flaechen = FP.createFlaechen(
+    { wurzel: $('flaechen'), reiter: $('flaechenReiter'), koerper: $('flaechenKoerper'), zu: $('flaechenZu') },
+    {
+      beiOffen: (an) => $('app').classList.toggle('flaeche-auf', an),
+      // was jetzt vorn liegt, zieht nach: der Browser sein Bild, eine Datei ihren Inhalt
+      beiWechsel: (id) => {
+        if (id === 'browser') void browserFlaeche.auffrischen();
+        else dateiFlaeche.beiWechsel(id);
+        // im Baum der Tafel „Dateien“ steht die Datei markiert, die rechts vorn liegt
+        dateienTafel.markiereAktiv();
+      },
+    }
+  );
+  // --- Fläche „Diff und Datei“ (datei-flaeche.js): eine Datei an einer Zeile, der Unterschied einer Datei, ein Bild. Geöffnet aus der Tafel
+  // „Änderungen“, aus den Karten und Pfaden im Gespräch und von den Anhängen einer Nachricht; ändert der Agent eine Datei, geht ihr Unterschied auf. ---
+  const dateiFlaeche = FP.createDateiFlaeche(
+    { flaechen },
+    {
+      wege,
+      gespraech: () => (aktiv ? aktiv.id : null),
+      ordner: () => (aktiv ? ordnerPfad(aktiv) : ''),
+      // führt der Runner Stände, gibt es je Datei alle Änderungen der Sitzung; sonst nur die Änderung des einzelnen Aufrufs
+      kenntStaende: () => staendePfade !== null,
+      hatUnterschied: (abs) => !!staendePfade && staendePfade.has(FP.dateiFlaeche.anzeigePfad(abs, aktiv ? ordnerPfad(aktiv) : '')),
+      // von selbst geht die Fläche nur auf, wenn sie neben dem Gespräch liegt (im schmalen Fenster läge sie darüber)
+      breit: () => !(window.matchMedia && window.matchMedia('(max-width: 1180px)').matches),
+    }
+  );
+  // --- Tafel „Änderungen“: was der Agent in der Sitzung geändert hat, Unterschied je Datei, Stände und Zurückspulen (staende-tafel.js). ---
+  // Kennt der Runner die Stände nicht, bleibt der Knopf der Schiene weg.
+  const staendeTafel = FP.staende.createStaendeTafel(
+    {
+      knopf: $('schieneAenderungen'),
+      marke: $('staendeMarke'),
+      leer: $('staendeLeer'),
+      dateien: $('staendeDateien'),
+      staendeKopf: $('staendeKopf'),
+      staende: $('staendeListe'),
+      fuss: $('staendeFuss'),
+    },
+    {
+      wege,
+      transport,
+      // unter jeder Nachricht, vor der es einen Stand gibt, steht „Stand 17:31 · Hierher zurück“; der Klick öffnet die Rückfrage in der Tafel
+      beiStaende: (liste) => {
+        if (!aktiv) return;
+        aktiv.chat.view.zeigeStaende(liste, (id) => {
+          leisteUmschalten(true);
+          werkbank.zeige('aenderungen');
+          staendeTafel.oeffneStand(id);
+        });
+      },
+      // zurückgespult: die Nachricht, vor die es zurückging, kommt ins leere Eingabefeld (ändern und neu senden); die Aufgabenliste zieht nach
+      beiZurueck: (r) => {
+        if (r.gespraech && r.nachricht && !eingabe.value.trim()) {
+          eingabe.value = r.nachricht;
+          waechst();
+        }
+        eingabe.focus();
+        planeWerkbank('aufgaben');
+      },
+      beiDateien: (pfade, dateien) => {
+        staendePfade = pfade ? new Set(pfade) : null;
+        aenderungenNachziehen();
+        // der Runner hat die Stände neu genannt (nach einer Änderung oder einem Zurückspulen): offene Dateien und Unterschiede ziehen nach
+        dateiFlaeche.beiAenderung();
+        // im Baum der Tafel „Dateien“ tragen diese Dateien eine Marke, und neu angelegte erscheinen
+        dateienTafel.setzeMarken(dateien);
+        dateienTafel.plane();
+      },
+      // ein Klick auf eine Datei der Tafel öffnet ihren Unterschied rechts als Fläche (statt in der schmalen Leiste)
+      beiDatei: (d) => dateiFlaeche.oeffneDiff({ pfad: d.pfad }),
+      beiWeg: (kennt) => {
+        if (!kennt && werkbank.tafel === 'aenderungen') werkbank.zeige('gespraeche');
+      },
+    }
+  );
+  // --- Tafel „Dateien“ (dateien-tafel.js): der Ordner der Sitzung als Baum. Ein Klick öffnet die Datei rechts als Fläche, „@“ hängt sie an die
+  // Nachricht, die Suche findet Dateien im ganzen Ordner. Listet der Runner den Ordner der Sitzung nicht, bleibt der Knopf der Schiene weg. ---
+  const dateienTafel = FP.dateien.createDateienTafel(
+    {
+      knopf: $('schieneDateien'),
+      ordner: $('dateienOrdner'),
+      suche: $('dateienSuche'),
+      neuKnopf: $('dateienNeu'),
+      baum: $('dateienBaum'),
+      leer: $('dateienLeer'),
+      fuss: $('dateienFuss'),
+    },
+    {
+      wege,
+      gespraech: () => (aktiv ? aktiv.id : null),
+      ordner: () => (aktiv ? ordnerPfad(aktiv) : ''),
+      sichtbar: () => werkbank.tafel === 'dateien',
+      // die Datei, die rechts vorn liegt (Kennungen der Flächen: „datei:<pfad>“, „diff:<pfad>“, „bild:<pfad>“)
+      aktiv: () => {
+        const id = String(flaechen.aktiv || '');
+        const i = id.indexOf(':');
+        return i > 0 ? id.slice(i + 1) : '';
+      },
+      beiDatei: (d) => (d.bild ? dateiFlaeche.oeffneBild({ pfad: d.pfad }) : dateiFlaeche.oeffneDatei({ pfad: d.pfad })),
+      beiErwaehnen: (relativ) => erwaehne(relativ),
+      beiWeg: (kennt) => {
+        if (!kennt && werkbank.tafel === 'dateien') werkbank.zeige('gespraeche');
+      },
+    }
+  );
+  /** Eine Datei aus der Tafel an die Nachricht hängen: `@pfad` an der Schreibmarke, wie die @-Auswahl es einsetzt. */
+  function erwaehne(relativ) {
+    const wert = FP.eingabe.dateiWert(relativ);
+    const start = typeof eingabe.selectionStart === 'number' ? eingabe.selectionStart : eingabe.value.length;
+    const ende = typeof eingabe.selectionEnd === 'number' ? eingabe.selectionEnd : start;
+    const davor = eingabe.value.slice(0, start);
+    const text = `${davor && !/\s$/.test(davor) ? ' ' : ''}${wert} `;
+    eingabe.value = davor + text + eingabe.value.slice(ende);
+    const marke = davor.length + text.length;
+    eingabe.setSelectionRange(marke, marke);
+    eingabe.dispatchEvent(new Event('input', { bubbles: true }));
+    waechst();
+    eingabe.focus();
+  }
+  /** Gebündelt nachziehen: nach Datei-Werkzeugen, am Ende eines Laufs und nach einem Zurückspulen. */
+  let staendeGeplant = false;
+  function planeStaende() {
+    // der Baum der Tafel „Dateien“ zieht mit (auch bei einem Runner ohne Stände: dort nennt niemand sonst neue Dateien)
+    dateienTafel.plane();
+    if (staendeGeplant) return;
+    staendeGeplant = true;
+    setTimeout(() => {
+      staendeGeplant = false;
+      void staendeTafel.neu();
+    }, 250);
+  }
+  // --- Browser-Fläche: der Browser, den der Agent bedient, als Reiter im Bereich der Flächen (browser-flaeche.js). Kennt der Runner sie nicht, bleibt der Knopf weg. ---
+  const browserFlaeche = FP.createBrowserFlaeche(
+    {
+      wurzel: $('browserFlaeche'),
+      knopf: $('browserKnopf'),
+      form: $('browserForm'),
+      ziel: $('browserZiel'),
+      zurueck: $('browserZurueck'),
+      vor: $('browserVor'),
+      neu: $('browserNeu'),
+      beenden: $('browserBeenden'),
+      buehne: $('browserBuehne'),
+      bild: $('browserBild'),
+      hinweis: $('browserHinweis'),
+      lage: $('browserLage'),
+    },
+    {
+      transport,
+      wege,
+      // Dateien und relative Pfade gelten im Ordner der sichtbaren Sitzung
+      gespraech: () => (aktiv ? aktiv.id : null),
+      // offen heißt: sie hat einen Reiter; ob sie vorn liegt, weiß der Bereich
+      beiOffen: (an) => {
+        if (an) flaechen.oeffne({ id: 'browser', titel: 'Browser', hinweis: 'Der Browser, den der Agent bedient', teil: $('flaecheBrowser'), fest: true, beiZu: () => browserFlaeche.zeige(false) });
+        else flaechen.schliesse('browser', { still: true });
+      },
+      sichtbar: () => !document.hidden && flaechen.aktiv === 'browser',
+      verdeckt: () => flaechen.aktiv !== 'browser',
+      nachVorn: () => flaechen.aktiviere('browser'),
+    }
+  );
+  void browserFlaeche.pruefe();
+
+  /** Gebündelt nachziehen: beim Abspielen eines Verlaufs enden viele Werkzeuge auf einmal, gefragt wird danach einmal. */
+  const werkbankGeplant = { aufgaben: false, laeufe: false };
+  function planeWerkbank(was) {
+    if (werkbankGeplant[was]) return;
+    werkbankGeplant[was] = true;
+    setTimeout(() => {
+      werkbankGeplant[was] = false;
+      if (was === 'aufgaben') werkbank.aufgabenNeu();
+      else werkbank.laeufeNeu();
+    }, 200);
+  }
+
+  /** Anpinnen (Leiste): PATCH, dann die Liste nachziehen; angepinnte Sitzungen stehen oben. */
+  async function pinne(id, an) {
+    const r = await aenderung.anpinnen(id, an);
+    const g = gespraeche.find((x) => String(x.id) === String(id));
+    if (g) g.angepinnt = r.angepinnt;
+    zeichneListe();
+    return r;
+  }
 
   // --- Suche über die Sitzungen (Feld oben in der Leiste; Cmd/Strg+K oder / holt den Fokus dorthin) ---
   const suche = FP.createSuche(
@@ -432,10 +699,44 @@
       beiWerkzeug: () => {
         if (aktiv === rec) planeAenderungen();
       },
+      // irgendein Werkzeug der sichtbaren Sitzung ist zu Ende: die Aufgabenliste (todo) oder die Läufe ziehen nach
+      beiWerkzeugEnde: (w) => {
+        if (aktiv !== rec || !w) return;
+        if (w.name === 'todo') planeWerkbank('aufgaben');
+        else if (/^(hintergrund_|unteragent$|job_ende$)/.test(w.name)) planeWerkbank('laeufe');
+        // der Agent hat eben den Browser bedient (nicht beim Abspielen eines alten Verlaufs): die Fläche geht auf und zieht nach
+        else if (w.name === 'browser' && w.live) browserFlaeche.beiWerkzeug(w);
+        // eben eine Datei geschrieben oder bearbeitet (auch ein Unteragent kann das): die Tafel „Änderungen“ zieht nach
+        if (w.live && (w.name === 'write' || w.name === 'edit' || w.name === 'unteragent')) planeStaende();
+        // und der Unterschied der Datei geht rechts auf (nur neben dem Gespräch, und nur, solange der Mensch das nicht weggeklickt hat)
+        if (w.live && w.diff && w.pfad && (w.name === 'write' || w.name === 'edit')) dateiFlaeche.oeffneDiff({ pfad: w.pfad, diff: w.diff, vonSelbst: true });
+      },
+      // im Gespräch angeklickt: eine Datei (auch an einer Zeile) oder die Änderung eines Aufrufs öffnet sich rechts als Fläche
+      beiDatei: (d) => {
+        if (aktiv !== rec || !d) return;
+        const ging = d.art === 'diff' ? dateiFlaeche.oeffneDiff({ pfad: d.pfad, diff: d.diff }) : dateiFlaeche.oeffneDatei({ pfad: d.pfad, zeile: d.zeile });
+        if (!ging) rec.chat.view.addNote('Diese Datei lässt sich nicht öffnen: der Ordner der Sitzung ist nicht bekannt.', 'fehler');
+      },
+      // ein Anhang an einer Nachricht: ein Bild groß, eine Datei mit ihrem Inhalt
+      beiAnhang: (a) => {
+        if (aktiv !== rec || !a || !a.pfad) return;
+        if (a.art === 'bild') dateiFlaeche.oeffneBild({ pfad: a.pfad, name: a.name });
+        else dateiFlaeche.oeffneDatei({ pfad: a.pfad, name: a.name });
+      },
       beiLaufEnde: () => {
         setTimeout(ladeListe, 300);
         planeZeichnen();
+        if (aktiv === rec) {
+          planeWerkbank('laeufe');
+          planeStaende();
+        }
       },
+      // im Verlauf steht ein Zurückspulen (auch von einem anderen Fenster aus): Dateien und Stände neu lesen
+      beiZurueck: (z) => {
+        if (aktiv === rec && z && z.live) planeStaende();
+      },
+      // eine Entscheidung ist beim Runner angekommen: ein genehmigter Plan ändert dort den Modus der Sitzung, die Liste zieht nach
+      beiEntscheidung: () => setTimeout(ladeListe, 300),
       // /abzweigen: die neue Sitzung öffnet sich in der Leiste, diese bleibt wie sie ist
       beiNeueSitzung: (neuId) => {
         ladeListe().then(() => wechsle(neuId));
@@ -513,6 +814,10 @@
     zeigeOrdner(rec);
     ladeOrdner(rec);
     aenderungenNachziehen();
+    werkbank.setzeSitzung(rec.id);
+    staendeTafel.setzeSitzung(rec.id);
+    dateiFlaeche.setzeSitzung(rec.id);
+    dateienTafel.setzeSitzung(rec.id);
     zeichneListe();
     abbauen();
   }
@@ -602,6 +907,22 @@
     }
   });
   ladeRunner();
+  // Die Liste ändert sich in den Einstellungen, also in einem anderen Fenster. Beim Zurückkehren neu lesen: sonst fehlte ein
+  // eben eingetragener lokaler Runner in der Auswahl, bis die Anwendung neu gestartet wurde.
+  let runnerLaedt = false;
+  async function runnerAuffrischen() {
+    if (runnerLaedt || $('runnerWahl').disabled) return;
+    runnerLaedt = true;
+    try {
+      await ladeRunner();
+    } finally {
+      runnerLaedt = false;
+    }
+  }
+  window.addEventListener('focus', runnerAuffrischen);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') runnerAuffrischen();
+  });
 
   // --- Einstellungen: dasselbe Fenster wie der Tray-Eintrag „Einstellungen …“ (Befehl ohne Argumente; Verbindungsdaten bleiben in Rust) ---
   let einstellungenUhr = null;
@@ -736,6 +1057,10 @@
     eingabe.style.height = 'auto';
     eingabe.style.height = `${Math.min(200, eingabe.scrollHeight)}px`;
   }
+  // Befehle bleiben, wie sie getippt sind: kein Gedankenstrich aus „--“, keine gebogenen Anführungszeichen (eingabe.js)
+  eingabe.addEventListener('beforeinput', (e) => {
+    if (FP.eingabe.istSatzzeichenErsatz(e)) e.preventDefault();
+  });
   // @Dateien und /Befehle: Vorschläge aus dem Arbeitsordner der Sitzung und den Befehlen des Runners (eingabe.js)
   const eingabeHilfe = FP.createEingabe(
     { feld: eingabe, liste: menue, ansage: $('ansage') },
@@ -750,11 +1075,24 @@
       beiAenderung: waechst,
     }
   );
-  // Anhänge: Textdateien werden in die Nachricht eingebettet (der Runner nimmt nur Text an), Bilder und Binärdateien abgelehnt (anhaenge.js)
+  // Anhänge: Textdateien werden in die Nachricht eingebettet. Bilder, große und andere Dateien nimmt die Büroklammer nur, wenn der Runner
+  // sagt, dass er sie annimmt (GET /api/anhaenge, anhaenge.js `setzeFaehig`); sonst lehnt die Seite sie wie bisher mit Grund ab.
   const anhaenge = FP.createAnhaenge(
     { leiste: $('anhaenge'), knopf: $('anhangKnopf'), wahl: $('anhangWahl'), zone: $('eingabeForm'), meldung: $('anhangMeldung'), feld: eingabe, dokument: document, fokus: () => eingabe.focus() },
     { beiAenderung: () => {} }
   );
+  let anhaengeGeprueft = false;
+  /** Fragt den Runner einmal, was er an einer Nachricht annimmt; ein Runner ohne den Weg bleibt beim eingebetteten Text. */
+  async function pruefeAnhaenge() {
+    try {
+      anhaenge.setzeFaehig(await wege.anhaenge());
+      anhaengeGeprueft = true;
+    } catch (f) {
+      anhaenge.setzeFaehig(null);
+      anhaengeGeprueft = !!(f && f.art === 'weg_fehlt'); // ein Netzfehler heißt: später noch einmal fragen
+    }
+  }
+  void pruefeAnhaenge();
   async function senden(sofort) {
     const satz = eingabe.value.trim();
     if ((!satz && !anhaenge.anzahl()) || !aktiv) return;
@@ -765,6 +1103,8 @@
     }
     const rec = aktiv;
     const text = anhaenge.text(satz);
+    // Bilder und abgelegte Dateien gehen als eigenes Feld an den Runner (nur wenn er sie annimmt, sonst ist die Liste leer)
+    const fuerRunner = anhaenge.fuerRunner();
     const angehaengt = anhaenge.nimm();
     eingabe.value = '';
     rec.entwurf = '';
@@ -772,7 +1112,7 @@
     anhaenge.leere();
     waechst();
     eingabeHilfe.schliesse();
-    const r = await rec.chat.sende(text, sofort || rec.sendeArt === 'steuern');
+    const r = await rec.chat.sende(text, sofort || rec.sendeArt === 'steuern', fuerRunner);
     if (r && r.ok === false && !r.befehl && aktiv === rec) {
       eingabe.value = satz;
       anhaenge.setze(angehaengt);
@@ -891,6 +1231,14 @@
       leisteUmschalten();
       return;
     }
+    // Plan-Modus an und aus (zurück in den Modus von vorher); nur, wenn der Runner einen Modus je Sitzung kennt
+    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p') {
+      const jetzt = aktivModus();
+      if (!jetzt) return;
+      e.preventDefault();
+      wechsleModus(FP.modus.planUmschalten(jetzt, aktiv && aktiv.modusDavor));
+      return;
+    }
     if (mod && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault();
       naechste(e.key === 'ArrowUp' ? -1 : 1);
@@ -945,6 +1293,11 @@
     window.__TAURI__.event.listen('freigaben-zeigen', () => freigaben.zeige(true));
   }
   window.addEventListener('focus', () => freigaben.lade());
+  // War der Runner beim Laden der Seite noch nicht erreichbar, fragt die Browser-Fläche beim Zurückkehren noch einmal
+  window.addEventListener('focus', () => {
+    if (!browserFlaeche.kennt) void browserFlaeche.pruefe();
+    if (!anhaengeGeprueft) void pruefeAnhaenge();
+  });
 
   // Aktivitätsstrom (alle Sitzungen): markiert, wo gerade gearbeitet wird, und meldet neue Sitzungen
   transport.onStrom((p) => {
@@ -962,7 +1315,7 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)
@@ -1008,6 +1361,7 @@
     if (konfig && konfig.arbeitsbereiche && typeof konfig.arbeitsbereiche === 'object') bereiche = konfig.arbeitsbereiche;
     modelle = (mod && Array.isArray(mod.modelle) && mod.modelle) || (konfig && Array.isArray(konfig.modelle) && konfig.modelle) || [];
     planeZeichnen();
+    werkbank.laeufeNeu(); // zeigt den Knopf „Läufe“ nur, wenn der Runner die Wege kennt
     const gemerkt = merken.lies();
     const root = gespraeche.find((g) => g.art === 'root') || gespraeche[0];
     const ziel = gemerkt && gespraeche.some((g) => String(g.id) === gemerkt) ? gemerkt : root && root.id;

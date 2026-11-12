@@ -39,6 +39,88 @@
     const hunks = paare.map(([a, n]) => ({ alt: null, neu: null, zeilen: FP.diffZeilen(a, n) }));
     return { datei: String(args.path || args.file_path || args.pfad || 'Datei'), hunks };
   }
+  /**
+   * Unified-Patch → Diff mit echten Zeilennummern ({ datei, hunks: [{ alt, neu, zeilen }] }). Der Runner liefert ihn am Ergebnis von `edit`
+   * (`details.patch`: Kopfzeilen `---`/`+++`, Bereiche `@@ -a,b +c,d @@`). Unbekanntes Format: null, dann gilt der Diff aus der Werkzeugeingabe.
+   */
+  function diffAusPatch(patch, datei) {
+    if (typeof patch !== 'string' || !patch.includes('@@')) return null;
+    const hunks = [];
+    let h = null;
+    let restAlt = 0;
+    let restNeu = 0;
+    let name = datei ? String(datei) : '';
+    for (const z of patch.split('\n')) {
+      const kopf = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(z);
+      if (kopf) {
+        restAlt = kopf[2] === undefined ? 1 : Number(kopf[2]);
+        restNeu = kopf[4] === undefined ? 1 : Number(kopf[4]);
+        // ein leerer Bereich nennt die Zeile davor (0 bei einer neuen Datei): gezählt wird ab der nächsten
+        h = { alt: Number(kopf[1]) + (restAlt === 0 ? 1 : 0), neu: Number(kopf[3]) + (restNeu === 0 ? 1 : 0), zeilen: [] };
+        hunks.push(h);
+        continue;
+      }
+      if (!h) {
+        const m = !name && /^\+\+\+ (.+?)(?:\t.*)?$/.exec(z);
+        if (m && m[1] !== '/dev/null') name = m[1].replace(/^b\//, '');
+        continue;
+      }
+      if (z.startsWith('\\')) continue; // „\ No newline at end of file“
+      if (restAlt <= 0 && restNeu <= 0) continue; // nach dem Ende des Bereichs (die letzte Leerzeile des Patches)
+      const v = z === '' ? ' ' : z[0];
+      if (v !== '+' && v !== '-' && v !== ' ') continue;
+      h.zeilen.push([v, z.slice(1)]);
+      if (v !== '+') restAlt -= 1;
+      if (v !== '-') restNeu -= 1;
+    }
+    const mit = hunks.filter((x) => x.zeilen.length);
+    return mit.length ? { datei: name || 'Datei', hunks: mit } : null;
+  }
+
+  /** Meldungen des Laufs in der Sprache der Ansicht; Unbekanntes bleibt, wie es ist. */
+  function hinweisText(t) {
+    let m = /^Tool call blocked: ([\s\S]*)$/.exec(t);
+    if (m) return m[1];
+    m = /^Output truncated(?: to its (beginning|end))?: (\d+) lines, (\d+) bytes dropped$/.exec(t);
+    if (m) return `Ausgabe gekürzt${m[1] === 'beginning' ? ', der Anfang ist behalten' : m[1] === 'end' ? ', das Ende ist behalten' : ''}: ${m[2]} Zeilen, ${m[3]} Bytes weggelassen`;
+    m = /^Full output: (.+)$/.exec(t);
+    if (m) return `Ganze Ausgabe: ${m[1]}`;
+    m = /^Command timed out after (.+) seconds$/.exec(t);
+    if (m) return `Zeitlimit: nach ${m[1]} s abgebrochen`;
+    if (t === 'Command aborted') return 'Befehl abgebrochen';
+    return t;
+  }
+
+  /**
+   * Der Lauf hängt seine Meldungen als letzten Textblock an ein Werkzeugergebnis (`<harness>` mit Zeilen „[stufe] text“): Exit-Code,
+   * Kürzung, Hinweise der Wache, Abweisung. Die Ansicht zeigt sie getrennt von der Ausgabe.
+   * → { text (ohne den Block), hinweise: [{ stufe: 'error'|'warn'|'info', text }], exit (Zahl oder null), abgewiesen }
+   */
+  function ausgabeTeile(text) {
+    const s = typeof text === 'string' ? text : '';
+    const m = /(?:^|\n)<harness>\n([\s\S]*?)\n<\/harness>\s*$/.exec(s);
+    if (!m) return { text: s, hinweise: [], exit: null, abgewiesen: false };
+    const roh = [];
+    for (const z of m[1].split('\n')) {
+      const k = /^\[(error|warn|info)\] ?(.*)$/.exec(z);
+      if (k) roh.push({ stufe: k[1], text: k[2] });
+      else if (roh.length) roh[roh.length - 1].text += `\n${z}`;
+    }
+    let exit = null;
+    let abgewiesen = false;
+    const hinweise = [];
+    for (const h of roh) {
+      const e = /^Command exited with code (-?\d+)$/.exec(h.text);
+      if (e) {
+        exit = Number(e[1]);
+        continue;
+      }
+      if (h.text.startsWith('Tool call blocked: ')) abgewiesen = true;
+      hinweise.push({ stufe: h.stufe, text: hinweisText(h.text) });
+    }
+    return { text: s.slice(0, m.index), hinweise, exit, abgewiesen };
+  }
+
   /** Write-Aufruf → Diff mit lauter hinzugefügten Zeilen (bei langen Dateien nur die ersten `max`, Vorgabe 60). */
   function diffAusWrite(args, max) {
     if (!args || typeof args.content !== 'string') return null;
@@ -59,8 +141,42 @@
     return t > 0 ? t : null;
   }
 
+  /** Uhrzeit „17:31“ (Ortszeit) zu einem Zeitpunkt in Millisekunden; ohne gültige Zeit ''. */
+  function uhrzeit(ms) {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
   /**
-   * opts: modell, onEntscheidung(id, 'erlauben'|'ablehnen', notiz), onUsage(usage), onKontext(tokens|null), onAgent(agent), onHinweis(text, fehler),
+   * Die Zeile zu einem Zurückspulen (Eintrag `fyos.zurueck` des Runners): was mit Dateien und Gespräch geschah.
+   * d: { art: 'stand'|'datei', gespraech, standZeit, dateien: [{ relativ, aktion }] }
+   */
+  function zurueckText(d) {
+    d = d || {};
+    const dateien = Array.isArray(d.dateien) ? d.dateien : [];
+    const her = dateien.filter((x) => x && x.aktion === 'wiederhergestellt').length;
+    const weg = dateien.filter((x) => x && x.aktion === 'geloescht').length;
+    const offen = dateien.filter((x) => x && x.aktion === 'nicht_gesichert').length;
+    const teile = [];
+    if (her) teile.push(`${her} ${her === 1 ? 'Datei' : 'Dateien'} wiederhergestellt`);
+    if (weg) teile.push(`${weg} gelöscht`);
+    if (offen) teile.push(`${offen} nicht gesichert und unverändert`);
+    const um = uhrzeit(d.standZeit);
+    if (d.art === 'datei') {
+      const erste = dateien.find((x) => x && (x.aktion === 'wiederhergestellt' || x.aktion === 'geloescht'));
+      const name = erste && typeof erste.relativ === 'string' ? erste.relativ : '';
+      return `${name ? `${kurz(name, 80)} zurückgenommen` : 'Datei zurückgenommen'}${erste && erste.aktion === 'geloescht' ? ' (gelöscht)' : ''} · das Gespräch ist unverändert`;
+    }
+    if (d.gespraech === true) return [`Zurückgesetzt auf den Stand${um ? ` von ${um}` : ''}`, ...teile, 'das Gespräch geht hier weiter'].join(' · ');
+    return [`Dateien auf den Stand${um ? ` von ${um}` : ''} zurückgesetzt`, ...(teile.length ? teile : ['nichts zu ändern']), 'das Gespräch ist unverändert'].join(' · ');
+  }
+
+  /** Entscheidung des Runners (erteilt, abgelehnt, geaendert) in der Sprache der Ansicht. */
+  const entscheidungsWert = (e) => (e === 'erteilt' ? 'erlauben' : e === 'geaendert' ? 'aendern' : 'ablehnen');
+
+  /**
+   * opts: modell, onEntscheidung(id, 'erlauben'|'ablehnen'|'aendern', notiz, { sitzung }), onUsage(usage), onKontext(tokens|null), onAgent(agent), onHinweis(text, fehler),
    *       befehlFuer(freigabeId) → Befehl oder '' (aus GET /api/freigaben), vorMensch(text) (entfernt eine eingereihte Blase)
    */
   function createRunnerAdapter(view, opts) {
@@ -69,8 +185,10 @@
     const werkzeuge = new Map(); // id → { name, args, beendet }
     const entscheidungen = new Map(); // Freigabe-Id → { wert, notiz } aus Entscheidungs-Einträgen
     const aufrufe = []; // beendete Datei-Werkzeuge der Sitzung (siehe merkeAufruf)
+    const aufrufeVor = new Map(); // Kennung einer Nachricht des Menschen → Zahl der Datei-Werkzeuge davor (für das Zurückspulen)
     let denkt = false;
     let laeuft = false;
+    let abspielen = 0; // > 0, solange ein Verlauf abgespielt wird (replay, snapshot): was dann endet, ist nicht eben geschehen
     let live = { texte: {}, denken: {} }; // schon gezeigter Text der laufenden Nachricht je Blockindex
     let argsVon = {}; // toolCall-Blöcke der laufenden Nachricht: id → arguments
 
@@ -99,6 +217,10 @@
     const hinweis = (text, fehler) => {
       if (opts.onHinweis) opts.onHinweis(text, !!fehler);
       else view.addNote(text, fehler ? 'fehler' : '');
+    };
+    /** Wartezeile der Ansicht (nur live, nie beim Abspielen des Verlaufs): worauf der Agent wartet und seit wann. */
+    const wartenAn = (text) => {
+      if (typeof view.warte === 'function') view.warte(text || 'Wartet auf das Modell');
     };
 
     /** Beendete Datei-Werkzeuge (read, write, edit, multiedit, str_replace) in der Reihenfolge ihres Endes: Quelle des Änderungen-Panels (aenderungen.js). */
@@ -129,7 +251,11 @@
       view.startTool({ id, name, args: args || {} });
       return true;
     }
-    function werkzeugEnde(id, name, status, output, ts) {
+    /**
+     * `mehr`: was der Runner am Ergebnis mitliefert: `details` (bei `edit` der Patch mit echten Zeilennummern) und `durationMs` (gemessene
+     * Dauer des Aufrufs). Fehlt es (älterer Runner, Snapshot), gelten der Diff aus der Eingabe und die Zeit zwischen den Zeitstempeln.
+     */
+    function werkzeugEnde(id, name, status, output, ts, mehr) {
       let w = werkzeuge.get(id);
       if (!w) {
         werkzeugStart(id, name, {});
@@ -137,13 +263,32 @@
       }
       if (!w || w.beendet) return;
       w.beendet = true;
-      merkeAufruf(id, w, status, output);
+      // Meldungen des Laufs (Exit-Code, Kürzung, Hinweise, Abweisung) stehen getrennt von der Ausgabe
+      const teile = ausgabeTeile(output);
+      merkeAufruf(id, w, status, typeof output === 'string' ? teile.text : output);
+      const n = String(w.name || '').toLowerCase();
+      const pfad = w.args && (w.args.path || w.args.file_path || w.args.pfad);
       let diff;
       if (status !== 'fehler') {
-        const n = String(w.name || '').toLowerCase();
-        diff = n === 'edit' || n === 'multiedit' || n === 'str_replace' ? diffAusEdit(w.args) : n === 'write' ? diffAusWrite(w.args) : undefined;
+        const patch = mehr && mehr.details && typeof mehr.details.patch === 'string' ? mehr.details.patch : null;
+        if (n === 'edit' || n === 'multiedit' || n === 'str_replace') diff = (patch && diffAusPatch(patch, pfad)) || diffAusEdit(w.args);
+        else if (n === 'write') diff = (patch && diffAusPatch(patch, pfad)) || diffAusWrite(w.args);
       }
-      view.endTool(id, { status, output, diff: diff || undefined, dauerMs: w.ts && ts ? Math.max(0, ts - w.ts) : undefined });
+      // jedes beendete Werkzeug mit Name und Zustand: Aufgabenliste und Läufe der Seitenleiste ziehen danach nach (werkbank.js).
+      // `live`: eben geschehen, nicht aus einem abgespielten Verlauf (dann öffnet sich etwa die Browser-Fläche nicht von selbst).
+      // `pfad` und `diff`: bei einem Datei-Werkzeug die Datei und, wenn es sie geändert hat, die Änderung (Fläche „Diff und Datei“).
+      if (opts.onWerkzeugEnde) opts.onWerkzeugEnde({ id, name: n, status, live: abspielen === 0, ...(typeof pfad === 'string' && pfad ? { pfad } : {}), ...(diff ? { diff } : {}) });
+      const gemessen = mehr && typeof mehr.durationMs === 'number' && Number.isFinite(mehr.durationMs) && mehr.durationMs >= 0 ? mehr.durationMs : null;
+      view.endTool(id, {
+        status,
+        output: typeof output === 'string' ? teile.text : output,
+        diff: diff || undefined,
+        dauerMs: gemessen != null ? gemessen : w.ts && ts ? Math.max(0, ts - w.ts) : undefined,
+        hinweise: teile.hinweise,
+        abgewiesen: teile.abgewiesen,
+        // Exit-Code eines Befehls: der Lauf nennt ihn nur, wenn er nicht 0 ist
+        ...(n === 'bash' ? { exit: teile.exit != null ? teile.exit : status === 'fertig' ? 0 : null } : {}),
+      });
     }
 
     function eintrag(e) {
@@ -164,30 +309,80 @@
       } else if (kind === 'fyos.mensch') {
         zugZu();
         const t = String(d.text || '').trim();
+        // Was der Runner dem Agenten selbst schreibt (Antwort auf einen Plan oder eine Freigabe), ist keine Nachricht des
+        // Menschen: eine Marke zwischen den Zügen mit seiner kurzen Zeile (sonst dem ersten Satz); die Entscheidung steht an der Karte.
+        if (d.von === 'runner') {
+          const satz = String(d.kurz || '').trim() || (/^[\s\S]*?[.!?](?=\s|$)/.exec(t) || [t])[0];
+          if (satz) view.addMarker({ kind: 'runner', text: kurz(satz, 120) });
+          return;
+        }
         if (opts.vorMensch) opts.vorMensch(t);
-        if (t) view.addUserMessage({ text: t });
+        // `kenn`: die Kennung des Eintrags; daran hängen Stand und Zurückspulen (Paket A5, dritter Teil)
+        if (e.id !== undefined) aufrufeVor.set(String(e.id), aufrufe.length);
+        // Anhänge der Nachricht (Paket A7): Bilder mit der kleinen Vorschau des Runners, Dateien mit Namen; eine Nachricht kann nur aus Anhängen bestehen
+        const anhaenge = FP.wege && FP.wege.nachrichtAnhaenge ? FP.wege.nachrichtAnhaenge(d.anhaenge) : [];
+        if (t || anhaenge.length) view.addUserMessage({ text: t, kenn: e.id, ...(anhaenge.length ? { anhaenge } : {}) });
+      } else if (kind === 'fyos.zurueck') {
+        // Der Mensch hat zurückgespult: was ab `ab` kam, zählt nicht mehr und steht blass da; darunter, was geschah
+        zugZu();
+        // Sind Dateien und Gespräch gemeinsam zurück, gelten auch die Datei-Werkzeuge ab dort nicht mehr (Panel „Änderungen der Sitzung“)
+        const abHier = d.gespraech === true && Array.isArray(d.dateien) && d.dateien.length ? aufrufeVor.get(String(d.ab)) : undefined;
+        if (abHier !== undefined && abHier < aufrufe.length) {
+          aufrufe.length = abHier;
+          if (opts.onWerkzeug) opts.onWerkzeug(null);
+        }
+        if (typeof view.addZurueck === 'function') view.addZurueck({ ab: d.gespraech === true ? d.ab : undefined, text: zurueckText(d) });
+        else view.addNote(zurueckText(d));
+        if (opts.onZurueck) opts.onZurueck({ gespraech: d.gespraech === true, live: abspielen === 0 });
       } else if (kind === 'fyos.freigabe') {
         sicherZug();
         const id = String(d.id);
-        const bef = opts.befehlFuer ? opts.befehlFuer(id) : '';
-        const ziel = bef || d.werkzeug || '';
-        const p = view.askApproval({ id, aktion: d.aktion, ziel: kurz(ziel, 160), risiko: d.risiko, kontext: d.kontext, werkzeug: d.werkzeug });
+        // Der Befehl einer Rückfrage steht am Eintrag selbst, sonst kennt ihn die Liste der Freigaben
+        const bef = (typeof d.befehl === 'string' && d.befehl) || (opts.befehlFuer ? opts.befehlFuer(id) : '') || '';
+        const istPlan = d.art === 'plan';
+        const p = view.askApproval({
+          id,
+          aktion: d.aktion,
+          // Ein Befehl steht ganz in der Karte: gekürzt wird nichts, was der Mensch erlauben soll. Ohne Befehl nennt `ziel` das Werkzeug.
+          ...(bef ? { befehl: String(bef) } : { ziel: kurz(d.werkzeug || '', 160) }),
+          risiko: d.risiko,
+          kontext: d.kontext,
+          werkzeug: d.werkzeug,
+          // Plan des Agenten (Modus „planen“) und Rückfrage, die für die Sitzung gelten kann
+          ...(istPlan ? { art: 'plan', plan: typeof d.plan === 'string' ? d.plan : '' } : {}),
+          ...(d.sitzungMoeglich === true ? { sitzung: true } : {}),
+        });
         const vorab = entscheidungen.get(id);
-        if (vorab) view.resolveApproval(id, vorab.wert, vorab.notiz);
-        else p.then((w) => opts.onEntscheidung && opts.onEntscheidung(id, w.wert, w.notiz));
+        if (vorab) view.resolveApproval(id, vorab.wert, vorab.notiz, { sitzung: vorab.sitzung });
+        // Nur was in diesem Fenster entschieden wurde, geht zum Runner; eine Entscheidung von dort (Panel, anderes Gerät) nicht noch einmal
+        else p.then((w) => !w.extern && opts.onEntscheidung && opts.onEntscheidung(id, w.wert, w.notiz, { sitzung: !!w.sitzung }));
       } else if (kind === 'fyos.freigabe-entscheidung') {
-        const wert = d.entscheidung === 'erteilt' ? 'erlauben' : 'ablehnen';
-        entscheidungen.set(String(d.id), { wert, notiz: d.notiz || '' });
-        view.resolveApproval(String(d.id), wert, d.notiz || '');
+        const wert = entscheidungsWert(d.entscheidung);
+        entscheidungen.set(String(d.id), { wert, notiz: d.notiz || '', sitzung: d.sitzung === true });
+        view.resolveApproval(String(d.id), wert, d.notiz || '', { sitzung: d.sitzung === true });
       } else if (kind === 'fyos.befehl') {
         // Ergebnis eines Befehls des Runners (/modell, /sitzung …): nur Anzeige, das Modell sieht es nicht
         zugZu();
         const t = String(d.text || '').trim();
         view.addNote(`/${d.name || ''}${t ? `: ${t}` : ''}`, d.ok === false ? 'befehl fehler' : 'befehl');
       } else if (kind === 'fyos.eingang') {
-        view.addNote(`Eingang (${d.quelle || 'hub'}${d.von ? ` von ${d.von}` : ''}): ${kurz(d.text, 200)}`);
+        if (d.quelle === 'job') {
+          // Das Ende eines Befehls im Hintergrund steht als Marke zwischen den Zügen: die Meldung und ihre Zahlen (Code, Dauer), ohne den
+          // Pfad des Protokolls und ohne die Ausgabe (beides zeigt die Tafel „Läufe“)
+          zugZu();
+          const zeilen = String(d.text || '').split('\n');
+          const zahlen = String(zeilen[1] || '').replace(/,?\s*Log\s+\S.*$/, '').replace(/\.\s*$/, '');
+          view.addMarker({ kind: 'job', text: kurz([zeilen[0], zahlen].filter(Boolean).join(' '), 240) });
+          if (opts.onWerkzeugEnde) opts.onWerkzeugEnde({ id: null, name: 'job_ende', status: 'fertig' });
+        } else view.addNote(`Eingang (${d.quelle || 'hub'}${d.von ? ` von ${d.von}` : ''}): ${kurz(d.text, 200)}`);
       } else if (kind === 'fyos.lauf.auftrag') {
         view.addNote(`Lauf ${d.lauf || ''}: ${d.titel || ''}`.trim());
+      } else if (kind === 'fyos.hinweis') {
+        // Der Runner hat selbst eingegriffen (Schleifenwache: derselbe Aufruf immer wieder, Zug angehalten): eine Marke zwischen
+        // den Zügen mit seinem Satz. Nur Anzeige, das Modell sieht sie nicht.
+        zugZu();
+        const t = String(d.text || '').trim();
+        if (t) view.addMarker({ kind: 'halt', text: kurz(t, 320) });
       }
     }
 
@@ -232,7 +427,7 @@
         });
         // live bleibt: ein späterer Abgleich weiß, was schon gezeigt ist; neuesLive() setzt es zurück
       } else if (m.role === 'toolResult') {
-        werkzeugEnde(m.toolCallId, m.toolName, m.isError ? 'fehler' : 'fertig', inhaltText(m.content), m.timestamp);
+        werkzeugEnde(m.toolCallId, m.toolName, m.isError ? 'fehler' : 'fertig', inhaltText(m.content), m.timestamp, { details: m.details, durationMs: m.durationMs });
       }
     }
 
@@ -242,6 +437,8 @@
         case 'turn_start':
         case 'run_start':
           sicherZug();
+          // ab hier wartet der Agent auf das Modell, bis Inhalt kommt (der nimmt die Zeile von selbst weg)
+          wartenAn();
           break;
         case 'message_start':
           if (ev.message && ev.message.role === 'assistant') {
@@ -303,7 +500,7 @@
           const m = ev.entry && ev.entry.model && ev.entry.model[0];
           const fehler = !!(ev.result && ev.result.isError) || !!(m && m.isError);
           const out = m ? inhaltText(m.content) : typeof ev.result === 'string' ? ev.result : ev.result && ev.result.content ? inhaltText(ev.result.content) : undefined;
-          werkzeugEnde(id, ev.toolName, fehler ? 'fehler' : 'fertig', out);
+          werkzeugEnde(id, ev.toolName, fehler ? 'fehler' : 'fertig', out, undefined, m ? { details: m.details, durationMs: m.durationMs } : { details: ev.result && ev.result.details });
           if (ev.entry && ev.entry.id !== undefined) bekannt.add(ev.entry.id);
           break;
         }
@@ -342,6 +539,8 @@
           break;
         case 'auto_retry_start':
           hinweis(`Das Modell antwortet nicht, neuer Versuch ${ev.attempt || ''}`.trim(), false);
+          // die Zeit zählt für den neuen Versuch von vorn
+          wartenAn(`Wartet auf das Modell${ev.attempt ? `, Versuch ${ev.attempt}` : ''}`);
           break;
         case 'task_failed':
           hinweis(`Aufgabe fehlgeschlagen: ${ev.message || ev.kind || ''}`.trim(), true);
@@ -377,14 +576,27 @@
         }
       }
       if (!aktiv && laeuft) zugZu();
+      // Läuft der Zug noch, ohne dass gerade ein Werkzeug oder eine Antwort zu sehen ist (ein Aufruf wartet auf den Menschen),
+      // bleibt die Ansicht im Zug: „Stopp“ und „Einreihen“ gelten weiter.
+      else if (aktiv) sicherZug();
+      // Eine Modellanfrage ist unterwegs und hat noch nichts geliefert: die Wartezeile gilt auch nach dem Neuverbinden
+      if (snap.generation && !msg) wartenAn();
       if (snap.usage && opts.onUsage) opts.onUsage(snap.usage);
       if (snap.agent && opts.onAgent) opts.onAgent(snap.agent);
     }
 
     /** Fertigen Verlauf (Einträge) anhängen: Nutzer, Antworten mit Denken/Text/Werkzeugen, Marker, Freigaben. Bekanntes wird übersprungen. */
     function replay(entries, mitteImLauf) {
+      abspielen += 1;
+      try {
+        verlaufAnhaengen(entries, mitteImLauf);
+      } finally {
+        abspielen -= 1;
+      }
+    }
+    function verlaufAnhaengen(entries, mitteImLauf) {
       // Entscheidungen vorab einsammeln: Freigaben, über die schon entschieden ist, erscheinen gleich entschieden
-      for (const e of entries || []) if (e && e.kind === 'fyos.freigabe-entscheidung' && e.data) entscheidungen.set(String(e.data.id), { wert: e.data.entscheidung === 'erteilt' ? 'erlauben' : 'ablehnen', notiz: e.data.notiz || '' });
+      for (const e of entries || []) if (e && e.kind === 'fyos.freigabe-entscheidung' && e.data) entscheidungen.set(String(e.data.id), { wert: entscheidungsWert(e.data.entscheidung), notiz: e.data.notiz || '', sitzung: e.data.sitzung === true });
       for (const e of entries || []) {
         if (!e) continue;
         const kind = String(e.kind || '');
@@ -395,7 +607,9 @@
         if (kind.startsWith('fyos.') || kind === 'pi.reset' || kind === 'pi.compaction') {
           if ((kind === 'pi.reset' || kind === 'pi.compaction') && opts.onKontext) opts.onKontext(null); // die Füllung davor gilt nicht mehr
           const msgs0 = Array.isArray(e.model) ? e.model : e.model ? [e.model] : [];
-          if (kind === 'fyos.mensch' || !msgs0.length || kind.startsWith('fyos.freigabe')) {
+          // Das Ende eines Befehls im Hintergrund bleibt auch nach dem Neuladen als Zeile stehen (live erscheint es ohnehin)
+          const jobEnde = kind === 'fyos.eingang' && e.data && e.data.quelle === 'job';
+          if (kind === 'fyos.mensch' || !msgs0.length || kind.startsWith('fyos.freigabe') || jobEnde) {
             eintrag(e);
             continue;
           }
@@ -412,7 +626,10 @@
           if (m && m.role === 'assistant') neuesLive();
         }
       }
-      if (!mitteImLauf) zugZu();
+      // Wartet noch ein Aufruf auf die Entscheidung des Menschen (Rückfrage des Runners), ist der Zug nicht zu Ende: die Antwort
+      // bleibt offen, bis der Runner meldet, was läuft (snapshot).
+      const wartetNoch = (entries || []).some((e) => e && e.kind === 'fyos.freigabe' && e.data && e.data.wartet === true && !entscheidungen.has(String(e.data.id)));
+      if (!mitteImLauf && !wartetNoch) zugZu();
     }
 
     return { apply, replay, eintrag, snapshot, diffAusEdit, aufrufe: () => aufrufe.slice(), get laeuft() { return laeuft; }, get bekannt() { return bekannt; } };
@@ -422,5 +639,9 @@
   FP.kontextAusNutzung = kontextAusNutzung;
   FP.diffAusEdit = diffAusEdit;
   FP.diffAusWrite = diffAusWrite;
+  FP.diffAusPatch = diffAusPatch;
+  FP.ausgabeTeile = ausgabeTeile;
   FP.editPaare = editPaare;
+  FP.uhrzeit = uhrzeit;
+  FP.zurueckText = zurueckText;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

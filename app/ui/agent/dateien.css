@@ -1,0 +1,43 @@
+/* Tafel „Dateien“ der Seitenleiste (dateien-tafel.js): der Ordner der Sitzung als Baum, Suche nach Dateinamen.
+   Farben: keine Signalfarbe. Auswahl mit --wahl, Geändertes mit --warn, Angelegtes mit --gut. */
+.dt-tafel { display: flex; flex-direction: column; min-height: 0; }
+.dt-tafel[hidden] { display: none; }
+.dt-kopf { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.dt-kopf .wb-titel { margin: 0; }
+.dt-wurzel { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; border: 1px solid var(--linie); border-radius: 999px; font: 11.5px/1.6 var(--mono); color: var(--leise); }
+.dt-neu { flex: none; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border-radius: 7px; border-color: transparent; }
+.dt-neu svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.dt-neu:hover:not(:disabled) { border-color: var(--linie-stark); }
+.dt-neu:disabled { opacity: .4; cursor: default; }
+.dt-suche { flex: none; width: 100%; box-sizing: border-box; margin: 0 0 6px; padding: 5px 9px; border: 1px solid var(--linie); border-radius: 8px; background: var(--code-hg); color: var(--text); font: inherit; font-size: 12.5px; }
+.dt-suche::placeholder { color: var(--leise); opacity: 1; }
+.dt-suche:focus { border-color: var(--linie-stark); }
+.dt-suche:disabled { opacity: .5; }
+.dt-baum { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; margin: 0 -6px; padding: 0 2px 4px; }
+.dt-zeile { display: flex; align-items: center; gap: 5px; min-height: 22px; padding: 1px 6px; border-radius: 6px; font: 12px/1.5 var(--mono); color: var(--text); white-space: nowrap; cursor: pointer; user-select: none; }
+.dt-zeile:hover { background: rgba(255, 255, 255, .04); }
+.dt-zeile.aktiv { background: var(--wahl); }
+.dt-zeile:focus-visible { outline: 2px solid var(--fokus); outline-offset: -2px; }
+.dt-zeile.versteckt .dt-name { color: var(--leise); }
+.dt-pfeil { flex: none; display: inline-flex; width: 11px; height: 11px; color: var(--leise); transition: transform .12s ease; }
+.dt-pfeil.offen { transform: rotate(90deg); }
+.dt-pfeil.leer { visibility: hidden; }
+.dt-pfeil svg, .dt-symbol svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.dt-symbol { flex: none; display: inline-flex; width: 13px; height: 13px; color: var(--leise); }
+.dt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dt-ort { min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; color: var(--leise); direction: rtl; text-align: left; }
+.dt-laedt { font-size: 11px; color: var(--leise); }
+.dt-marke { flex: none; margin-left: auto; font-weight: 700; font-size: 11px; color: var(--warn); }
+.dt-marke.neu { color: var(--gut); }
+.dt-punkt { flex: none; margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+/* „@“ erscheint an der Zeile, auf der der Zeiger oder der Fokus steht; die Marke rückt dann nach links */
+.dt-an { flex: none; display: none; margin-left: auto; padding: 0 6px; border: 1px solid var(--linie); border-radius: 6px; background: none; color: var(--leise); font: 11px/1.5 var(--mono); cursor: pointer; }
+.dt-marke + .dt-an { margin-left: 4px; }
+.dt-zeile:hover .dt-an, .dt-zeile:focus .dt-an, .dt-zeile:focus-within .dt-an { display: inline-block; }
+.dt-an:hover { color: var(--text); border-color: var(--linie-stark); }
+.dt-hinweis { padding: 1px 6px; font-size: 11px; color: var(--leise); white-space: normal; }
+.dt-hinweis.fehler { color: var(--warn); }
+.dt-fuss { flex: none; margin: 8px 0 0; font-size: 11px; }
+@media (prefers-reduced-motion: reduce) {
+  .dt-pfeil { transition: none; }
+}

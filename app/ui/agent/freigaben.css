@@ -15,7 +15,7 @@
 .fp-leer.fehler { color: var(--schlecht); }
 
 .fp-karte { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--linie); border-left: 3px solid var(--warn); border-radius: 10px; background: var(--flaeche2); }
-.fp-karte.high { border-left-color: var(--schlecht); background: rgba(255, 123, 114, .07); }
+.fp-karte.high { border-left-color: var(--schlecht); background: rgba(248, 113, 113, .07); }
 .fp-karte[data-zustand="spaeter"] { border-left-color: var(--leise); opacity: .85; }
 .fp-sitzung { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .fp-sitzung-titel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--leise); }
@@ -28,6 +28,8 @@
 .fp-kontext { font-size: 12.5px; color: var(--leise); overflow-wrap: anywhere; white-space: pre-wrap; }
 .fp-befehl { display: block; padding: 5px 8px; border-radius: 7px; background: var(--code-hg); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .fp-knoepfe { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+/* Plan des Agenten im Panel: als Text, mit eigener Höhe */
+.fp-plan { margin: 0; padding: 6px 8px; border-radius: 7px; background: var(--code-hg); font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
 .fp-ergebnis { font-size: 12.5px; color: var(--leise); }
 
 .fp-banner { position: absolute; top: 0; left: 0; right: 0; z-index: 6; display: block; box-sizing: border-box; width: 100%; padding: 7px 14px; text-align: left; font-size: 13px; font-weight: 600; color: var(--warn); background: var(--flaeche2); border: 0; border-bottom: 1px solid var(--warn); border-radius: 0; cursor: pointer; }
@@ -36,7 +38,7 @@
 .fp-karte.zerst { border-left-color: var(--schlecht); }
 .chip.zerst { color: #fff; background: var(--schlecht); border-color: var(--schlecht); font-weight: 600; }
 .fp-notiz { width: 100%; box-sizing: border-box; resize: vertical; min-height: 40px; max-height: 140px; padding: 6px 8px; font: inherit; font-size: 12.5px; color: inherit; background: var(--flaeche); border: 1px solid var(--linie); border-radius: 7px; }
-.fp-warnung { padding: 6px 8px; border-radius: 7px; font-size: 12.5px; font-weight: 600; color: var(--schlecht); border: 1px solid var(--schlecht); background: rgba(255, 123, 114, .1); }
+.fp-warnung { padding: 6px 8px; border-radius: 7px; font-size: 12.5px; font-weight: 600; color: var(--schlecht); border: 1px solid var(--schlecht); background: rgba(248, 113, 113, .1); }
 
 @media (max-width: 640px) {
   .fp-panel { width: 100%; }

@@ -103,6 +103,13 @@
       if (m[1] !== undefined) {
         const c = el('code', 'inline');
         c.textContent = m[1];
+        // Sieht der Code wie ein Dateipfad aus (auch „pfad:zeile“), lässt er sich anklicken: die Seite öffnet die Datei an der Zeile
+        // (datei-flaeche.js). Hier wird er nur gekennzeichnet und erreichbar gemacht.
+        if (FP.dateiFlaeche && FP.dateiFlaeche.siehtWiePfadAus(m[1])) {
+          c.classList.add('pfad');
+          c.setAttribute('role', 'link');
+          c.tabIndex = 0;
+        }
         frag.appendChild(c);
       } else if (m[2] !== undefined) {
         const b = el('strong');

@@ -630,6 +630,8 @@ function arbeitsplatz(opt) {
     if (methode === 'GET' && /^\/api\/gespraech\/\d+$/.test(url)) return antwort(200, { ok: true, agent: { cwd: '/probe/standard' } });
     if (methode === 'GET' && url.startsWith('/api/ordner')) return antwort(404, { fehler: 'unbekannt' });
     if (methode === 'GET' && url === '/api/modelle') return antwort(200, { ok: true, modelle: opt.modelle || [] });
+    // Anhänge an der Nachricht (GET /api/anhaenge): nur mit opt.anhaenge; sonst wie ein Runner, der den Weg nicht kennt
+    if (methode === 'GET' && url === '/api/anhaenge') return opt.anhaenge ? antwort(200, { ok: true, ...opt.anhaenge }) : antwort(404, { ok: false, fehler: 'Unbekannte Route' });
     if (methode === 'GET') return antwort(200, { ok: true, freigaben: [], modelle: [] });
     if (methode === 'POST' && url === '/api/gespraeche') {
       const g = { id: st.naechste++, art: 'mensch', titel: String((k && k.titel) || '').slice(0, 120) || 'Neuer Agent', erstellt: Date.now(), arbeitsbereich: 'standard', archiviert: false, agent: { cwd: '/probe/standard' } };
@@ -676,7 +678,7 @@ function arbeitsplatz(opt) {
             });
           }
           if (b === 'strom_oeffnen') return Promise.resolve();
-          if (b === 'runner_liste') return Promise.resolve({ runner: [] });
+          if (b === 'runner_liste') return Promise.resolve(opt.runnerListe ? opt.runnerListe() : { runner: [] });
           if (b === 'ziel_info') return Promise.resolve({ host: '127.0.0.1', lokal: true, ruhe: false, runner: { id: 'r', name: 'R', art: 'entfernt' }, e2e: false, freigaben_zeigen: false });
           const r = opt.tauri(b, a);
           return r instanceof Error || (r && r.ursache) ? Promise.reject(r) : Promise.resolve(r === undefined ? null : r);
@@ -837,11 +839,13 @@ dom('Seite: Archivieren und Wiederherstellen (PATCH archiviert); die offene Sitz
   }
 });
 
-test('Brücke: PATCH hat genau drei Stellen (umbenennen, archivieren, Modell wechseln) und nur diese Felder (Quelltext-Prüfung)', () => {
-  const quelle = lies('sitzungen.js') + lies('leiste.js') + lies('chat.js');
+test('Brücke: PATCH hat genau fünf Stellen (umbenennen, archivieren, anpinnen, Modus und Modell wechseln) und nur diese Felder (Quelltext-Prüfung)', () => {
+  const quelle = lies('sitzungen.js') + lies('leiste.js') + lies('chat.js') + lies('werkbank.js') + lies('modus.js');
   const patches = quelle.match(/'PATCH'/g) || [];
-  assert.equal(patches.length, 3, 'PATCH steht genau dreimal in der Seite (umbenennen, archivieren, Modell)');
+  assert.equal(patches.length, 5, 'PATCH steht genau fünfmal in der Seite (umbenennen, archivieren, anpinnen, Modus, Modell)');
   assert.ok(/aenderungsKoerper\(\{ titel: p\.titel \}\)/.test(quelle) && /aenderungsKoerper\(\{ archiviert: !!an \}\)/.test(quelle));
+  assert.ok(/aenderungsKoerper\(\{ angepinnt: !!an \}\)/.test(quelle), 'der Körper des Anpinnens trägt nur angepinnt');
+  assert.ok(/transport\.api\('PATCH', weg\(id\), \{ modus: String\(modus\) \}\)/.test(quelle), 'der Körper des Moduswechsels trägt nur modus');
   assert.ok(/transport\.api\('PATCH', weg\(id\), \{ modell: modellId \}\)/.test(quelle), 'der Körper des Modellwechsels trägt nur modell');
   assert.ok(!/'(PUT|DELETE)'/.test(quelle), 'kein PUT oder DELETE in der Seite');
 });
@@ -876,6 +880,43 @@ function freigabenMit(start, opts = {}) {
   const karten = () => [...d.querySelectorAll('.fp-karte')];
   return { w, d, g, fp, zustand, karten };
 }
+
+dom('Karte: Ja, Ändern, Nein ohne zweite Bestätigung; Ändern verlangt eine Notiz', async () => {
+  const f = freigabenMit([fg('k1', 1, { art: 'karte', risiko: 'low', zerstoererisch: false, werkzeug: null })]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  const k = f.karten()[0];
+  assert.equal(k.querySelector('.fp-titel').textContent, 'Entscheidung');
+  assert.equal(k.querySelector('.chip.risiko'), null);
+  assert.deepEqual([...k.querySelectorAll('.fp-knoepfe button')].map((b) => b.textContent), ['Ja', 'Ändern', 'Nein', 'Später']);
+  k.querySelector('.fp-aendern').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(f.zustand.aufrufe.filter((a) => a[0] === 'POST').length, 0, 'ohne Notiz geht nichts hinaus');
+  assert.match(f.g('hi').textContent, /was anders sein soll/);
+  const feld = k.querySelector('.fp-notiz');
+  feld.value = 'Erst am Sonntag';
+  feld.dispatchEvent(new f.w.Event('input'));
+  k.querySelector('.fp-aendern').click();
+  await new Promise((r) => setTimeout(r, 0));
+  const post = f.zustand.aufrufe.filter((a) => a[0] === 'POST');
+  assert.equal(post.length, 1);
+  assert.deepEqual(plain(post[0][2]), { entscheidung: 'geaendert', von: 'mensch', notiz: 'Erst am Sonntag' });
+  assert.match(f.g('hi').textContent, /Änderung übergeben/);
+});
+
+dom('Karte: Ja geht sofort hinaus, eine zerstörerische Freigabe verlangt weiter die zweite Bestätigung', async () => {
+  const f = freigabenMit([fg('k1', 1, { art: 'karte', risiko: 'low' }), fg('f2', 2, { zerstoererisch: true, risiko: 'high' })]);
+  await f.fp.lade();
+  f.fp.zeige(true);
+  f.karten().find((k) => k.dataset.id === 'k1').querySelector('.fp-erlauben').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(plain(f.zustand.aufrufe.filter((a) => a[0] === 'POST')[0][2]), { entscheidung: 'erteilt', von: 'mensch' });
+  const zerst = f.karten().find((k) => k.dataset.id === 'f2');
+  assert.equal(zerst.querySelector('.fp-aendern'), null, 'Ändern gibt es nur bei Karten');
+  zerst.querySelector('.fp-erlauben').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(f.zustand.aufrufe.filter((a) => a[0] === 'POST').length, 1, 'erst die zweite Bestätigung geht hinaus');
+});
 
 dom('Freigaben: Knopf mit der Zahl ALLER offenen Freigaben (alle Sitzungen), Entschiedenes zählt nicht, bei null ist der Knopf weg', async () => {
   const f = freigabenMit([fg('f1', 1), fg('f2', 2), fg('f3', 2, { status: 'erteilt' }), fg('f4', 3, { status: 'abgelehnt' })]);
@@ -1219,14 +1260,17 @@ function einstellungen(antworten) {
   const d = new jsdom.JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
   d.window.eval(fs.readFileSync(path.join(OBERFLAECHE, 'agent-einstellungen.js'), 'utf8'));
   const aufrufe = [];
-  const aufruf = async (name, args) => {
-    aufrufe.push([name, plain(args || {})]);
+  const leiseAufrufe = [];
+  const rufer = (liste) => async (name, args) => {
+    liste.push([name, plain(args || {})]);
     const f = antworten[name];
     return f ? f(args || {}) : null;
   };
-  d.window.FyosAgentEinstellungen.start(aufruf, () => ({}), aufruf);
+  const aufruf = rufer(aufrufe);
+  // `leise` ist in der Anwendung der Aufruf, der eine stehende Fehlermeldung nicht ausblendet (app.js)
+  d.window.FyosAgentEinstellungen.start(aufruf, () => ({}), rufer(leiseAufrufe));
   const g = (id) => d.window.document.getElementById(id);
-  return { d, g, aufrufe, aufruf, E: d.window.FyosAgentEinstellungen, ende: () => d.window.close() };
+  return { d, g, aufrufe, leiseAufrufe, aufruf, E: d.window.FyosAgentEinstellungen, ende: () => d.window.close() };
 }
 
 dom('Einstellungen: unter „Adresse“ steht das Feld „Rückfalladresse (optional)“ mit Hilfetext', () => {
@@ -1307,6 +1351,87 @@ dom('Einstellungen: Ändern füllt die Rückfalladresse ein; Prüfen meldet, ob 
     assert.equal(e.g('a-adresse2').value, '');
   } finally {
     e.ende();
+  }
+});
+
+dom('Einstellungen, lokaler Runner: ungespeicherte Eingaben bleiben beim Auffrischen stehen, auch ohne Fokus', async () => {
+  let status = { programm: '', args: [], stand: 'aus' };
+  const e = einstellungen({
+    runner_liste: () => ({ runner: [] }),
+    lokaler_runner_status: () => status,
+    lokaler_runner_einstellen: (a) => {
+      status = { programm: a.programm, args: a.args, stand: 'gestoppt' };
+      return { runner: [] };
+    },
+  });
+  try {
+    await e.E.laden(e.aufruf, {});
+    assert.equal(e.g('l-programm').value, '');
+    // Der Mensch tippt den Pfad und wechselt ins Argumente-Feld: das Auffrischen (alle 4 s) lässt beide Eingaben stehen.
+    e.g('l-programm').value = '/opt/runner/runner-lokal';
+    e.g('l-args').focus();
+    e.g('l-args').value = '--port {port}';
+    await e.E.laden(e.aufruf, {});
+    assert.equal(e.g('l-programm').value, '/opt/runner/runner-lokal', 'der Pfad darf ohne Fokus nicht zurückspringen');
+    e.g('a-adresse').focus();
+    await e.E.laden(e.aufruf, {});
+    assert.equal(e.g('l-args').value, '--port {port}');
+    // Speichern schickt beide und zeigt danach den gespeicherten Stand.
+    e.g('l-speichern').click();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual(e.aufrufe.find((a) => a[0] === 'lokaler_runner_einstellen')[1], { programm: '/opt/runner/runner-lokal', args: ['--port', '{port}'] });
+    assert.equal(e.g('l-programm').value, '/opt/runner/runner-lokal');
+    // Ein unverändertes Feld folgt weiter dem gespeicherten Stand (Änderung von anderer Stelle).
+    status = { programm: '/anderswo/runner', args: [], stand: 'gestoppt' };
+    await e.E.laden(e.aufruf, {});
+    assert.equal(e.g('l-programm').value, '/anderswo/runner');
+    assert.equal(e.g('l-args').value, '');
+  } finally {
+    e.ende();
+  }
+});
+
+dom('Einstellungen, lokaler Runner: nach fehlgeschlagenem Start wird leise aufgefrischt, die Fehlermeldung bleibt stehen', async () => {
+  let start = null; // null = der Aufruf hat einen Fehler gezeigt
+  const e = einstellungen({
+    runner_liste: () => ({ runner: [] }),
+    lokaler_runner_status: () => ({ programm: '/x/runner', args: [], stand: 'fehler', meldung: { ursache: 'Der lokale Runner startet nicht.' } }),
+    lokaler_runner_starten: () => start,
+  });
+  try {
+    e.g('l-starten').click();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual(e.aufrufe.map((a) => a[0]), ['lokaler_runner_starten'], 'kein lauter Aufruf nach dem Fehler: er blendete die Meldung aus');
+    assert.deepEqual(e.leiseAufrufe.map((a) => a[0]), ['runner_liste', 'lokaler_runner_status']);
+    assert.match(e.g('l-text').textContent, /Start fehlgeschlagen.*lokaler-runner\.log/);
+    // Gelingt der Start, wird wie bisher laut aufgefrischt.
+    start = { stand: 'laeuft' };
+    e.aufrufe.length = 0;
+    e.leiseAufrufe.length = 0;
+    e.g('l-starten').click();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual(e.aufrufe.map((a) => a[0]), ['lokaler_runner_starten', 'runner_liste', 'lokaler_runner_status']);
+    assert.equal(e.leiseAufrufe.length, 0);
+  } finally {
+    e.ende();
+  }
+});
+
+dom('Chat-Fenster: die Runner-Auswahl liest die Liste beim Zurückkehren ins Fenster neu (neuer lokaler Runner erscheint ohne Neustart)', async () => {
+  const fern = { id: 't', name: 'Server', art: 'entfernt', aktiv: true };
+  let liste = { runner: [fern] };
+  const { w, g, schliesse } = arbeitsplatz({ tauri: () => null, runnerListe: () => liste });
+  try {
+    await bis(() => g('runnerWahl').options.length === 1);
+    assert.equal(g('runnerWahl').options[0].textContent, 'Server');
+    // In den Einstellungen (anderes Fenster) kommt der lokale Runner dazu; zurück im Chat-Fenster steht er in der Auswahl.
+    liste = { runner: [fern, { id: 'lokal', name: 'Dieser Rechner', art: 'lokal', aktiv: false }] };
+    w.dispatchEvent(new w.Event('focus'));
+    await bis(() => g('runnerWahl').options.length === 2);
+    assert.equal(g('runnerWahl').options[1].textContent, 'Dieser Rechner (lokal)');
+    assert.equal(g('runnerWahl').value, 't', 'der aktive Runner bleibt gewählt');
+  } finally {
+    schliesse();
   }
 });
 
@@ -2398,7 +2523,8 @@ dom('Dateibaum über den Runner: Wurzel mit dateien=1, Ordner mit berührten Dat
     f.g('aenderungenKnopf').click();
     f.g('aenderungenReiterBaum').click();
     await bis(() => knoten(f).includes('O:docs') && knoten(f).includes('D:y.js'));
-    assert.equal(f.st.ordnerUrls[0], '/api/ordner?pfad=%2Fprobe%2Fstandard&dateien=1');
+    // die Tafel „Dateien“ der Schiene liest denselben Ordner für sich (mit versteckt=1); hier zählen die Anfragen dieses Panels
+    assert.equal(f.st.ordnerUrls.filter((u) => !u.includes('versteckt=1'))[0], '/api/ordner?pfad=%2Fprobe%2Fstandard&dateien=1');
     assert.ok(f.st.ordnerUrls.includes('/api/ordner?pfad=%2Fprobe%2Fstandard%2Fsrc&dateien=1'), 'der Ordner mit der berührten Datei wurde geladen');
     assert.ok(!f.st.ordnerUrls.some((u) => /docs/.test(u)), 'docs lädt erst beim Aufklappen');
     assert.deepEqual(knoten(f), ['O:docs', 'O:src', 'D:x.js', 'D:y.js', 'D:liesmich.txt', 'D:neu.txt']);
@@ -2574,8 +2700,8 @@ function eingabeLogik() {
   new Function('window', 'globalThis', lies('eingabe.js'))(w, w);
   return w.FyosPrototyp.eingabe;
 }
-function anhangLogik() {
-  const w = { FyosPrototyp: {}, TextDecoder };
+function anhangLogik(extra) {
+  const w = { FyosPrototyp: {}, TextDecoder, btoa, ...extra };
   new Function('window', 'globalThis', lies('anhaenge.js'))(w, w);
   return w.FyosPrototyp.anhaenge;
 }
@@ -2662,6 +2788,121 @@ test('Einbetten: Name, Größe, Hinweis; der Zaun ist länger als jede Rückstri
   assert.match(zwei, /Datei: a b \(2,0 KB\)/, 'Rückstrich und Zeilenumbruch im Namen sind weg');
   assert.equal(A.gesamtPruefen('kurz', [{ name: 'x', groesse: 1, text: 'y' }]), null);
   assert.match(A.gesamtPruefen('x'.repeat(A.GRENZEN.nachricht), [{ name: 'x', groesse: 1, text: 'y' }]), /zu lang/);
+});
+
+// --- Mit einem Runner, der Anhänge annimmt (Paket A7) ---
+const RUNNER_GRENZEN = { anzahl: 8, bildBytes: 12 * 1024 * 1024, dateiBytes: 8 * 1024 * 1024, gesamtBytes: 20 * 1024 * 1024 };
+const B64 = (bytes) => Buffer.from(bytes).toString('base64');
+
+test('Anhang für den Runner: kleiner Text bleibt Text, großer Text und Binär werden Datei, ein Bild geht als Base64; zu groß und unlesbar mit Grund', async () => {
+  const A = anhangLogik();
+  const p = (d) => A.pruefeFuerRunner(d, RUNNER_GRENZEN);
+  assert.deepEqual({ ...(await p(dateiLike('notiz.txt', 'Hallo Welt\n'))) }, { ok: true, art: 'text', name: 'notiz.txt', groesse: 11, text: 'Hallo Welt\n' });
+  assert.equal((await p(dateiLike('b.txt', new Uint8Array([0xef, 0xbb, 0xbf, 0x41])))).text, 'A', 'Byte-Reihenfolge-Marke fällt weg');
+  assert.equal((await p(dateiLike('logo.svg', '<svg/>', { type: 'image/svg+xml' }))).art, 'text', 'SVG ist Text');
+  const gross = await p(dateiLike('gross.log', 'a'.repeat(A.GRENZEN.datei + 1)));
+  assert.deepEqual([gross.art, gross.text.length, gross.daten], ['datei', A.GRENZEN.datei + 1, undefined], 'über 100 KB: als Datei mit Text');
+  const bin = await p(dateiLike('a.bin', new Uint8Array([1, 2, 0, 3])));
+  assert.deepEqual({ ...bin }, { ok: true, art: 'datei', name: 'a.bin', groesse: 4, daten: B64([1, 2, 0, 3]) });
+  const latin = await p(dateiLike('alt.txt', new Uint8Array([0x63, 0x61, 0x66, 0xe9])));
+  assert.deepEqual([latin.art, latin.daten, latin.text], ['datei', B64([0x63, 0x61, 0x66, 0xe9]), undefined], 'kein UTF-8: als Bytes');
+  // Bilder: am Typ oder an der Endung erkannt; kleine gehen unverändert
+  const png = await p(dateiLike('foto.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { type: 'image/png' }));
+  assert.deepEqual({ ...png }, { ok: true, art: 'bild', name: 'foto.png', groesse: 4, typ: 'image/png', daten: B64([0x89, 0x50, 0x4e, 0x47]) });
+  assert.equal((await p(dateiLike('x.JPG', 'x'))).typ, 'image/jpeg', 'ohne Typ gilt die Endung');
+  assert.equal((await p(dateiLike('x.webp', 'x', { type: 'application/octet-stream' }))).typ, 'image/webp');
+  // viele Bytes: Base64 stückweise, ohne den Stapel zu sprengen
+  const viele = new Uint8Array(200000).map((_, i) => i % 251);
+  assert.equal((await p(dateiLike('viele.png', viele, { type: 'image/png' }))).daten, B64(viele));
+  // ohne Zeichenfläche: ein großes PNG geht unverändert bis zur Grenze des Runners, darüber nicht; HEIC gar nicht
+  assert.equal((await p(dateiLike('gross.png', 'x', { type: 'image/png', size: 4 * 1024 * 1024 }))).art, 'bild');
+  assert.equal((await p(dateiLike('riesig.png', 'x', { type: 'image/png', size: 13 * 1024 * 1024 }))).grund, 'Zu groß (13,0 MB, höchstens 12,0 MB).');
+  assert.match((await p(dateiLike('foto.heic', 'x', { type: 'image/heic' }))).grund, /Dieses Bildformat kann die Seite nicht umwandeln/);
+  assert.match((await p(dateiLike('scan.tiff', 'x'))).grund, /nicht umwandeln/);
+  assert.equal((await p(dateiLike('film.mov', 'x', { size: 9 * 1024 * 1024 }))).grund, 'Zu groß (9,0 MB, höchstens 8,0 MB).');
+  assert.equal((await p(dateiLike('kaputt.txt', 'x', { arrayBuffer: async () => { throw new Error('weg'); } }))).grund, 'Die Datei ist nicht lesbar.');
+  assert.equal((await p({ name: 'ohne.txt' })).grund, 'Die Datei ist nicht lesbar.');
+});
+
+test('Anhang für den Runner: mit Zeichenfläche werden fremde Formate und große Bilder zu JPEG mit höchstens 2048 Punkten Kante', async () => {
+  const gezeichnet = [];
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9]);
+  const flaeche = () => {
+    const f = { width: 0, height: 0, getContext: () => ({ drawImage: (bild, x, y, b, h) => gezeichnet.push([bild.width, bild.height, b, h]) }), toBlob: (cb, typ, guete) => cb({ typ, guete, arrayBuffer: async () => jpeg.buffer.slice(0) }) };
+    return f;
+  };
+  let geschlossen = 0;
+  const masse = { 'foto.heic': [4096, 2048], 'gross.png': [1000, 500], 'hoch.png': [1024, 8192] };
+  const A = anhangLogik({ createImageBitmap: async (datei) => ({ width: masse[datei.name][0], height: masse[datei.name][1], close: () => (geschlossen += 1) }), document: { createElement: (n) => (n === 'canvas' ? flaeche() : null) } });
+  const p = (d) => A.pruefeFuerRunner(d, RUNNER_GRENZEN);
+  const heic = await p(dateiLike('foto.heic', 'x', { type: 'image/heic' }));
+  assert.deepEqual({ ...heic }, { ok: true, art: 'bild', name: 'foto.heic', groesse: 6, typ: 'image/jpeg', daten: B64(jpeg) });
+  // ein großes PNG wird verkleinert, ein kleines nie vergrößert, ein hohes an der langen Kante gemessen
+  assert.equal((await p(dateiLike('gross.png', 'x', { type: 'image/png', size: 4 * 1024 * 1024 }))).typ, 'image/jpeg');
+  assert.equal((await p(dateiLike('hoch.png', 'x', { type: 'image/png', size: 4 * 1024 * 1024 }))).typ, 'image/jpeg');
+  assert.deepEqual(gezeichnet, [[4096, 2048, 2048, 1024], [1000, 500, 1000, 500], [1024, 8192, 256, 2048]]);
+  assert.equal(geschlossen, 3);
+  // ein kleines PNG geht an der Zeichenfläche vorbei (unverändert)
+  assert.equal((await p(dateiLike('klein.png', 'abc', { type: 'image/png' }))).daten, B64(new TextEncoder().encode('abc')));
+  assert.equal(gezeichnet.length, 3);
+  // scheitert das Zeichnen, gilt wieder: bekannte Formate unverändert, fremde nicht
+  const B = anhangLogik({ createImageBitmap: async () => { throw new Error('kein Bild'); }, document: { createElement: flaeche } });
+  assert.equal((await B.pruefeFuerRunner(dateiLike('gross.png', 'x', { type: 'image/png', size: 4 * 1024 * 1024 }), RUNNER_GRENZEN)).typ, 'image/png');
+  assert.match((await B.pruefeFuerRunner(dateiLike('foto.heic', 'x', { type: 'image/heic' }), RUNNER_GRENZEN)).grund, /nicht umwandeln/);
+});
+
+test('Anhang für den Runner: an den Runner gehen nur Bilder und Dateien, je mit genau den Feldern, die er kennt', () => {
+  const A = anhangLogik();
+  const liste = [
+    { id: 1, name: 'kurz.md', groesse: 3, text: 'abc' },
+    { id: 2, art: 'text', name: 'auch.md', groesse: 3, text: 'abc' },
+    { id: 3, art: 'bild', name: 'b.png', groesse: 4, typ: 'image/png', daten: 'AAAA' },
+    { id: 4, art: 'datei', name: 'gross.log', groesse: 9, text: 'viel Text' },
+    { id: 5, art: 'datei', name: 'a.bin', groesse: 4, daten: 'AQIAAw==' },
+  ];
+  assert.deepEqual(A.fuerRunner(liste), [{ art: 'bild', name: 'b.png', daten: 'AAAA' }, { art: 'datei', name: 'gross.log', text: 'viel Text' }, { art: 'datei', name: 'a.bin', daten: 'AQIAAw==' }]);
+  assert.deepEqual(A.fuerRunner([]), []);
+  assert.deepEqual(A.fuerRunner(null), []);
+});
+
+test('Wege: Auskunft über Anhänge mit sicheren Grenzen; Anhänge einer Nachricht nur mit bekannten Feldern und geprüfter Vorschau', async () => {
+  const W = wegeLogik();
+  assert.deepEqual(W.anhaengeBereinigen({ an: true, bilder: true, bilderQuelle: 'modellserver', grenzen: { anzahl: 8, bildBytes: 12582912, dateiBytes: 8388608, gesamtBytes: 20971520, fremd: 1 }, fremd: 2 }), { an: true, bilder: true, bilderQuelle: 'modellserver', grenzen: { anzahl: 8, bildBytes: 12582912, dateiBytes: 8388608, gesamtBytes: 20971520 } });
+  // schiefe Antworten: nur ein echtes true gilt, Zahlen bleiben in festen Schranken, Fehlendes bekommt die Vorgabe
+  assert.deepEqual(W.anhaengeBereinigen({ an: 'ja', bilder: 1, bilderQuelle: 7, grenzen: { anzahl: 9999, bildBytes: -5, dateiBytes: 'viel', gesamtBytes: 1e15 } }), { an: false, bilder: false, bilderQuelle: '', grenzen: { anzahl: 20, bildBytes: 1024, dateiBytes: 8388608, gesamtBytes: 134217728 } });
+  assert.deepEqual(W.anhaengeBereinigen(null), { an: false, bilder: false, bilderQuelle: '', grenzen: { anzahl: 8, bildBytes: 12582912, dateiBytes: 8388608, gesamtBytes: 20971520 } });
+
+  const gut = `data:image/jpeg;base64,${B64([0xff, 0xd8, 0xff])}`;
+  const liste = W.nachrichtAnhaenge([
+    { art: 'bild', name: 'a.png', typ: 'image/png', groesse: 4096.7, breite: 400, hoehe: 300, pfad: '/daten/a.png', vorschau: gut, ansModell: true, fremd: 'x' },
+    { art: 'datei', name: 'b.txt', groesse: '8', vorschau: gut, ansModell: 'ja' },
+    { art: 'bild', name: 'png.png', vorschau: 'data:image/png;base64,iVBORw0KGgo=' },
+    { art: 'bild', name: 'svg', vorschau: 'data:image/svg+xml;base64,PHN2Zy8+' },
+    { art: 'bild', name: 'fern', vorschau: 'https://example.invalid/x.png' },
+    { art: 'bild', name: 'skript', vorschau: 'javascript:alert(1)' },
+    { art: 'bild', name: 'zusatz', vorschau: `${gut}" onerror="alert(1)` },
+    { art: 'bild', name: 'gross', vorschau: `data:image/jpeg;base64,${'A'.repeat(60000)}` },
+    { art: 'bild', name: 'n'.repeat(300), groesse: -3, breite: 'x' },
+    { art: 'ordner', name: 'weg' },
+    { art: 'bild' },
+    { art: 'bild', name: '' },
+    null,
+    'text',
+  ]);
+  assert.deepEqual(liste[0], { art: 'bild', name: 'a.png', groesse: 4096, breite: 400, hoehe: 300, vorschau: gut, ansModell: true, pfad: '/daten/a.png' });
+  assert.deepEqual(liste[1], { art: 'datei', name: 'b.txt', groesse: 0, breite: 0, hoehe: 0, vorschau: '', ansModell: false, pfad: '' }, 'eine Datei hat keine Vorschau; eine Größe als Text ist keine Zahl');
+  assert.deepEqual(liste.map((a) => [a.name.slice(0, 6), a.vorschau.slice(0, 15)]), [['a.png', 'data:image/jpeg'], ['b.txt', ''], ['png.pn', 'data:image/png;'], ['svg', ''], ['fern', ''], ['skript', ''], ['zusatz', ''], ['gross', ''], ['nnnnnn', '']]);
+  assert.deepEqual([liste[8].name.length, liste[8].groesse, liste[8].breite], [200, 0, 0]);
+  assert.equal(W.nachrichtAnhaenge(Array.from({ length: 30 }, (_, i) => ({ art: 'datei', name: `d${i}` }))).length, 20);
+  assert.deepEqual(W.nachrichtAnhaenge(undefined), []);
+  assert.deepEqual(W.nachrichtAnhaenge({ art: 'bild', name: 'kein Feld' }), []);
+
+  // Der Leseweg: nur eine Antwort mit an: true und Grenzen ist eine Auskunft; alles andere heißt „der Runner kennt den Weg nicht“
+  const mit = (antwort) => W.createWege({ api: async (m, pfad) => (assert.deepEqual([m, pfad], ['GET', '/api/anhaenge']), antwort) });
+  assert.equal((await mit({ ok: true, an: true, bilder: false, grenzen: { anzahl: 3 } }).anhaenge()).grenzen.anzahl, 3);
+  for (const fremd of [{ ok: true, freigaben: [] }, { ok: true, an: false, grenzen: {} }, { ok: true, an: true }, null]) {
+    await assert.rejects(mit(fremd).anhaenge(), (f) => f.art === 'weg_fehlt');
+  }
 });
 
 const ORDNER_WURZEL = [
@@ -2997,6 +3238,205 @@ dom('Anhänge: höchstens 5 und 30 000 Zeichen zusammen; ein Fehler beim Senden 
   }
 });
 
+// --- Anhänge mit einem Runner, der sie annimmt (GET /api/anhaenge, Paket A7): Bilder, große Textdateien, andere Dateien ---
+const KANN_ANHAENGE = { an: true, bilder: true, bilderQuelle: 'einstellung', grenzen: { anzahl: 8, bildBytes: 12 * 1024 * 1024, dateiBytes: 8 * 1024 * 1024, gesamtBytes: 20 * 1024 * 1024, bildKante: 1568 } };
+const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+const VORSCHAU_URL = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]).toString('base64')}`;
+
+dom('Anhänge mit Runner: Bild, große Textdatei und Binärdatei gehen als Feld „anhaenge“, kleine Textdateien stehen weiter im Satz', async () => {
+  const f = arbeitsplatz({ anhaenge: KANN_ANHAENGE });
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    await bis(() => st.aufrufe.some((a) => a.url === '/api/anhaenge'));
+    await bis(() => /Datei oder Bild anhängen/.test(g('anhangKnopf').title));
+    wahlDateien(w, d, [
+      dateiMit(w, 'foto.png', PNG_BYTES, { type: 'image/png' }),
+      dateiMit(w, 'gross.txt', 'a'.repeat(110 * 1024)),
+      dateiMit(w, 'roh.bin', new Uint8Array([1, 0, 2])),
+      dateiMit(w, 'kurz.md', '# Titel\n'),
+      dateiMit(w, 'vektor.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>', { type: 'image/svg+xml' }),
+    ]);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 5);
+    assert.equal(g('anhangMeldung').hidden, true, 'nichts wird abgelehnt');
+    const chips = [...g('anhaenge').querySelectorAll('.anhang-chip')];
+    assert.deepEqual(chips.map((c) => [c.querySelector('.anhang-name').textContent, c.dataset.art || 'text']), [['foto.png', 'bild'], ['gross.txt', 'datei'], ['roh.bin', 'datei'], ['kurz.md', 'text'], ['vektor.svg', 'text']]);
+    // das Bild steht als kleine Ansicht im Chip, aus den eigenen Bytes
+    assert.equal(chips[0].querySelector('img.anhang-bild').getAttribute('src'), `data:image/png;base64,${Buffer.from(PNG_BYTES).toString('base64')}`);
+    assert.match(chips[0].querySelector('.anhang-name').title, /als Bild\)$/);
+    assert.match(chips[1].querySelector('.anhang-name').title, /als Datei für den Agenten\)$/);
+    assert.match(chips[3].querySelector('.anhang-name').title, /als Text eingebettet\)$/);
+
+    tippe(w, g('eingabe'), 'Schau dir das an');
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => POSTS(st).length === 1);
+    const k = POSTS(st)[0].koerper;
+    assert.match(k.text, /^Schau dir das an\n\nAngehängte Dateien \(2, als Text eingebettet, Stand beim Anhängen\):/);
+    assert.match(k.text, /Datei: kurz\.md \(8 B\)\n```\n# Titel\n```/);
+    assert.ok(!k.text.includes('aaaaaaaaaa'), 'die große Datei steht nicht im Satz');
+    assert.deepEqual(k.anhaenge.map((a) => [a.art, a.name, Object.keys(a).sort().join(',')]), [['bild', 'foto.png', 'art,daten,name'], ['datei', 'gross.txt', 'art,name,text'], ['datei', 'roh.bin', 'art,daten,name']]);
+    assert.equal(k.anhaenge[0].daten, Buffer.from(PNG_BYTES).toString('base64'));
+    assert.equal(k.anhaenge[1].text.length, 110 * 1024);
+    assert.equal(k.anhaenge[2].daten, Buffer.from([1, 0, 2]).toString('base64'));
+    assert.equal(g('anhaenge').hidden, true);
+
+    // nur ein Bild, kein Satz: geht
+    wahlDateien(w, d, [dateiMit(w, 'allein.jpg', new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]))]);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 1);
+    assert.equal(g('anhaenge').querySelector('img.anhang-bild').getAttribute('src').startsWith('data:image/jpeg;base64,'), true, 'ohne Typ vom Fenster gilt die Endung');
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => POSTS(st).length === 2);
+    assert.deepEqual([POSTS(st)[1].koerper.text, POSTS(st)[1].koerper.anhaenge.map((a) => a.name)], ['', ['allein.jpg']]);
+
+    // Ein Format, das die Seite nicht umwandeln kann (hier: keine Zeichenfläche), wird mit Grund abgelehnt; dieselbe Datei zweimal ist ein Anhang;
+    // die Anzahl begrenzt der Runner (8)
+    const bild = (i) => dateiMit(w, `b${i}.png`, PNG_BYTES, { type: 'image/png' });
+    wahlDateien(w, d, [dateiMit(w, 'foto.heic', 'x', { type: 'image/heic' }), bild(0), bild(0), ...Array.from({ length: 8 }, (_, i) => bild(i + 1))]);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 8 && !g('anhangMeldung').hidden);
+    assert.deepEqual([...g('anhaenge').querySelectorAll('.anhang-name')].map((x) => x.textContent), ['b0.png', 'b1.png', 'b2.png', 'b3.png', 'b4.png', 'b5.png', 'b6.png', 'b7.png']);
+    assert.equal(g('anhangMeldung').textContent, 'Nicht angehängt: foto.heic: Dieses Bildformat kann die Seite nicht umwandeln (PNG, JPEG, GIF oder WebP gehen). b8.png: Höchstens 8 Anhänge je Nachricht.');
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Anhänge mit Runner: sieht das Modell keine Bilder, sagt die Seite es beim Anhängen; ein Text, der nicht mehr in den Satz passt, geht als Datei', async () => {
+  const f = arbeitsplatz({ anhaenge: { ...KANN_ANHAENGE, bilder: false, grenzen: { ...KANN_ANHAENGE.grenzen, anzahl: 3 } } });
+  const { w, d, g, st } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    await bis(() => /Datei oder Bild anhängen/.test(g('anhangKnopf').title));
+    wahlDateien(w, d, [dateiMit(w, 'skizze.png', PNG_BYTES, { type: 'image/png' })]);
+    await bis(() => !g('anhangMeldung').hidden);
+    assert.equal(g('anhangMeldung').textContent, 'skizze.png: Das Modell sieht keine Bilder; der Agent bekommt das Bild als Datei.');
+    assert.equal(g('anhaenge').querySelectorAll('.anhang-chip').length, 1);
+    // zwei Texte zu je 20 000 Zeichen: der erste steht im Satz, der zweite geht als Datei (ohne Runner würde er abgelehnt)
+    wahlDateien(w, d, [dateiMit(w, 'a.txt', 'a'.repeat(20000)), dateiMit(w, 'b.txt', 'b'.repeat(20000)), dateiMit(w, 'c.txt', 'c')]);
+    await bis(() => g('anhaenge').querySelectorAll('.anhang-chip').length === 3);
+    assert.deepEqual([...g('anhaenge').querySelectorAll('.anhang-chip')].map((c) => c.dataset.art || 'text'), ['bild', 'text', 'datei']);
+    assert.match(g('anhangMeldung').textContent, /c\.txt: Höchstens 3 Anhänge je Nachricht\./);
+    tippe(w, g('eingabe'), 'Lies');
+    taste(w, g('eingabe'), 'Enter');
+    await bis(() => POSTS(st).length === 1);
+    assert.deepEqual(POSTS(st)[0].koerper.anhaenge.map((a) => [a.art, a.name]), [['bild', 'skizze.png'], ['datei', 'b.txt']]);
+    assert.ok(POSTS(st)[0].koerper.text.includes('a'.repeat(200)) && !POSTS(st)[0].koerper.text.includes('bbbb'));
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Anhänge im Verlauf: ein Bild steht mit der Vorschau des Runners an der Nachricht, eine Datei mit Namen; nur geprüfte Bildadressen werden gezeigt', async () => {
+  const eintraege = [
+    { id: 11, kind: 'fyos.mensch', data: { text: 'Was siehst du?', von: 'mensch', zeit: 1, anhaenge: [
+      { art: 'bild', name: 'skizze.png', typ: 'image/png', groesse: 4096, breite: 400, hoehe: 300, pfad: '/daten/anhaenge/g-1/x-1-skizze.png', vorschau: VORSCHAU_URL, ansModell: true },
+      { art: 'datei', name: '<b>notiz</b>.txt', typ: 'text', groesse: 8, pfad: '/daten/anhaenge/g-1/x-2-notiz.txt' },
+    ] }, model: [{ role: 'user', content: [{ type: 'text', text: 'Was siehst du?' }, { type: 'image', mimeType: 'image/png', data: '', bytes: 4096 }] }] },
+    { id: 12, kind: 'pi.assistant', model: [{ role: 'assistant', content: [{ type: 'text', text: 'Eine Skizze.' }], stopReason: 'stop' }] },
+    // nur Anhänge, kein Satz; und Vorschauen, die keine geprüfte Bildadresse sind
+    { id: 13, kind: 'fyos.mensch', data: { text: '', von: 'mensch', zeit: 2, anhaenge: [
+      { art: 'bild', name: 'böse.svg', vorschau: 'data:image/svg+xml;base64,PHN2Zy8+' },
+      { art: 'bild', name: 'fern.png', vorschau: 'https://example.invalid/x.png' },
+      { art: 'bild', name: 'skript.png', vorschau: 'javascript:alert(1)' },
+      { art: 'unbekannt', name: 'weg' },
+    ] }, model: [{ role: 'user', content: 'Angehängtes Bild …' }] },
+    // ein Bild, das das Modell nicht gesehen hat (es hat keinen Bildteil): das steht sichtbar an der Kachel
+    { id: 14, kind: 'fyos.mensch', data: { text: 'Und das?', von: 'mensch', zeit: 3, anhaenge: [{ art: 'bild', name: 'blind.png', groesse: 2048, breite: 10, hoehe: 10, vorschau: VORSCHAU_URL, ansModell: false }] }, model: [{ role: 'user', content: 'Und das?\n\nAngehängtes Bild …' }] },
+  ];
+  const f = arbeitsplatz({ anhaenge: KANN_ANHAENGE, ansicht: (id) => (id === 1 ? { entries: eintraege } : {}) });
+  const { d, g } = f;
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    await bis(() => d.querySelectorAll('.pane.aktiv .mensch').length === 3);
+    const [erste, zweite, dritte] = [...d.querySelectorAll('.pane.aktiv .mensch')];
+    assert.deepEqual([dritte.querySelector('.anhang-kachel').classList.contains('ungesehen'), dritte.querySelector('.anhang-kachel-hinweis').textContent], [true, 'nur als Datei, das Modell sieht keine Bilder']);
+    assert.match(dritte.querySelector('.anhang-kachel').title, /^blind\.png · 10 × 10 · das Modell sieht es nicht, der Agent hat es als Datei$/);
+    assert.equal(erste.querySelector('.anhang-kachel-hinweis') || zweite.querySelector('.anhang-kachel-hinweis'), null, 'kein Hinweis an gesehenen Bildern, an Dateien und an Kacheln ohne Angaben');
+    assert.equal(erste.querySelector('.blase').textContent, 'Was siehst du?');
+    const kacheln = [...erste.querySelectorAll('.anhang-kachel')];
+    assert.deepEqual(kacheln.map((k) => [k.classList.contains('bild'), k.querySelector('.anhang-kachel-name').textContent]), [[true, 'skizze.png'], [false, '<b>notiz</b>.txt']]);
+    assert.equal(kacheln[0].querySelector('img.anhang-vorschau').getAttribute('src'), VORSCHAU_URL);
+    assert.equal(kacheln[0].querySelector('img').alt, 'Bild skizze.png');
+    assert.match(kacheln[0].title, /^skizze\.png · 400 × 300\n\/daten\/anhaenge\/g-1\/x-1-skizze\.png$/);
+    assert.equal(erste.querySelector('.anhang-kachel b'), null, 'ein Name wird nie zu HTML');
+    // die Nachricht ohne Satz: keine leere Blase, drei Kacheln ohne Bild
+    assert.equal(zweite.querySelector('.blase'), null);
+    assert.deepEqual([...zweite.querySelectorAll('.anhang-kachel-name')].map((x) => x.textContent), ['böse.svg', 'fern.png', 'skript.png']);
+    assert.equal(zweite.querySelector('img'), null, 'keine Vorschau aus einer ungeprüften Adresse');
+  } finally {
+    f.schliesse();
+  }
+});
+
+// --- Fläche „Diff und Datei“ an der ganzen Seite (Paket B2): Kachel, Karte und Pfad öffnen rechts einen Reiter; das Gespräch rückt zusammen ---
+dom('Flächen: ein Anhang öffnet sich als Bild, eine Karte als Datei an der Zeile und als Unterschied; Reiter schließen; die Flächen gehören zur Sitzung', async () => {
+  const BILD_DATEN = Buffer.from(PNG_BYTES).toString('base64');
+  const gelesen = [];
+  const eintraege = [
+    { id: 11, kind: 'fyos.mensch', data: { text: 'Was siehst du?', von: 'mensch', zeit: 1, anhaenge: [{ art: 'bild', name: 'skizze.png', typ: 'image/png', groesse: 4096, breite: 400, hoehe: 300, pfad: '/daten/anhaenge/g-1/x-1-skizze.png', vorschau: VORSCHAU_URL, ansModell: true }] }, model: [{ role: 'user', content: 'Was siehst du?' }] },
+    { id: 12, kind: 'pi.assistant', model: [{ role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'read', arguments: { path: 'src/werte.js', offset: 2 } }], stopReason: 'toolUse' }] },
+    { id: 13, kind: 'pi.tool-result', model: [{ role: 'toolResult', toolCallId: 'a', toolName: 'read', content: [{ type: 'text', text: 'b' }], isError: false }] },
+    { id: 14, kind: 'pi.assistant', model: [{ role: 'assistant', content: [{ type: 'toolCall', id: 'b', name: 'edit', arguments: { path: 'src/werte.js', edits: [{ oldText: 'b', newText: 'B' }] } }], stopReason: 'toolUse' }] },
+    { id: 15, kind: 'pi.tool-result', model: [{ role: 'toolResult', toolCallId: 'b', toolName: 'edit', content: [{ type: 'text', text: 'ok' }], isError: false, details: { patch: '--- src/werte.js\n+++ src/werte.js\n@@ -2,1 +2,1 @@\n-b\n+B\n' } }] },
+    { id: 16, kind: 'pi.assistant', model: [{ role: 'assistant', content: [{ type: 'text', text: 'Geändert in `src/werte.js:2`.' }], stopReason: 'stop' }] },
+  ];
+  const f = arbeitsplatz({
+    anhaenge: KANN_ANHAENGE,
+    ansicht: (id) => (id === 1 ? { entries: eintraege } : {}),
+    runner: {
+      datei: (sp) => {
+        gelesen.push([sp.get('pfad'), sp.get('gespraech'), sp.get('bild')]);
+        if (sp.get('bild') === '1') return [200, { ok: true, pfad: sp.get('pfad'), typ: 'image/png', bild: BILD_DATEN, breite: 400, hoehe: 300, groesse: 4096, verkleinert: false }];
+        return [200, { ok: true, pfad: sp.get('pfad'), text: 'a\nB\nc\n', groesse: 6, abgeschnitten: false, binaer: false, geaendert: 1 }];
+      },
+    },
+  });
+  const { w, d, g } = f;
+  const vorn = () => [...g('flaechenKoerper').children].find((e) => !e.hidden);
+  const reiter = () => [...g('flaechenReiter').querySelectorAll('.fl-reiter-knopf')].map((b) => [b.textContent, b.getAttribute('aria-selected')]);
+  try {
+    await bis(() => g('titel').textContent === 'Haupt');
+    await bis(() => d.querySelector('.pane.aktiv .anhang-kachel') && d.querySelectorAll('.pane.aktiv .karte').length === 2 && d.querySelector('.pane.aktiv code.inline.pfad'));
+    assert.deepEqual([g('flaechen').hidden, g('app').classList.contains('flaeche-auf')], [true, false]);
+
+    // die Kachel des Bildes: rechts geht ein Reiter auf, das Gespräch rückt zusammen, das Bild kommt vom Runner (mit der Sitzung, als Bild)
+    d.querySelector('.pane.aktiv .anhang-kachel').click();
+    await bis(() => vorn() && vorn().querySelector('img.df-bild'));
+    assert.deepEqual([g('flaechen').hidden, g('app').classList.contains('flaeche-auf'), reiter()], [false, true, [['skizze.png', 'true']]], 'der Reiter trägt den Namen des Anhangs, nicht den der Datei im Datenordner');
+    assert.equal(vorn().querySelector('img.df-bild').getAttribute('src'), `data:image/png;base64,${BILD_DATEN}`);
+    assert.deepEqual(gelesen[0], ['/daten/anhaenge/g-1/x-1-skizze.png', '1', '1']);
+
+    // „Datei öffnen“ an der Lesekarte: relativ zum Ordner der Sitzung, an der gelesenen Zeile
+    d.querySelector('.pane.aktiv .karte[data-art="lesen"] .karte-aktion').click();
+    await bis(() => vorn().querySelector('.df-code tr.ziel'));
+    assert.deepEqual([vorn().querySelector('.df-pfad').textContent, vorn().querySelector('tr.ziel .nr').textContent, vorn().querySelector('tr.ziel .code').textContent], ['src/werte.js', '2', 'B']);
+    assert.deepEqual(gelesen[1], ['/probe/standard/src/werte.js', '1', null]);
+    // derselbe Pfad im Text der Antwort: derselbe Reiter, kein zweites Lesen
+    d.querySelector('.pane.aktiv code.inline.pfad').click();
+    assert.deepEqual([reiter(), gelesen.length], [[['skizze.png', 'false'], ['werte.js', 'true']], 2]);
+
+    // „Groß ansehen“ am Unterschied der Karte: ohne Stände beim Runner die Änderung dieses Aufrufs
+    d.querySelector('.pane.aktiv .karte[data-art="edit"] .diff-auf').click();
+    await bis(() => vorn().dataset.art === 'diff');
+    assert.deepEqual([reiter().map((r) => r[0]), vorn().querySelector('.df-hinweis').textContent, [...vorn().querySelectorAll('.diff-tabelle tr')].map((tr) => tr.querySelector('.code').textContent)], [['skizze.png', 'werte.js', '± werte.js · Aufruf'], 'Die Änderung dieses einen Aufrufs.', ['b', 'B']]);
+
+    // die andere Sitzung hat keine Flächen: der Bereich geht zu; zurück sind alle drei wieder da
+    await w.__arbeitsplatz.wechsle(2);
+    await bis(() => g('titel').textContent === 'Zweite');
+    assert.deepEqual([g('flaechen').hidden, g('app').classList.contains('flaeche-auf'), reiter()], [true, false, []]);
+    await w.__arbeitsplatz.wechsle(1);
+    await bis(() => g('titel').textContent === 'Haupt');
+    assert.deepEqual([g('flaechen').hidden, reiter()], [false, [['skizze.png', 'false'], ['werte.js', 'false'], ['± werte.js · Aufruf', 'true']]]);
+
+    // schließen: ein Reiter über sein Kreuz, alle über „Schließen“; das Gespräch bekommt seinen Platz zurück
+    g('flaechenReiter').querySelector('.fl-reiter-zu').click();
+    assert.deepEqual(reiter().map((r) => r[0]), ['werte.js', '± werte.js · Aufruf']);
+    g('flaechenZu').click();
+    assert.deepEqual([g('flaechen').hidden, g('app').classList.contains('flaeche-auf'), g('flaechenKoerper').children.length], [true, false, 1], 'nur der Teil des Browsers bleibt in der Seite');
+  } finally {
+    f.schliesse();
+  }
+});
+
 const MODELLE = [
   { id: 'rhea', provider: 'probe', name: 'Modell A (rhea)', max: false, contextWindow: 262144 },
   { id: 'rhea-max', provider: 'probe', name: 'Modell A (rhea-max, Vorfahrt)', max: true, contextWindow: 262144 },
@@ -3136,4 +3576,47 @@ test('Eingabe: Quelltext – Namen nur über textContent, neutral formuliert, je
   for (const id of ['anhaenge', 'anhangKnopf', 'anhangWahl', 'anhangMeldung', 'modellMenue', 'modellFehler', 'modusMenue']) assert.ok(html.includes(`id="${id}"`), id);
   // das Aufrufen von Befehlen geht nur durch die Nachricht
   assert.ok(!/\/api\/befehle'[^)]*'POST'/.test(lies('echt.js')), 'Befehle werden nicht an einen eigenen Weg geschickt');
+});
+
+dom('Tafel „Dateien“ an der ganzen Seite: der Knopf der Schiene erscheint mit dem Ordner, ein Klick öffnet die Datei rechts und markiert sie, „@“ hängt sie an die Nachricht', async () => {
+  const f = arbeitsplatz({
+    tauri: () => undefined,
+    ansicht: () => ({ entries: [] }),
+    runner: { ...ordnerRunner(), ...dateiRunner((p) => [200, { ok: true, pfad: p.get('pfad'), groesse: 6, text: 'eins\nzwei\n', abgeschnitten: false, binaer: false, geaendert: 1 }]) },
+  });
+  const { d, g } = f;
+  const zeile = (rel) => [...d.querySelectorAll('#dateienBaum .dt-zeile')].find((k) => k.dataset.rel === rel);
+  try {
+    await bis(() => g('titel').textContent === 'Haupt' && !g('schieneDateien').hidden);
+    assert.equal(g('tafelDateien').hidden, true, 'die Tafel geht nicht von selbst auf');
+    assert.ok(f.st.ordnerUrls.includes('/api/ordner?pfad=%2Fprobe%2Fstandard&dateien=1&versteckt=1'), 'die Tafel bittet um Punkt-Dateien');
+    g('schieneDateien').click();
+    assert.deepEqual([g('tafelDateien').hidden, g('tafelGespraeche').hidden, g('schieneDateien').getAttribute('aria-selected')], [false, true, 'true']);
+    await bis(() => zeile('liesmich.txt'));
+    assert.equal(g('dateienOrdner').textContent, 'standard');
+    assert.deepEqual([...d.querySelectorAll('#dateienBaum .dt-zeile')].map((k) => k.dataset.rel), ['src', 'docs', 'liesmich.txt', 'neu.txt']);
+
+    // Klick auf eine Datei: rechts geht sie als Fläche auf, gelesen über den Runner mit der Sitzung; im Baum ist sie markiert
+    assert.equal(g('flaechen').hidden, true);
+    zeile('liesmich.txt').click();
+    await bis(() => !g('flaechen').hidden && /liesmich\.txt/.test(g('flaechenReiter').textContent));
+    assert.ok(f.st.dateiUrls.some((u) => /pfad=%2Fprobe%2Fstandard%2Fliesmich%2Etxt/.test(u) && /gespraech=1/.test(u)), String(f.st.dateiUrls));
+    await bis(() => zeile('liesmich.txt').classList.contains('aktiv'));
+    assert.equal(zeile('neu.txt').classList.contains('aktiv'), false);
+
+    // „@“: die Datei steht als Erwähnung im Eingabefeld, eine zweite mit Abstand dahinter; geöffnet wird dabei nichts
+    const offen = f.st.dateiUrls.length;
+    zeile('neu.txt').querySelector('.dt-an').click();
+    assert.equal(g('eingabe').value, '@neu.txt ');
+    g('eingabe').value = 'Vergleiche @neu.txt mit';
+    g('eingabe').setSelectionRange(23, 23);
+    zeile('src').click();
+    await bis(() => zeile('src/x.js'));
+    zeile('src/x.js').querySelector('.dt-an').click();
+    assert.equal(g('eingabe').value, 'Vergleiche @neu.txt mit @src/x.js ');
+    assert.equal(d.activeElement, g('eingabe'), 'danach steht die Schreibmarke im Eingabefeld');
+    assert.equal(f.st.dateiUrls.length, offen);
+  } finally {
+    f.schliesse();
+  }
 });

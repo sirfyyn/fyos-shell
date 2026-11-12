@@ -243,7 +243,8 @@
   /**
    * refs: { knopf, zahl, panel, zu, hinweis, reiter, reiterListe, reiterBaum, inhalt }
    * opts: { beiAenderung(anzahl), datei(absPfad, sitzungId) → Promise<{ art: 'text'|'binaer', text, groesse, abgeschnitten, geschwaerzt, geaendert }> (Fehler mit .art),
-   *         ordner(absPfad) → Promise<{ eintraege: [{ name, ordner, groesse }], abgeschnitten }> }
+   *         ordner(absPfad) → Promise<{ eintraege: [{ name, ordner, groesse }], abgeschnitten }>,
+   *         nurDiese() → Set der Pfade (relativ zum Arbeitsordner), die der Runner als geändert nennt, oder null (Runner ohne Stände) }
    */
   function createAenderungen(refs, opts) {
     opts = opts || {};
@@ -260,6 +261,7 @@
       return e;
     };
     let erg = { dateien: [], beruehrt: [] };
+    let genau = null; // Pfade, die der Runner als geändert nennt (opts.nurDiese), oder null: dann gilt die Ableitung aus dem Verlauf
     let sitzung = null;
     let modus = 'liste'; // 'liste' | 'baum' | 'vorschau'
     let vorschauPfad = null;
@@ -337,7 +339,15 @@
         ul.append(li);
       }
       refs.inhalt.append(ul);
-      refs.inhalt.append(el('p', 'ae-fuss', 'Abgeleitet aus den Schreib- und Bearbeitungsschritten dieser Sitzung. Annehmen oder Ablehnen gibt es hier nicht.'));
+      refs.inhalt.append(
+        el(
+          'p',
+          'ae-fuss',
+          genau
+            ? 'Die Unterschiede hier stammen aus den Schritten im Verlauf. Zurücknehmen und die Stände stehen in der Seitenleiste unter „Änderungen“.'
+            : 'Abgeleitet aus den Schreib- und Bearbeitungsschritten dieser Sitzung. Annehmen oder Ablehnen gibt es hier nicht.',
+        ),
+      );
     }
 
     function knotenZeichnen(k, tiefe) {
@@ -732,7 +742,7 @@
     }
 
     function sig() {
-      return JSON.stringify([cwdAbs, erg.beruehrt.map((d) => [d.pfad, d.art, d.plus, d.minus, d.aenderungen, d.gelesen, d.unsicher, d.inhalt == null ? -1 : d.inhalt.length])]);
+      return JSON.stringify([cwdAbs, erg.dateien.map((d) => d.pfad), erg.beruehrt.map((d) => [d.pfad, d.art, d.plus, d.minus, d.aenderungen, d.gelesen, d.unsicher, d.inhalt == null ? -1 : d.inhalt.length])]);
     }
 
     function zeichne(erzwingen) {
@@ -777,6 +787,10 @@
         liveZuruecksetzen();
       }
       erg = sammle(aufrufe, cwd);
+      // Kennt der Runner den wahren Stand (Stände, staende-tafel.js), gilt als geändert nur, was dort noch geändert ist: eine zurückgenommene
+      // Datei verschwindet aus der Liste, statt weiter aus dem Verlauf abgeleitet zu werden. Der Baum der berührten Dateien bleibt.
+      genau = opts.nurDiese ? opts.nurDiese() : null;
+      if (genau) erg = { ...erg, dateien: erg.dateien.filter((d) => genau.has(d.pfad)) };
       const s = sig();
       if (s === sigAlt && !refs.panel.hidden) return false;
       const geaendert = s !== sigAlt;

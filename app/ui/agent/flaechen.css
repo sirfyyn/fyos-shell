@@ -1,0 +1,58 @@
+/* Flächen rechts neben dem Gespräch: Reiter-Bereich (flaechen.js) und die Fläche „Diff und Datei“ (datei-flaeche.js).
+   Baut auf chat.css und browser-flaeche.css auf (gleiche Variablen, `.flaeche` und `.app.flaeche-auf` stehen dort). */
+.fl-kopf { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 8px 10px 0 10px; border-bottom: 1px solid var(--linie); }
+.fl-reiter { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: thin; }
+.fl-reiter-eintrag { flex: none; display: inline-flex; align-items: center; max-width: 220px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--leise); }
+.fl-reiter-eintrag:hover { color: var(--text); }
+/* der gewählte Reiter: heller Grund und kräftige Linie, keine Signalfarbe */
+.fl-reiter-eintrag.aktiv { color: var(--text); background: var(--wahl); border-color: var(--linie-stark); }
+.fl-reiter-knopf { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 4px 6px 10px; border: 0; border-radius: 0; background: none; color: inherit; font-size: 12.5px; cursor: pointer; }
+.fl-reiter-knopf:focus-visible, .fl-reiter-zu:focus-visible { outline: 2px solid var(--fokus); outline-offset: -2px; border-radius: 6px; }
+.fl-reiter-zu { flex: none; width: 20px; height: 20px; margin-right: 4px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--leise); font-size: 14px; line-height: 1; cursor: pointer; }
+.fl-reiter-zu:hover { color: var(--text); background: var(--flaeche2); }
+.fl-zu { flex: none; margin-bottom: 5px; }
+.fl-koerper { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.fl-teil { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.fl-teil[hidden] { display: none; }
+/* der Browser als Teil des Bereichs */
+.bf-wurzel { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.bf-wurzel[hidden] { display: none; }
+
+/* Datei, Unterschied, Bild */
+.df-leiste { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 8px 12px; border-bottom: 1px solid var(--linie); font-size: 12px; color: var(--leise); }
+.df-pfad { flex: 1 1 140px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); color: var(--text); }
+.df-info { flex: none; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.df-knoepfe { flex: none; display: inline-flex; gap: 6px; }
+.df-knopf { padding: 3px 9px; font-size: 12px; }
+.df-hinweis { flex: none; margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--linie); font-size: 12px; line-height: 1.45; color: var(--leise); }
+.df-hinweis[hidden] { display: none; }
+.df-inhalt { flex: 1; min-height: 0; overflow: auto; background: var(--code-hg); }
+.df-inhalt:focus-visible { outline: 2px solid var(--fokus); outline-offset: -2px; }
+.df-leer { margin: 18px 14px; font-size: 13px; line-height: 1.5; color: var(--leise); overflow-wrap: anywhere; }
+.df-leer.fehler { color: var(--schlecht); }
+.df-code { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
+.df-code td { padding: 0 8px; vertical-align: top; }
+.df-code td.nr { width: 3.6em; min-width: 3.6em; text-align: right; color: var(--leise); user-select: none; padding-right: 8px; border-right: 1px solid var(--linie); }
+.df-code td.code { white-space: pre; width: 100%; }
+/* die Zeile, an der die Datei geöffnet wurde */
+.df-code tr.ziel { background: var(--wahl); }
+.df-code tr.ziel td.nr { color: var(--text); border-right-color: var(--linie-stark); box-shadow: inset 3px 0 0 var(--warn); }
+/* der Unterschied füllt die Fläche; sein eigener Kopf entfällt (Pfad und Zahlen stehen in der Leiste darüber) */
+.df-inhalt .diff { margin: 0; border: 0; border-radius: 0; }
+.df-inhalt .diff-kopf { display: none; }
+.df-inhalt .diff-scroll { overflow: visible; }
+.df-teil[data-art="bild"] .df-inhalt { padding: 12px; background: var(--hg); }
+.df-bild { display: block; max-width: 100%; height: auto; margin: 0 auto; border: 1px solid var(--linie); border-radius: 8px; background: #fff; }
+
+/* Stellen im Gespräch, die eine Fläche öffnen */
+code.inline.pfad { cursor: pointer; text-decoration: underline; text-decoration-color: var(--linie-stark); text-underline-offset: 3px; }
+code.inline.pfad:hover { background: var(--wahl); text-decoration-color: var(--text); }
+code.inline.pfad:focus-visible { outline: 2px solid var(--fokus); outline-offset: 1px; }
+button.erwaehnung { border: 0; cursor: pointer; line-height: inherit; }
+button.erwaehnung:hover { text-decoration: underline; text-underline-offset: 3px; }
+.karte-aktionen { display: flex; gap: 6px; margin: 0 0 6px; }
+.karte-aktion, .diff-auf { padding: 2px 8px; font-size: 11.5px; color: var(--leise); }
+.karte-aktion:hover, .diff-auf:hover { color: var(--text); }
+.diff-kopf .diff-auf { margin-left: auto; margin-right: 8px; }
+button.anhang-kachel { font: inherit; font-size: 12px; color: inherit; text-align: left; cursor: pointer; }
+button.anhang-kachel:hover { border-color: var(--linie-stark); }

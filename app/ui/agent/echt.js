@@ -228,12 +228,15 @@
       now: opts.now,
       onZustand: () => status(),
       onEntscheidung: () => {},
+      // im Gespräch angeklickt: eine Datei (auch an einer Zeile), die Änderung eines Aufrufs, ein Anhang. Die Seite öffnet dafür eine Fläche.
+      onDatei: (d) => opts.beiDatei && opts.beiDatei(d),
+      onAnhang: (a) => opts.beiAnhang && opts.beiAnhang(a),
     });
 
     function neuerAdapter() {
       adapter = FP.createRunnerAdapter(view, {
         modell: S.modell,
-        onEntscheidung: (id, wert, notiz) => entscheide(id, wert, notiz),
+        onEntscheidung: (id, wert, notiz, extra) => entscheide(id, wert, notiz, extra),
         // Kontextfüllung = Größe des letzten Prompts samt Antwort (usage der letzten Antwort); null nach leeren/verdichten bis zur nächsten Antwort
         onKontext: (tokens) => {
           S.ctx = tokens;
@@ -256,6 +259,10 @@
         onHinweis: (text, fehler) => view.addNote(text, fehler ? 'fehler' : ''),
         // ein Datei-Werkzeug (read, write, edit …) ist zu Ende: das Änderungen-Panel zieht nach
         onWerkzeug: (a) => opts.beiWerkzeug && opts.beiWerkzeug(a),
+        // irgendein Werkzeug ist zu Ende (Name und Zustand): Aufgabenliste und Läufe der Seitenleiste ziehen nach
+        onWerkzeugEnde: (w) => opts.beiWerkzeugEnde && opts.beiWerkzeugEnde(w),
+        // im Verlauf steht ein Zurückspulen (Eintrag fyos.zurueck): die Tafel „Änderungen“ zieht nach
+        onZurueck: (z) => opts.beiZurueck && opts.beiZurueck(z),
         befehlFuer: (id) => {
           const f = S.freigaben.find((x) => String(x.id) === String(id));
           return f ? f.befehl || '' : '';
@@ -276,13 +283,17 @@
         /* nächste Gelegenheit */
       }
     }
-    async function entscheide(id, wert, notiz) {
+    /** wert: 'erlauben' | 'ablehnen' | 'aendern' (Plan); extra.sitzung: die Zustimmung gilt für den Rest der Sitzung. */
+    async function entscheide(id, wert, notiz, extra) {
       try {
-        const r = await transport.api('POST', `/api/freigaben/${encodeURIComponent(id)}`, { entscheidung: wert === 'erlauben' ? 'erteilt' : 'abgelehnt', notiz: notiz || undefined, von: 'mensch' });
+        const koerper = { entscheidung: wert === 'erlauben' ? 'erteilt' : wert === 'aendern' ? 'geaendert' : 'abgelehnt', notiz: notiz || undefined, von: 'mensch' };
+        if (extra && extra.sitzung && wert === 'erlauben') koerper.sitzung = true;
+        const r = await transport.api('POST', `/api/freigaben/${encodeURIComponent(id)}`, koerper);
         if (Array.isArray(r.freigaben)) {
           S.freigaben = r.freigaben;
           if (opts.beiFreigaben) opts.beiFreigaben(S.freigaben);
         }
+        if (opts.beiEntscheidung) opts.beiEntscheidung(id, koerper.entscheidung);
       } catch (f) {
         view.addNote(`Entscheidung nicht gespeichert: ${f.message || f}`, 'fehler');
       }
@@ -397,9 +408,11 @@
     }
 
     // --- Aktionen -----------------------------------------------------------------------
-    async function sende(text, sofort) {
+    /** `anhang`: Bilder und Dateien für das Feld `anhaenge` (anhaenge.js `fuerRunner`), nur an einen Runner, der sie annimmt. */
+    async function sende(text, sofort, anhang) {
       text = String(text || '').trim();
-      if (!text || S.id === null) return { ok: false };
+      const mitAnhang = Array.isArray(anhang) && anhang.length > 0;
+      if ((!text && !mitAnhang) || S.id === null) return { ok: false };
       const b = /^\/([a-zäöüß]+)(?:\s+(\S+))?$/i.exec(text);
       if (b) {
         // Befehle des Runners gehen wie jede Nachricht durch POST …/nachricht (der Runner wertet sie aus). Nur was er nicht kennt, macht die Seite selbst:
@@ -413,11 +426,17 @@
       const lauftSchon = view.busy;
       let handle = null;
       if (lauftSchon) {
-        handle = view.addUserMessage({ text, queued: true });
+        // die eingereihte Blase nennt die Anhänge beim Namen; die Vorschau kommt mit dem Eintrag des Runners
+        handle = view.addUserMessage({ text, queued: true, ...(mitAnhang ? { anhaenge: anhang.map((a) => ({ art: a.art, name: a.name, groesse: 0, vorschau: '' })) } : {}) });
         eingereiht.push({ text, handle });
       }
       try {
-        const antwort = await transport.api('POST', `/api/gespraech/${encodeURIComponent(S.id)}/nachricht`, { text, art: sofort ? 'steuern' : 'folgen', requestId: `agent-chat:${jetzt()}:${Math.random().toString(36).slice(2, 8)}` });
+        const antwort = await transport.api('POST', `/api/gespraech/${encodeURIComponent(S.id)}/nachricht`, {
+          text,
+          art: sofort ? 'steuern' : 'folgen',
+          requestId: `agent-chat:${jetzt()}:${Math.random().toString(36).slice(2, 8)}`,
+          ...(mitAnhang ? { anhaenge: anhang } : {}),
+        });
         S.letzteAktivitaet = jetzt();
         if (antwort && antwort.befehl && typeof antwort.befehl === 'object') {
           // Ein Befehl erreicht das Modell nicht: keine eingereihte Blase. Sein Ergebnis steht als Eintrag fyos.befehl im Verlauf (der Adapter zeigt es als Hinweis).

@@ -439,7 +439,23 @@
     return `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
   }
 
+  /**
+   * Will das System Getipptes durch typografische Zeichen ersetzen (aus „--“ einen Gedankenstrich, aus geraden Anführungszeichen gebogene,
+   * aus drei Punkten das Auslassungszeichen)? Solche Ersetzungen verfälschen Befehle und Pfade; das Feld weist sie ab (`beforeinput`).
+   * Wortkorrekturen (Buchstaben oder Ziffern im Ersatz) bleiben erlaubt.
+   */
+  function istSatzzeichenErsatz(e) {
+    if (!e || e.inputType !== 'insertReplacementText') return false;
+    let t = '';
+    try {
+      t = (e.dataTransfer && typeof e.dataTransfer.getData === 'function' && e.dataTransfer.getData('text/plain')) || e.data || '';
+    } catch (f) {
+      t = e.data || '';
+    }
+    return /[—–“”„‘’‚…]/.test(t) && !/[\p{L}\p{N}]/u.test(t);
+  }
+
   FP.dateiGroesse = FP.dateiGroesse || dateiGroesse;
   FP.createEingabe = createEingabe;
-  FP.eingabe = { aktiverToken, unscharf, pfadTeile, dateiWert, befehlsListe, rangiere, dateiGroesse, FALLBACK_BEFEHLE };
+  FP.eingabe = { aktiverToken, unscharf, pfadTeile, dateiWert, befehlsListe, rangiere, dateiGroesse, FALLBACK_BEFEHLE, istSatzzeichenErsatz };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

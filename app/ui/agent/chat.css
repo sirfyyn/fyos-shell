@@ -1,18 +1,24 @@
-/* Chat-Prototyp: dunkles Thema, Türkis-Akzent. Alle Bewegung steht im Block "prefers-reduced-motion: reduce" am Ende abschaltbar. */
+/* Chat-Prototyp: dunkles Thema, Farben von FLE Link (web/studio/app.css). Alle Bewegung steht im Block "prefers-reduced-motion: reduce" am Ende abschaltbar. */
 :root {
   color-scheme: dark;
-  --hg: #0e1318;
-  --flaeche: #151c24;
-  --flaeche2: #1b242e;
-  --code-hg: #0b1015;
-  --text: #e6edf3;
-  --leise: #93a1b1;
-  --linie: #263240;
-  --akzent: #2dd4bf;
-  --akzent-text: #04211e;
-  --gut: #56d364;
-  --warn: #f0b34a;
-  --schlecht: #ff7b72;
+  --hg: #0b0e14;
+  --flaeche: #10141c;
+  --flaeche2: #151a24;
+  --code-hg: #090c12;
+  --text: #e9edf3;
+  --leise: #94a0b2;
+  --linie: #1f2633;
+  --akzent: #ff2d95;
+  --akzent-text: #0b0e14;
+  /* Pink ist Signal, nicht Fläche (11.11.2026): --akzent tragen nur der Hauptknopf und Laufendes (Punkt, Cursor, Symbol).
+     Gewähltes, Fokus, betonte Rahmen, Chips und Verweise nehmen die neutralen Werte darunter. */
+  --linie-stark: #3b4659;
+  --wahl: rgba(255, 255, 255, .07);
+  --fokus: #a9b6c9;
+  --verweis: #7cc7e8;
+  --gut: #34d399;
+  --warn: #fbbf24;
+  --schlecht: #f87171;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --dauer: 180ms;
   --spalte: 820px;
@@ -31,16 +37,17 @@ button, textarea { font: inherit; color: inherit; }
 button {
   padding: 5px 11px; border: 1px solid var(--linie); border-radius: 8px; background: var(--flaeche); cursor: pointer;
 }
-button:hover:not(:disabled) { border-color: var(--akzent); }
+button:hover:not(:disabled) { border-color: var(--linie-stark); }
 button.primaer { background: var(--akzent); color: var(--akzent-text); border-color: var(--akzent); font-weight: 600; }
+button.primaer[data-art="einreihen"], button.primaer[data-art="wartet"] { background: var(--flaeche2); color: var(--text); border-color: var(--linie-stark); }
 button.gefahr { color: var(--schlecht); }
-:focus-visible { outline: 2px solid var(--akzent); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--fokus); outline-offset: 2px; }
 code, pre, kbd { font-family: var(--mono); }
 kbd {
   display: inline-block; min-width: 1.5em; padding: 0 5px; margin-left: 4px; text-align: center; font-size: 11px; line-height: 1.5;
   border: 1px solid var(--linie); border-radius: 5px; background: var(--code-hg); color: var(--leise);
 }
-button.primaer kbd { background: rgba(4, 33, 30, .25); color: var(--akzent-text); border-color: rgba(4, 33, 30, .4); }
+button.primaer kbd { background: rgba(11, 14, 20, .25); color: var(--akzent-text); border-color: rgba(11, 14, 20, .4); }
 .leise { color: var(--leise); }
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .symbol { display: inline-flex; flex: none; color: var(--leise); }
@@ -59,7 +66,7 @@ button.primaer kbd { background: rgba(4, 33, 30, .25); color: var(--akzent-text)
 .kopf-rechts { display: flex; align-items: center; gap: 10px; }
 .avatar {
   flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700;
-  background: linear-gradient(135deg, var(--akzent), #0e7490); color: var(--akzent-text);
+  background: var(--flaeche2); color: var(--text); border: 1px solid var(--linie-stark);
 }
 .zustand { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--leise); }
 .punkt { width: 9px; height: 9px; border-radius: 50%; background: var(--leise); display: inline-block; }
@@ -73,10 +80,10 @@ button.primaer kbd { background: rgba(4, 33, 30, .25); color: var(--akzent-text)
 .spalte { max-width: var(--spalte); margin: 0 auto; padding: 18px 20px 28px; }
 .zum-ende {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px;
-  background: var(--flaeche2); border-color: var(--akzent); border-radius: 999px; padding: 6px 14px 6px 10px; font-size: 12.5px;
+  background: var(--flaeche2); border-color: var(--linie-stark); border-radius: 999px; padding: 6px 14px 6px 10px; font-size: 12.5px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, .45); animation: ein var(--dauer) ease-out both;
 }
-.zum-ende svg { width: 14px; height: 14px; fill: none; stroke: var(--akzent); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.zum-ende svg { width: 14px; height: 14px; fill: none; stroke: var(--leise); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Nachrichten */
 .ein { animation: ein var(--dauer) ease-out both; }
@@ -86,7 +93,7 @@ button.primaer kbd { background: rgba(4, 33, 30, .25); color: var(--akzent-text)
 }
 .mensch.eingereiht .blase { opacity: .8; border-style: dashed; }
 .mensch-hinweis { margin: 3px 4px 0; font-size: 12px; color: var(--leise); }
-.erwaehnung { color: var(--akzent); background: rgba(45, 212, 191, .12); border-radius: 4px; padding: 0 3px; font-family: var(--mono); font-size: .92em; }
+.erwaehnung { color: var(--text); background: var(--wahl); border-radius: 4px; padding: 0 3px; font-family: var(--mono); font-size: .92em; }
 .zug { margin: 14px 0 6px; }
 .zug-kopf { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 12.5px; }
 .zug-kopf .avatar { width: 20px; height: 20px; font-size: 11px; }
@@ -106,7 +113,7 @@ button.primaer kbd { background: rgba(4, 33, 30, .25); color: var(--akzent-text)
 .md ul, .md ol { margin: .5em 0; padding-left: 1.5em; }
 .md li { margin: .22em 0; }
 .md li.ebene2 { margin-left: 1.2em; }
-.md a { color: var(--akzent); text-underline-offset: 2px; }
+.md a { color: var(--verweis); text-underline-offset: 2px; }
 .md strong { font-weight: 650; }
 code.inline { background: var(--flaeche2); border-radius: 5px; padding: 1px 5px; font-size: .9em; }
 .codeblock { margin: .7em 0; border: 1px solid var(--linie); border-radius: 10px; background: var(--code-hg); overflow: hidden; }
@@ -167,6 +174,18 @@ code.inline { background: var(--flaeche2); border-radius: 5px; padding: 1px 5px;
 .ausgabe-pre { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--code-hg); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ausgabe.lang .ausgabe-pre { max-height: 320px; overflow: auto; }
 .mehr { margin-top: 6px; padding: 2px 10px; font-size: 12px; color: var(--leise); }
+/* Wartezeile am Ende des laufenden Zugs: worauf der Agent wartet und seit wann */
+.wartezeile { display: flex; align-items: baseline; gap: 8px; margin: 8px 2px 2px; font-size: 13px; color: var(--leise); }
+.wartezeile[hidden] { display: none; }
+.wz-zeit { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--leise); }
+/* Exit-Code eines Befehls und Meldungen des Runners zu einem Aufruf */
+.terminal-fuss { padding: 3px 10px 6px; font: 11.5px var(--mono); color: var(--leise); }
+.terminal-fuss.fehler { color: var(--schlecht); }
+.meta .exit { font: 11.5px var(--mono); color: var(--schlecht); }
+.karte-hinweise { display: grid; gap: 3px; margin-top: 8px; }
+.karte-hinweis { font-size: 12.5px; color: var(--leise); white-space: pre-wrap; overflow-wrap: anywhere; }
+.karte-hinweis.warn { color: var(--warn); }
+.karte-hinweis.fehler { color: var(--schlecht); }
 .diff { margin-top: 8px; border: 1px solid var(--linie); border-radius: 8px; overflow: hidden; background: var(--code-hg); }
 .diff-kopf { display: flex; justify-content: space-between; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--linie); font-size: 12px; }
 .diff-kopf .datei { font-family: var(--mono); color: var(--text); }
@@ -176,22 +195,32 @@ code.inline { background: var(--flaeche2); border-radius: 5px; padding: 1px 5px;
 .diff-tabelle td.nr { width: 3.2em; min-width: 3.2em; text-align: right; color: var(--leise); user-select: none; padding-right: 6px; }
 .diff-tabelle td.vz { width: 1.6em; text-align: center; color: var(--leise); user-select: none; }
 .diff-tabelle td.code { white-space: pre; width: 100%; }
-.diff-tabelle tr.add { background: rgba(86, 211, 100, .11); } .diff-tabelle tr.add .vz { color: var(--gut); }
-.diff-tabelle tr.del { background: rgba(255, 123, 114, .11); } .diff-tabelle tr.del .vz { color: var(--schlecht); }
+.diff-tabelle tr.add { background: rgba(52, 211, 153, .11); } .diff-tabelle tr.add .vz { color: var(--gut); }
+.diff-tabelle tr.del { background: rgba(248, 113, 113, .11); } .diff-tabelle tr.del .vz { color: var(--schlecht); }
 .diff-tabelle tr.trenn td { padding: 2px 0; text-align: center; font-size: 11.5px; color: var(--leise); background: var(--flaeche2); }
 
 /* Freigaben */
 .freigabe {
   margin: 10px 0; padding: 10px 12px; border: 1px solid var(--linie); border-left: 3px solid var(--warn); border-radius: 10px;
-  background: rgba(240, 179, 74, .07);
+  background: rgba(251, 191, 36, .07);
 }
 .freigabe[data-zustand="erlaubt"] { border-left-color: var(--gut); background: var(--flaeche); }
 .freigabe[data-zustand="abgelehnt"] { border-left-color: var(--schlecht); background: var(--flaeche); }
+.freigabe[data-zustand="geaendert"] { border-left-color: var(--warn); background: var(--flaeche); }
+/* Plan des Agenten: dieselbe Karte, der Plan steht als gezeichnetes Markdown darin */
+.freigabe.plan[data-zustand="offen"] { border-left-color: var(--verweis); background: rgba(124, 199, 232, .05); }
+.fz-plan { margin: 8px 0 2px; padding: 8px 12px; border: 1px solid var(--linie); border-radius: 8px; background: var(--code-hg); max-height: 46vh; overflow: auto; font-size: 13.5px; }
+.fz-plan > :first-child { margin-top: 0; }
+.fz-plan > :last-child { margin-bottom: 0; }
+.freigabe.plan:not([data-zustand="offen"]) .fz-plan { max-height: 9em; opacity: .8; }
+.fz-notiz[aria-invalid="true"] { border-color: var(--warn); }
 .fz-kopf { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .fz-frage { overflow-wrap: anywhere; }
 .chip.risiko { flex: none; color: var(--warn); border-color: var(--warn); }
 .freigabe[data-risiko="low"] .chip.risiko { color: var(--gut); border-color: var(--gut); }
 .freigabe[data-risiko="high"] .chip.risiko { color: var(--schlecht); border-color: var(--schlecht); }
+/* Der Befehl einer Freigabe: ganz, mit Umbruch und eigener Höhe (nichts wird gekürzt, was erlaubt werden soll) */
+.fz-befehl { margin: 6px 0 2px; padding: 6px 9px; border-radius: 7px; background: var(--code-hg); font: 12.5px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
 .fz-kontext { margin-top: 4px; font-size: 13px; color: var(--leise); }
 .fz-knoepfe { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 2px 2px; }
 .fz-notiz { flex: 1 1 180px; min-width: 140px; padding: 5px 10px; border: 1px solid var(--linie); border-radius: 8px; background: var(--code-hg); color: var(--text); }
@@ -203,7 +232,7 @@ code.inline { background: var(--flaeche2); border-radius: 5px; padding: 1px 5px;
 .unten { padding: 8px 18px 12px; background: linear-gradient(to top, var(--hg) 70%, transparent); }
 .eingabe, .statuszeile { max-width: var(--spalte); margin-left: auto; margin-right: auto; }
 .eingabe { position: relative; padding: 10px 12px 8px; border: 1px solid var(--linie); border-radius: 14px; background: var(--flaeche); }
-.eingabe:focus-within { border-color: var(--akzent); outline: 2px solid rgba(45, 212, 191, .35); outline-offset: 2px; }
+.eingabe:focus-within { border-color: var(--linie-stark); }
 .eingabe textarea { display: block; width: 100%; max-height: 200px; padding: 0; border: 0; outline: none; resize: none; background: none; line-height: 1.5; }
 .eingabe textarea::placeholder { color: var(--leise); opacity: 1; }
 .eingabe-zeile { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; }
@@ -214,27 +243,31 @@ code.inline { background: var(--flaeche2); border-radius: 5px; padding: 1px 5px;
   border: 1px solid var(--linie); border-radius: 10px; background: var(--flaeche2); box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
 }
 .menue-punkt { display: flex; gap: 12px; align-items: baseline; padding: 6px 10px; border-radius: 7px; cursor: pointer; }
-.menue-punkt[aria-selected="true"] { background: rgba(45, 212, 191, .16); }
+.menue-punkt[aria-selected="true"] { background: var(--wahl); }
 .menue-punkt .name { font-family: var(--mono); font-size: 12.5px; }
 .menue-punkt .hilfe { font-size: 12px; color: var(--leise); }
 .statuszeile { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; padding: 0 4px; font-size: 12px; }
-.modell-knopf { padding: 1px 10px; border-color: var(--akzent); color: var(--akzent); font-family: var(--mono); font-size: 12px; }
+.modell-knopf { padding: 1px 10px; border-color: var(--linie); color: var(--text); font-family: var(--mono); font-size: 12px; }
 .kontext { display: inline-flex; align-items: center; gap: 8px; }
 .kontext .balken { display: inline-block; width: 96px; height: 5px; border-radius: 3px; background: var(--linie); overflow: hidden; }
-.kontext .balken i { display: block; height: 100%; background: var(--akzent); transform-origin: left; transform: scaleX(var(--fuell, 0)); transition: transform 300ms ease, background-color 300ms; }
+.kontext .balken i { display: block; height: 100%; background: var(--leise); transform-origin: left; transform: scaleX(var(--fuell, 0)); transition: transform 300ms ease, background-color 300ms; }
 .kontext[data-stufe="warn"] .balken i { background: var(--warn); }
 .kontext[data-stufe="kritisch"] .balken i { background: var(--schlecht); }
 #kontextText { font-variant-numeric: tabular-nums; min-width: 3em; }
 
 .modus-wrap { position: relative; }
-.modus-knopf { padding: 1px 10px; border-color: var(--linie); color: var(--text); font-size: 12px; }
+.modus-knopf { padding: 1px 10px; border-color: var(--linie); color: var(--text); font-size: 12px; transition: border-color .15s, color .15s, background-color .15s; }
+/* Modus der Sitzung am Knopf: planen fällt auf (es wird nichts geändert), umgehen warnt (nichts fragt mehr) */
+.modus-knopf[data-modus="planen"] { border-color: var(--verweis); color: var(--verweis); background: rgba(124, 199, 232, .08); }
+.modus-knopf[data-modus="fragen"] { border-color: var(--gut); color: var(--gut); }
+.modus-knopf[data-modus="umgehen"] { border-color: var(--warn); color: var(--warn); background: rgba(251, 191, 36, .08); }
 .modus-menue {
   position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 5; width: min(360px, 86vw); padding: 4px;
   border: 1px solid var(--linie); border-radius: 10px; background: var(--flaeche2); box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
 }
 .modus-punkt { display: flex; gap: 8px; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; background: none; text-align: left; }
 .modus-punkt[aria-disabled="true"] { opacity: .75; cursor: default; }
-.modus-punkt .haken { width: 1.1em; color: var(--akzent); flex: none; }
+.modus-punkt .haken { width: 1.1em; color: var(--text); flex: none; }
 .modus-punkt .text { display: flex; flex-direction: column; font-size: 13px; }
 .modus-punkt .hilfe { font-size: 12px; color: var(--leise); }
 .modus-hinweis { padding: 6px 9px 4px; font-size: 12px; color: var(--leise); }
@@ -244,8 +277,8 @@ code.inline { background: var(--flaeche2); border-radius: 5px; padding: 1px 5px;
 @keyframes cursor { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 @keyframes schimmer { from { background-position: 100% 0; } to { background-position: -120% 0; } }
 @keyframes puls-rand {
-  0%, 100% { border-color: var(--linie); box-shadow: 0 0 0 0 rgba(45, 212, 191, 0); }
-  50% { border-color: var(--akzent); box-shadow: 0 0 0 3px rgba(45, 212, 191, .13); }
+  0%, 100% { border-color: var(--linie); }
+  50% { border-color: rgba(148, 160, 178, .6); }
 }
 @keyframes puls-punkt { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 
@@ -259,7 +292,7 @@ code.inline { background: var(--flaeche2); border-radius: 5px; padding: 1px 5px;
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .schimmer { background: none; -webkit-text-fill-color: currentColor; color: var(--text); }
-  .karte[data-zustand="laeuft"], .gruppe[data-zustand="laeuft"] { border-color: var(--akzent); }
+  .karte[data-zustand="laeuft"], .gruppe[data-zustand="laeuft"] { border-color: var(--linie-stark); }
   .ist-ende::after { opacity: .8; }
 }
 

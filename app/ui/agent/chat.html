@@ -8,21 +8,42 @@
   <link rel="stylesheet" href="arbeitsplatz.css">
   <link rel="stylesheet" href="freigaben.css">
   <link rel="stylesheet" href="aenderungen.css">
+  <link rel="stylesheet" href="plattform.css">
+  <link rel="stylesheet" href="werkbank.css">
+  <link rel="stylesheet" href="staende.css">
+  <link rel="stylesheet" href="browser-flaeche.css">
+  <link rel="stylesheet" href="flaechen.css">
+  <link rel="stylesheet" href="dateien.css">
 </head>
 <body>
   <div class="app" id="app">
-    <aside id="leiste" class="leiste" aria-label="Sitzungen">
+    <aside id="leiste" class="leiste" aria-label="Seitenleiste">
+      <nav id="schiene" class="schiene" role="tablist" aria-orientation="vertical" aria-label="Ansichten der Seitenleiste">
+        <button id="schieneGespraeche" type="button" class="schiene-knopf aktiv" role="tab" aria-selected="true" aria-controls="tafelGespraeche" title="Sitzungen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" /></svg><span class="sr">Sitzungen</span></button>
+        <button id="schieneAufgaben" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelAufgaben" tabindex="-1" title="Aufgaben des Agenten" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4l1.5 1.5L6.5 3 M8.5 4.5h5 M2.5 8.5l1.5 1.5L6.5 7.5 M8.5 9h5 M3 13h3.5 M8.5 13h5" /></svg><span class="sr">Aufgaben</span><b id="aufgabenMarke" class="schiene-marke" aria-label="offene Schritte" hidden>0</b></button>
+        <button id="schieneLaeufe" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelLaeufe" tabindex="-1" title="Läufe: Befehle im Hintergrund und Unteragenten" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3h11v10h-11z M5 6l2 2-2 2 M8.5 10h3" /></svg><span class="sr">Läufe</span><b id="laeufeMarke" class="schiene-marke" aria-label="laufend" hidden>0</b></button>
+        <button id="schieneAenderungen" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelAenderungen" tabindex="-1" title="Änderungen des Agenten in dieser Sitzung" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h5.5L12 5v8.5H4z M9.5 2.5V5H12 M6 8.5h4 M8 6.5v4 M6 12h4" /></svg><span class="sr">Änderungen</span><b id="staendeMarke" class="schiene-marke" aria-label="geänderte Dateien" hidden>0</b></button>
+        <button id="schieneDateien" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelDateien" tabindex="-1" title="Dateien im Ordner der Sitzung" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg><span class="sr">Dateien</span></button>
+      </nav>
+      <div class="leiste-koerper">
       <div class="leiste-oben">
         <button id="einstellungenKnopf" type="button" class="leise-knopf einstellungen-knopf" title="Einstellungen: Runner, Adressen, lokaler Runner (Cmd+,)" aria-label="Einstellungen öffnen" aria-keyshortcuts="Meta+, Control+,"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.25" /><path d="M8 1.5v1.75 M8 12.75v1.75 M1.5 8h1.75 M12.75 8h1.75 M3.4 3.4l1.25 1.25 M11.35 11.35l1.25 1.25 M3.4 12.6l1.25-1.25 M11.35 4.65l1.25-1.25" /></svg><span>Einstellungen</span></button>
         <p id="einstellungenFehler" class="leise runner-hinweis" role="alert" hidden></p>
       </div>
+      <div id="tafelGespraeche" class="tafel" role="tabpanel" aria-labelledby="schieneGespraeche">
       <div class="runner-wahl" id="runnerKasten">
         <label for="runnerWahl" class="leise">Runner</label>
         <select id="runnerWahl" aria-label="Aktiver Runner"></select>
         <p id="runnerHinweis" class="leise runner-hinweis" role="status" hidden></p>
       </div>
+      <nav id="bereiche" class="bereiche" aria-label="Bereiche" hidden>
+        <button type="button" class="bereich aktiv" data-bereich="chat"><span>Chat</span></button>
+        <button type="button" class="bereich" data-bereich="vorgaenge"><span>Vorgänge</span><b id="vorgaengeZahl" class="pf-badge" title="Wartet auf dich" hidden>0</b></button>
+        <button type="button" class="bereich" data-bereich="kalender"><span>Kalender</span></button>
+        <button type="button" class="bereich" data-bereich="ereignisse"><span>Ereignisse</span></button>
+      </nav>
       <div class="leiste-kopf">
-        <button id="neueSitzung" type="button" class="primaer neu-knopf" aria-keyshortcuts="Meta+Shift+O Control+Shift+O">Neue Sitzung</button>
+        <button id="neueSitzung" type="button" class="neu-knopf" aria-keyshortcuts="Meta+Shift+O Control+Shift+O">Neue Sitzung</button>
       </div>
       <form id="neuForm" class="neu-form" autocomplete="off" hidden>
         <label for="neuTitel">Name</label>
@@ -67,7 +88,41 @@
         <div id="archivListe" role="list" aria-label="Archivierte Sitzungen" hidden></div>
         <p id="archivLeer" class="leise leer-hinweis" hidden>Keine archivierten Sitzungen.</p>
       </nav>
+      </div>
+      <div id="tafelAufgaben" class="tafel wb-tafel" role="tabpanel" aria-labelledby="schieneAufgaben" hidden>
+        <h2 class="wb-titel">Aufgaben</h2>
+        <p id="aufgabenLeer" class="leise leer-hinweis">Für diese Sitzung gibt es keine Aufgabenliste. Bei Arbeit mit mehreren Schritten legt der Agent sie von selbst an und hakt ab.</p>
+        <div id="aufgabenKopf" class="wb-fortschritt" hidden><span id="aufgabenKopfText"></span><span class="wb-balken" aria-hidden="true"><i id="aufgabenBalken"></i></span></div>
+        <ol id="aufgabenListe" class="wb-aufgaben" aria-label="Schritte des Agenten"></ol>
+      </div>
+      <div id="tafelLaeufe" class="tafel wb-tafel" role="tabpanel" aria-labelledby="schieneLaeufe" hidden>
+        <h2 class="wb-titel">Läufe</h2>
+        <p class="leise wb-erklaerung">Befehle im Hintergrund und Unteragenten, laufende zuerst. Ein Klick zeigt Ausgabe oder Ergebnis.</p>
+        <p id="laeufeLeer" class="leise leer-hinweis">Gerade läuft nichts, und in den letzten 24 Stunden lief nichts.</p>
+        <div id="laeufeListe" class="wb-laeufe" role="list" aria-label="Läufe"></div>
+      </div>
+      <div id="tafelAenderungen" class="tafel wb-tafel" role="tabpanel" aria-labelledby="schieneAenderungen" hidden>
+        <h2 class="wb-titel">Änderungen</h2>
+        <p id="staendeLeer" class="leise leer-hinweis">In dieser Sitzung hat der Agent noch keine Datei geändert.</p>
+        <ul id="staendeDateien" class="st-dateien" aria-label="Geänderte Dateien"></ul>
+        <h3 id="staendeKopf" class="st-kopf" hidden>Stände</h3>
+        <ol id="staendeListe" class="st-staende" aria-label="Stände vor deinen Nachrichten"></ol>
+        <p id="staendeFuss" class="leise st-fuss" hidden>Hier steht, was der Agent mit seinen Datei-Werkzeugen geändert hat. Was ein Befehl ändert, steht hier nicht und geht nicht mit zurück.</p>
+      </div>
+      <!-- Tafel „Dateien“ (dateien-tafel.js): der Ordner der Sitzung als Baum, Suche nach Dateinamen, Klick öffnet rechts als Fläche -->
+      <div id="tafelDateien" class="tafel wb-tafel dt-tafel" role="tabpanel" aria-labelledby="schieneDateien" hidden>
+        <div class="dt-kopf">
+          <h2 class="wb-titel">Dateien</h2>
+          <span id="dateienOrdner" class="dt-wurzel" hidden></span>
+          <button id="dateienNeu" type="button" class="leise-knopf dt-neu" title="Ordner neu lesen" aria-label="Ordner neu lesen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7 M13 2.5v3h-3" /></svg></button>
+        </div>
+        <input id="dateienSuche" class="dt-suche" type="search" placeholder="Datei suchen" aria-label="Datei im Ordner der Sitzung suchen" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <p id="dateienLeer" class="leise leer-hinweis" role="status" hidden></p>
+        <div id="dateienBaum" class="dt-baum" role="tree" aria-label="Dateien im Ordner der Sitzung"></div>
+        <p id="dateienFuss" class="leise dt-fuss" hidden></p>
+      </div>
       <div class="leiste-fuss leise" id="leisteFuss"></div>
+      </div>
     </aside>
 
     <div class="haupt">
@@ -87,6 +142,7 @@
         <div class="kopf-rechts">
           <button id="freigabenKnopf" type="button" class="leise-knopf freigaben-knopf" aria-controls="freigabenPanel" aria-expanded="false" title="Offene Freigaben" hidden>Freigaben <b id="freigabenZahl">0</b></button>
           <button id="aenderungenKnopf" type="button" class="leise-knopf aenderungen-knopf" aria-controls="aenderungenPanel" aria-expanded="false" title="Geänderte Dateien dieser Sitzung" hidden>Änderungen (<b id="aenderungenZahl">0</b>)</button>
+          <button id="browserKnopf" type="button" class="leise-knopf" aria-controls="browserFlaeche" aria-expanded="false" title="Den Browser zeigen, den der Agent bedient" hidden>Browser</button>
           <button id="bericht" type="button" class="leise-knopf" title="Schreibt eine Textdatei mit Version, Meldungen und geschwärzten Einstellungen auf den Schreibtisch. Es wird nichts hochgeladen.">Bericht speichern</button>
           <span id="zustand" class="zustand bereit" role="status"><span class="punkt" aria-hidden="true"></span><span id="zustandText">bereit</span></span>
         </div>
@@ -96,6 +152,7 @@
         <div id="banner" class="banner" role="status" hidden></div>
         <button id="freigabenBanner" type="button" class="fp-banner" aria-controls="freigabenPanel" title="Offene Freigaben ansehen" hidden></button>
         <div id="panes" class="panes"></div>
+        <div id="plattform" class="pf-wurzel" hidden></div>
         <aside id="freigabenPanel" class="fp-panel" aria-label="Offene Freigaben" hidden>
           <div class="fp-panel-kopf"><strong>Offene Freigaben</strong><button id="freigabenZu" type="button" class="leise-knopf" aria-label="Schließen">Schließen</button></div>
           <p id="freigabenHinweis" class="fp-hinweis" role="status" hidden></p>
@@ -112,11 +169,17 @@
       </div>
 
       <footer class="unten">
+        <button id="aufgabenStreifen" type="button" class="wb-streifen" aria-controls="tafelAufgaben" title="Aufgabenliste des Agenten zeigen" hidden>
+          <span class="wb-punkt" aria-hidden="true"></span>
+          <span id="streifenText" class="wb-streifen-text"></span>
+          <span id="streifenZahl" class="wb-streifen-zahl"></span>
+          <span class="wb-balken" aria-hidden="true"><i id="streifenBalken"></i></span>
+        </button>
         <form id="eingabeForm" class="eingabe" autocomplete="off">
           <div id="menue" class="menue" role="listbox" aria-label="Vorschläge" hidden></div>
           <div id="anhaenge" class="anhaenge" role="list" aria-label="Anhänge" hidden></div>
           <p id="anhangMeldung" class="anhang-meldung" role="alert" hidden></p>
-          <textarea id="eingabe" rows="1" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="menue" aria-haspopup="listbox" aria-label="Nachricht an den Agenten" placeholder="Nachricht …  @ für Dateien, / für Befehle"></textarea>
+          <textarea id="eingabe" rows="1" autocorrect="off" autocapitalize="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="menue" aria-haspopup="listbox" aria-label="Nachricht an den Agenten" placeholder="Nachricht …  @ für Dateien, / für Befehle"></textarea>
           <div class="eingabe-zeile">
             <span class="eingabe-links">
               <button id="anhangKnopf" type="button" class="leise-knopf anhang-knopf" aria-label="Datei anhängen" title="Textdatei anhängen (auch per Ziehen oder Einfügen); sie wird als Text in die Nachricht eingebettet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 7.5l-5 5a3 3 0 0 1-4.2-4.2l5.4-5.4a2 2 0 0 1 2.8 2.8L6.6 11.1a1 1 0 0 1-1.4-1.4L10 4.9" /></svg></button>
@@ -149,6 +212,37 @@
         </div>
       </footer>
     </div>
+
+    <!-- Flächen rechts neben dem Gespräch (flaechen.js): ein Bereich mit Reitern. Darin der Browser, den der Agent bedient, zum Mitsehen und
+         Mitbedienen (browser-flaeche.js), und was der Mensch oder der Agent öffnet: Dateien, Unterschiede, Bilder (datei-flaeche.js). -->
+    <aside id="flaechen" class="flaeche" aria-label="Flächen neben dem Gespräch" hidden>
+      <div class="fl-kopf">
+        <div id="flaechenReiter" class="fl-reiter" role="tablist" aria-label="Offene Flächen"></div>
+        <button id="flaechenZu" type="button" class="leise-knopf fl-zu" aria-label="Alle Flächen schließen" title="Alle Flächen schließen">Schließen</button>
+      </div>
+      <div id="flaechenKoerper" class="fl-koerper">
+        <div id="flaecheBrowser" class="fl-teil" hidden>
+          <div id="browserFlaeche" class="bf-wurzel" aria-label="Browser" hidden>
+            <div class="bf-kopf">
+              <span id="browserLage" class="bf-lage" role="status"></span>
+              <button id="browserBeenden" type="button" class="leise-knopf" title="Den Browser beenden; Anmeldungen bleiben im Profil erhalten" hidden>Beenden</button>
+            </div>
+            <div class="bf-leiste">
+              <button id="browserZurueck" type="button" class="bf-knopf" aria-label="Zurück" title="Zurück" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 3.5L5 8l4.5 4.5" /></svg></button>
+              <button id="browserVor" type="button" class="bf-knopf" aria-label="Vor" title="Vor" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5L11 8l-4.5 4.5" /></svg></button>
+              <button id="browserNeu" type="button" class="bf-knopf" aria-label="Neu laden" title="Neu laden" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.5 8a4.5 4.5 0 1 1-1.4-3.3 M12.6 2.8v2.6H10" /></svg></button>
+              <form id="browserForm" class="bf-form" autocomplete="off">
+                <input id="browserZiel" class="bf-adresse" type="text" inputmode="url" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Adresse" placeholder="Adresse oder Datei im Ordner der Sitzung" disabled>
+              </form>
+            </div>
+            <div id="browserBuehne" class="bf-buehne" tabindex="0" role="application" aria-label="Seite im Browser. Klicks, Rad und Tasten gehen an die Seite.">
+              <img id="browserBild" class="bf-bild" alt="Seite im Browser" hidden>
+              <p id="browserHinweis" class="bf-hinweis" role="status" hidden></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
     <div id="ansage" class="sr" aria-live="polite" aria-atomic="true"></div>
   </div>
 
@@ -165,9 +259,16 @@
   <script src="suche.js"></script>
   <script src="freigaben.js"></script>
   <script src="aenderungen.js"></script>
+  <script src="werkbank.js"></script>
+  <script src="staende-tafel.js"></script>
+  <script src="dateien-tafel.js"></script>
+  <script src="flaechen.js"></script>
+  <script src="datei-flaeche.js"></script>
+  <script src="browser-flaeche.js"></script>
   <script src="ordner.js"></script>
   <script src="eingabe.js"></script>
   <script src="anhaenge.js"></script>
+  <script src="plattform.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

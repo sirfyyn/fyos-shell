@@ -104,7 +104,7 @@
 
   /**
    * refs: { liste, weitere, weitereKopf, weitereZahl, leer, archiv?, archivKopf?, archivZahl? }
-   * opts: { beiWahl(id), beiUmbenennen(id, titel) → Promise, beiArchivieren(id, archiviert) → Promise }
+   * opts: { beiWahl(id), beiUmbenennen(id, titel) → Promise, beiArchivieren(id, archiviert) → Promise, beiAnpinnen(id, angepinnt) → Promise (optional) }
    * Rückgabe: { zeichne(daten, aktivId), fokus(id), bearbeite(id), fehler(id, text), zeilen() }
    */
   function createLeiste(refs, opts) {
@@ -184,6 +184,12 @@
         stift.addEventListener('click', () => bearbeite(z.id));
         const ablage = aktionsKnopf('archivieren', 'Sitzung archivieren', svg('M2.5 4h11v2.5h-11z M3.5 6.5v6.5h9V6.5 M6.5 9h3'));
         ablage.addEventListener('click', () => aendern(z.id, 'archivieren'));
+        // Anpinnen hält die Sitzung oben in der Liste (nur, wenn der Aufrufer es anbietet)
+        if (opts.beiAnpinnen) {
+          const nadel = aktionsKnopf('anpinnen', 'Sitzung anpinnen', svg('M5.5 2.5h5l-.7 3.8 2.2 2.4H4l2.2-2.4z M8 8.7v4.8'));
+          nadel.addEventListener('click', () => aendern(z.id, 'anpinnen'));
+          aktionen.append(nadel);
+        }
         aktionen.append(stift, ablage);
       }
       huelle.append(b, aktionen, editor, fehler);
@@ -196,6 +202,7 @@
       b.dataset.id = String(z.id);
       b.dataset.art = z.art;
       b.dataset.laeuft = z.laeuft ? '1' : '0';
+      b.dataset.angepinnt = z.angepinnt ? '1' : '0';
       const titel = b.querySelector('.sitzung-titel');
       if (titel.textContent !== z.titel) titel.textContent = z.titel;
       const meta = [z.ordner || z.bereich, z.laeuft ? 'arbeitet' : z.zeitText].filter(Boolean).join(' · ');
@@ -203,7 +210,7 @@
       if (m.textContent !== meta) m.textContent = meta;
       b.title = [z.titel, z.pfad || z.bereich].filter(Boolean).join('\n');
       const sr = b.querySelector('.sr');
-      const srText = z.laeuft ? ', arbeitet gerade' : '';
+      const srText = `${z.angepinnt ? ', angepinnt' : ''}${z.laeuft ? ', arbeitet gerade' : ''}`;
       if (sr.textContent !== srText) sr.textContent = srText;
       const gewaehlt = !imArchiv && String(z.id) === String(aktivId);
       b.setAttribute('aria-selected', gewaehlt ? 'true' : 'false');
@@ -218,6 +225,14 @@
       }
       const zurueck = r.huelle.querySelector('.wiederherstellen');
       if (zurueck) zurueck.setAttribute('aria-label', `Sitzung „${z.titel}“ wiederherstellen`);
+      const nadel = r.huelle.querySelector('.anpinnen');
+      if (nadel) {
+        const name = z.angepinnt ? `Sitzung „${z.titel}“ lösen (nicht mehr oben halten)` : `Sitzung „${z.titel}“ anpinnen (oben halten)`;
+        nadel.setAttribute('aria-label', name);
+        nadel.title = z.angepinnt ? 'Lösen' : 'Anpinnen';
+        nadel.setAttribute('aria-pressed', z.angepinnt ? 'true' : 'false');
+        nadel.hidden = z.art !== 'mensch' && z.art !== 'zweig' && z.art !== 'root'; // Hintergrundarbeit wird nicht angepinnt
+      }
     }
 
     /** Die Zeilen eines Behälters der Liste anpassen: vorhandene behalten, fehlende bauen, übrige entfernen, Reihenfolge herstellen. */
@@ -332,13 +347,14 @@
     }
 
     async function aendern(id, was) {
-      if (!opts.beiArchivieren) return;
+      if (was === 'anpinnen' ? !opts.beiAnpinnen : !opts.beiArchivieren) return;
       meldeAnZeile(id, '');
       const r = knoten.get(String(id)) || archivKnoten.get(String(id));
       const knoepfe = r ? [...r.huelle.querySelectorAll('.sitzung-aktion')] : [];
       knoepfe.forEach((k) => (k.disabled = true));
       try {
-        await opts.beiArchivieren(id, was === 'archivieren');
+        if (was === 'anpinnen') await opts.beiAnpinnen(id, !(r && r.z.angepinnt));
+        else await opts.beiArchivieren(id, was === 'archivieren');
       } catch (f) {
         meldeAnZeile(id, (f && f.message) || String(f));
       } finally {

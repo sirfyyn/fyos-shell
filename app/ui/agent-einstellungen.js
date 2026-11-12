@@ -69,14 +69,26 @@
     }
   }
 
-  async function laden(aufruf, info) {
+  // Was zuletzt aus dem gespeicherten Stand in die beiden Felder geschrieben wurde. Ein Feld, das der Mensch seitdem geändert
+  // hat, bleibt beim Auffrischen stehen, auch ohne Fokus. Vorher sprang jedes Feld ohne Fokus alle 4 s auf den gespeicherten
+  // Wert zurück: wer erst den Pfad tippte und dann ins Argumente-Feld wechselte, verlor den Pfad.
+  const gesetzt = { "l-programm": "", "l-args": "" };
+  function feldSetzen(id, wert, erzwingen) {
+    const feld = $(id);
+    if (!erzwingen && (document.activeElement === feld || feld.value !== gesetzt[id])) return;
+    feld.value = wert;
+    gesetzt[id] = wert;
+  }
+
+  /** `erzwingen`: die Felder zeigen danach den gespeicherten Stand (nach „Speichern“); sonst bleiben ungespeicherte Eingaben stehen. */
+  async function laden(aufruf, info, erzwingen) {
     const v = await aufruf("runner_liste");
     if (!v) return;
     zeichneListe(v);
     const st = await aufruf("lokaler_runner_status");
     if (st) {
-      if (document.activeElement !== $("l-programm")) $("l-programm").value = st.programm || "";
-      if (document.activeElement !== $("l-args")) $("l-args").value = (st.args || []).join(" ");
+      feldSetzen("l-programm", st.programm || "", erzwingen === true);
+      feldSetzen("l-args", (st.args || []).join(" "), erzwingen === true);
       const m = st.meldung ? ` ${st.meldung.ursache}` : "";
       $("l-text").textContent = st.programm ? `Lokaler Runner: ${STAND[st.stand] || st.stand}.${m}` : "Kein lokaler Runner eingetragen.";
     }
@@ -137,13 +149,14 @@
         const v = await aufruf("lokaler_runner_einstellen", { programm: $("l-programm").value.trim(), args });
         if (!v) return;
         $("l-text").textContent = $("l-programm").value.trim() ? "Gespeichert. Zum Benutzen im Chat-Fenster „Dieser Rechner“ wählen oder hier starten." : "Der lokale Runner ist entfernt.";
-        await laden(aufruf, info());
+        await laden(aufruf, info(), true);
       });
       $("l-starten").addEventListener("click", async () => {
         $("l-text").textContent = "Starte …";
         const st = await aufruf("lokaler_runner_starten");
-        if (!st) $("l-text").textContent = "Start fehlgeschlagen (siehe oben).";
-        await laden(aufruf, info());
+        // Nach einem Fehlschlag leise auffrischen: `aufruf` blendete die Meldung mit Code und Einzelheiten sonst sofort wieder aus.
+        await laden(st ? aufruf : leise, info());
+        if (!st) $("l-text").textContent = "Start fehlgeschlagen (siehe oben). Die Ausgabe des Programms steht in lokaler-runner.log im Datenordner.";
       });
       $("l-stoppen").addEventListener("click", async () => {
         await aufruf("lokaler_runner_stoppen");

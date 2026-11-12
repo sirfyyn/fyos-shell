@@ -1,0 +1,110 @@
+/* Vorgänge, Kalender und Ereignisse (plattform.js). Farben aus den Variablen von chat.css, das sind die von FLE Link. */
+
+/* Bereiche in der Seitenleiste */
+.bereiche { display: grid; gap: 2px; padding: 10px 12px 0; }
+.bereich {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 6px 10px; text-align: left;
+  border-color: transparent; background: transparent; color: var(--leise);
+}
+.bereich:hover:not(:disabled) { color: var(--text); border-color: transparent; background: rgba(255, 255, 255, .04); }
+.bereich.aktiv { color: var(--text); background: var(--wahl); }
+.bereich .pf-badge { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--linie-stark); color: var(--text); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+
+/* Im Bereich trägt die Ansicht ihren eigenen Kopf; Sitzungskopf und Eingabe gehören zum Chat */
+.haupt.pf-an > .kopf, .haupt.pf-an > .unten { display: none; }
+.haupt.pf-an { grid-template-rows: minmax(0, 1fr); }
+.pf-wurzel { position: relative; min-height: 0; height: 100%; overflow: hidden; background: var(--hg); }
+.pf-bereich { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.pf-kopf { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 18px; background: var(--flaeche); border-bottom: 1px solid var(--linie); }
+.pf-kopf h2 { margin: 0 6px 0 0; font-size: 15px; font-weight: 600; }
+.pf-kopf .primaer { margin-left: auto; }
+.pf-spanne { color: var(--leise); font-size: 12.5px; }
+.pf-suche { flex: 1 1 180px; max-width: 320px; }
+.pf-schalter { display: inline-flex; align-items: center; gap: 5px; color: var(--leise); font-size: 12.5px; cursor: pointer; }
+.pf-wurzel input:not([type="checkbox"]), .pf-wurzel select, .pf-wurzel textarea {
+  padding: 5px 9px; border: 1px solid var(--linie); border-radius: 8px; background: var(--flaeche2); color: var(--text); font: inherit; color-scheme: dark;
+}
+.pf-wurzel input:focus, .pf-wurzel select:focus, .pf-wurzel textarea:focus { border-color: var(--fokus); outline: 2px solid rgba(169, 182, 201, .25); outline-offset: 1px; }
+.pf-hinweis { margin: 0; padding: 7px 18px; color: var(--schlecht); background: rgba(248, 113, 113, .13); font-size: 12.5px; }
+.pf-luecke { margin: 0; padding: 7px 18px; color: var(--warn); background: rgba(251, 191, 36, .13); font-size: 12.5px; }
+.pf-leer { margin: 0; padding: 10px 2px; color: var(--leise); font-size: 12.5px; }
+.pf-bereich > .pf-leer { padding: 18px; }
+
+/* Formulare */
+.pf-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; padding: 12px 18px; background: var(--flaeche); border-bottom: 1px solid var(--linie); }
+.pf-feld { display: grid; gap: 3px; min-width: 0; }
+.pf-feld input, .pf-feld select, .pf-feld textarea { width: 100%; }
+.pf-feld-name { margin: 0; color: var(--leise); font-size: 11.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.pf-knoepfe { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+
+/* Brett */
+.pf-koerper { display: flex; flex: 1; min-height: 0; }
+.pf-brett { display: flex; flex: 1; gap: 12px; min-width: 0; padding: 14px 18px; overflow: auto; }
+.pf-spalte { display: flex; flex: 1 0 210px; flex-direction: column; gap: 8px; max-width: 340px; min-width: 210px; }
+.pf-spalte-kopf { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; padding: 0 2px; color: var(--leise); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.pf-zahl { font-family: var(--mono); font-weight: 500; }
+.pf-s-waiting_approval > .pf-spalte-kopf { color: var(--warn); }
+.pf-karte {
+  display: grid; gap: 5px; width: 100%; padding: 9px 11px; text-align: left; background: var(--flaeche); border: 1px solid var(--linie); border-radius: 10px;
+  transition: border-color var(--dauer), background-color var(--dauer);
+}
+.pf-karte:hover:not(:disabled) { background: var(--flaeche2); }
+.pf-karte.aktiv { border-color: var(--fokus); background: var(--flaeche2); }
+.pf-s-waiting_approval .pf-karte { border-left: 3px solid var(--warn); }
+.pf-s-closed .pf-karte, .pf-s-resolved .pf-karte { opacity: .72; }
+.pf-karte-kopf { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pf-id { color: var(--leise); font-family: var(--mono); font-size: 11.5px; }
+.pf-karte-titel { font-weight: 600; overflow-wrap: break-word; hyphens: auto; }
+.pf-karte-meta { color: var(--leise); font-size: 12px; overflow-wrap: anywhere; }
+.pf-pill { display: inline-block; padding: 0 8px; border-radius: 999px; background: var(--flaeche2); color: var(--leise); font-size: 11px; font-weight: 600; line-height: 18px; white-space: nowrap; }
+.pf-sev-low { color: var(--leise); }
+.pf-sev-medium { color: #22d3ee; background: rgba(34, 211, 238, .12); }
+.pf-sev-high { color: var(--warn); background: rgba(251, 191, 36, .13); }
+.pf-sev-critical { color: var(--schlecht); background: rgba(248, 113, 113, .13); }
+.pf-besitzer { color: var(--text); background: var(--wahl); }
+
+/* Vorgang im Detail */
+.pf-detail { display: flex; flex: 0 0 min(400px, 44%); flex-direction: column; gap: 12px; padding: 14px 16px; overflow: auto; background: var(--flaeche); border-left: 1px solid var(--linie); }
+.pf-detail-kopf { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pf-detail-titel { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.pf-fakten { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: 12.5px; }
+.pf-fakten dt { color: var(--leise); }
+.pf-fakten dd { margin: 0; overflow-wrap: anywhere; }
+.pf-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pf-freigabe { display: grid; gap: 7px; padding: 10px 12px; border: 1px solid var(--warn); border-radius: 10px; background: rgba(251, 191, 36, .07); }
+.pf-freigabe.hoch { border-color: var(--schlecht); background: rgba(248, 113, 113, .13); }
+.pf-reihe { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pf-kommentar { display: grid; gap: 6px; justify-items: end; }
+.pf-kommentar textarea { width: 100%; resize: vertical; }
+.pf-detail > .leise-knopf { align-self: flex-start; }
+.pf-verlauf { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.pf-verlauf li { display: grid; gap: 2px; padding-left: 10px; border-left: 2px solid var(--linie); }
+.pf-verlauf li.pf-kommentar-eintrag { border-left-color: var(--fokus); }
+
+/* Kalender */
+.pf-woche { display: grid; flex: 1; grid-template-columns: repeat(7, minmax(130px, 1fr)); gap: 8px; min-height: 0; padding: 14px 18px; overflow: auto; }
+.pf-tag { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px; border: 1px solid var(--linie); border-radius: 10px; background: var(--flaeche); }
+.pf-tag.heute { border-color: var(--fokus); }
+.pf-tag.heute > .pf-spalte-kopf { color: var(--text); }
+.pf-termin { display: grid; gap: 2px; width: 100%; padding: 6px 8px; text-align: left; border-color: var(--linie); border-radius: 8px; background: var(--flaeche2); }
+.pf-termin.exklusiv { border-left: 3px solid var(--warn); }
+.pf-zeit { color: var(--leise); font-family: var(--mono); font-size: 11.5px; }
+
+/* Ereignisse */
+.pf-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pf-chip { padding: 2px 10px; border-radius: 999px; background: transparent; color: var(--leise); font-size: 12.5px; }
+.pf-chip.an { color: var(--text); border-color: var(--fokus); background: var(--wahl); }
+.pf-ereignisse { display: grid; flex: 1; align-content: start; gap: 8px; min-height: 0; margin: 0; padding: 14px 18px; overflow: auto; list-style: none; }
+.pf-ereignis { display: grid; gap: 4px; padding: 8px 11px; border: 1px solid var(--linie); border-radius: 10px; background: var(--flaeche); }
+.pf-ereignis.besitzer { border-left: 3px solid var(--fokus); }
+.pf-ereignis-kopf { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+@media (max-width: 900px) {
+  .pf-koerper { flex-direction: column; overflow: auto; }
+  .pf-brett { flex: none; }
+  .pf-detail { flex: none; border-left: 0; border-top: 1px solid var(--linie); }
+  .pf-woche { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-karte { transition: none; }
+}

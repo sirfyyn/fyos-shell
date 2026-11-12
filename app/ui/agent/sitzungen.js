@@ -96,9 +96,11 @@
           pfad: cwd || (b && b.pfad ? b.pfad : ''),
           laeuft: sicher.has(String(g.id)) || !!(aktiv && aktiv.laeuft(g.id)),
           archiviert: !!g.archiviert,
+          angepinnt: g.angepinnt === true && !g.archiviert,
         };
       })
-      .sort((a, b) => b.zeit - a.zeit);
+      // angepinnte Sitzungen stehen oben (untereinander nach Aktivität), dann die übrigen, neueste zuerst
+      .sort((a, b) => Number(b.angepinnt) - Number(a.angepinnt) || b.zeit - a.zeit);
     const offen = zeilen.filter((z) => !z.archiviert);
     return {
       sitzungen: offen.filter((z) => HAUPT_ARTEN.has(z.art)),
@@ -123,7 +125,7 @@
     return { name: letzterOrdner(pfad) || (bereich && bereich.titel) || '', pfad };
   }
 
-  // --- Benennen, Umbenennen, Archivieren (PATCH /api/gespraech/:id; der Körper trägt nur `titel` und `archiviert`) ---
+  // --- Benennen, Umbenennen, Archivieren, Anpinnen (PATCH /api/gespraech/:id; der Körper trägt nur `titel`, `archiviert` oder `angepinnt`) ---
   /** Längster Name, den der Runner annimmt (POST /api/gespraeche und PATCH schneiden bei 120 Zeichen ab). */
   const TITEL_MAX = 120;
 
@@ -135,11 +137,12 @@
     return { ok: true, titel };
   }
 
-  /** Der Körper einer Änderung: nur `titel` (Text) und `archiviert` (Wahrheitswert) gehen zum Runner, alles andere fällt weg. */
+  /** Der Körper einer Änderung: nur `titel` (Text), `archiviert` und `angepinnt` (Wahrheitswerte) gehen zum Runner, alles andere fällt weg. */
   function aenderungsKoerper(felder) {
     const k = {};
     if (felder && typeof felder.titel === 'string') k.titel = felder.titel;
     if (felder && typeof felder.archiviert === 'boolean') k.archiviert = felder.archiviert;
+    if (felder && typeof felder.angepinnt === 'boolean') k.angepinnt = felder.angepinnt;
     return k;
   }
 
@@ -182,6 +185,30 @@
           throw melde(f, an ? 'Nicht archiviert:' : 'Nicht wiederhergestellt:');
         }
         return { archiviert: !!an };
+      },
+      /** Sitzung oben in der Liste festhalten oder lösen. Ältere Runner kennen das Feld nicht: dann bleibt die Antwort ohne `angepinnt`, und der Aufrufer meldet es. */
+      async anpinnen(id, an) {
+        let r;
+        try {
+          r = await transport.api('PATCH', weg(id), aenderungsKoerper({ angepinnt: !!an }));
+        } catch (f) {
+          throw melde(f, an ? 'Nicht angepinnt:' : 'Nicht gelöst:');
+        }
+        const meta = r && r.gespraech && r.gespraech.meta;
+        if (!meta || typeof meta.angepinnt !== 'boolean') throw new Error('Dieser Runner kann Sitzungen noch nicht anpinnen.');
+        return { angepinnt: meta.angepinnt };
+      },
+      /** Modus der Sitzung wechseln (planen, fragen, frei, umgehen): PATCH mit genau einem Feld `modus`. Ein Runner ohne Modus je Sitzung wird gemeldet. */
+      async sitzungsmodus(id, modus) {
+        let r;
+        try {
+          r = await transport.api('PATCH', weg(id), { modus: String(modus) });
+        } catch (f) {
+          throw melde(f, 'Modus nicht gewechselt:');
+        }
+        const m = r && r.gespraech && r.gespraech.meta && r.gespraech.meta.modus;
+        if (typeof m !== 'string' || !m) throw new Error('Modus nicht gewechselt: Dieser Runner kennt keinen Modus je Sitzung.');
+        return { modus: m };
       },
       /** Modell der Sitzung wechseln (Wähler im Fuß des Eingabefelds): PATCH mit genau einem Feld `modell` (Kennung aus GET /api/modelle, null = Standard des Runners). */
       async modell(id, modellId) {

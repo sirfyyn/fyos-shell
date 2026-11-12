@@ -65,6 +65,6 @@
 .ae-knoten.lade { opacity: .7; }
 .ae-knoten .ae-groesse { margin-left: auto; font-size: 11px; color: var(--leise); font-variant-numeric: tabular-nums; }
 .ae-knoten .ae-gelesen-marke { margin-left: 6px; }
-.ae-knoten[data-beruehrt="1"] .ae-dname { color: var(--akzent); }
+.ae-knoten[data-beruehrt="1"] .ae-dname { color: var(--warn); }
 .ae-baum-meldung { margin: 2px 0 2px 28px; font-size: 11.5px; color: var(--leise); }
 .ae-baum-meldung.fehler { color: var(--schlecht); }

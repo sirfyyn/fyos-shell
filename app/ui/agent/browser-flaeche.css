@@ -1,0 +1,38 @@
+/* Browser-Fläche (browser-flaeche.js): rechts neben dem Gespräch, Bild der Seite mit Adresszeile. Baut auf chat.css auf (gleiche Variablen). */
+.app.flaeche-auf { grid-template-columns: var(--leiste-breite, 332px) minmax(0, 1fr) minmax(380px, 40%); }
+.app.leiste-zu.flaeche-auf { grid-template-columns: 0 minmax(0, 1fr) minmax(380px, 40%); }
+/* Neben der Fläche wird das Gespräch schmaler: seine Spalte darf unter die Breite ihres Kopfes schrumpfen, der Kopf bricht dann um */
+.app.flaeche-auf .haupt { grid-template-columns: minmax(0, 1fr); }
+.app.flaeche-auf .kopf { flex-wrap: wrap; row-gap: 6px; }
+.flaeche { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100vh; background: var(--flaeche); border-left: 1px solid var(--linie); }
+.flaeche[hidden] { display: none; }
+
+.bf-kopf { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+.bf-titel { flex: none; font-size: 13.5px; font-weight: 600; }
+.bf-lage { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--leise); }
+.bf-leiste { display: flex; align-items: center; gap: 6px; padding: 0 12px 9px; border-bottom: 1px solid var(--linie); }
+.bf-knopf { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; color: var(--leise); }
+.bf-knopf:hover:not(:disabled) { color: var(--text); }
+.bf-knopf:disabled { opacity: .4; cursor: default; }
+.bf-knopf svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.bf-form { flex: 1; min-width: 0; display: flex; margin: 0; }
+.bf-adresse { flex: 1; min-width: 0; padding: 5px 9px; border: 1px solid var(--linie); border-radius: 8px; background: var(--code-hg); color: var(--text); font: 12.5px var(--mono); }
+.bf-adresse::placeholder { color: var(--leise); opacity: 1; font-family: inherit; }
+.bf-adresse:focus-visible { outline: none; border-color: var(--fokus); }
+.bf-adresse:disabled { opacity: .5; }
+
+/* Bühne: das Bild der Seite in voller Breite (so trifft ein Klick im Bild dieselbe Stelle der Seite), bei hohen Seiten mit Rollbalken */
+.bf-buehne { flex: 1; min-height: 0; overflow: auto; padding: 10px; background: var(--hg); }
+.bf-buehne:focus-visible { outline: 2px solid var(--fokus); outline-offset: -2px; }
+.bf-bild { display: block; width: 100%; height: auto; border: 1px solid var(--linie); border-radius: 8px; background: #fff; }
+.bf-bild[hidden] { display: none; }
+.bf-hinweis { margin: 14px 6px; font-size: 13px; line-height: 1.5; color: var(--leise); overflow-wrap: anywhere; }
+.bf-hinweis.fehler { color: var(--schlecht); }
+.bf-hinweis[hidden] { display: none; }
+
+/* Schmales Fenster: die Fläche liegt über dem Gespräch statt daneben */
+@media (max-width: 1180px) {
+  .app.flaeche-auf { grid-template-columns: var(--leiste-breite, 332px) minmax(0, 1fr); }
+  .app.leiste-zu.flaeche-auf { grid-template-columns: 0 minmax(0, 1fr); }
+  .flaeche { position: absolute; z-index: 25; top: 0; right: 0; bottom: 0; width: min(100%, 620px); box-shadow: -8px 0 24px rgba(0, 0, 0, .35); }
+}

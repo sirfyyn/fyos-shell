@@ -26,10 +26,18 @@ pub fn methode_erlaubt(methode: &str) -> Option<&'static str> {
     }
 }
 
-/// Welche Ströme darf die Seite öffnen? Kanal `strom`: `/api/strom`; Kanal `gespraech`: `/api/gespraech/<id>/ereignisse`.
+/// Welche Ströme darf die Seite öffnen? Kanal `strom`: `/api/strom`; Kanal `gespraech`: `/api/gespraech/<id>/ereignisse`;
+/// Kanal `bus`: `/api/bus/stream` mit `topic` und `after` (Ereignisse der Runner-Plattform).
 pub fn strom_pfad_ok(kanal: &str, pfad: &str) -> bool {
     match kanal {
         "strom" => pfad == "/api/strom",
+        "bus" => pfad
+            .strip_prefix("/api/bus/stream")
+            .map(|rest| match rest.strip_prefix('?') {
+                Some(abfrage) => abfrage.len() <= 120 && abfrage.chars().all(|c| c.is_ascii_alphanumeric() || "=&._:-".contains(c)),
+                None => rest.is_empty(),
+            })
+            .unwrap_or(false),
         "gespraech" => pfad
             .strip_prefix("/api/gespraech/")
             .and_then(|r| r.strip_suffix("/ereignisse"))
@@ -242,6 +250,12 @@ mod tests {
         }
         assert!(!strom_pfad_ok("strom", "/api/dokumente"));
         assert!(!strom_pfad_ok("dokumente", "/api/dokumente"));
+        assert!(strom_pfad_ok("bus", "/api/bus/stream"));
+        assert!(strom_pfad_ok("bus", "/api/bus/stream?topic=inbox&after=12"));
+        for schlecht in ["/api/bus", "/api/bus/streamer", "/api/bus/stream?topic=a/b", "/api/bus/stream?x=%2F", "/api/bus/stream/../strom", "/api/strom"] {
+            assert!(!strom_pfad_ok("bus", schlecht), "{schlecht}");
+        }
+        assert!(!strom_pfad_ok("strom", "/api/bus/stream"));
     }
 
     #[test]

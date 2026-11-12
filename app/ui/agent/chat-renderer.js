@@ -33,6 +33,8 @@
   /** Für Karten: "0,4 s", "3,2 s", "12 s". */
   function dauerKurz(ms) {
     if (!Number.isFinite(ms) || ms < 0) return '';
+    // sehr kurze Aufrufe (gemessene Dauer des Runners) in Millisekunden statt „0 s“
+    if (ms < 100) return `${Math.round(ms)} ms`;
     if (ms < 10000) return `${(Math.round(ms / 100) / 10).toString().replace('.', ',')} s`;
     return dauerText(ms);
   }
@@ -358,6 +360,35 @@
     const freigaben = new Map();
     const alleTimer = new Set();
 
+    // Ein Dateipfad im Text der Antwort („src/x.js:12“; markdown-strom.js kennzeichnet ihn): Klick oder Enter öffnet die Datei an der Zeile.
+    // Die Seite entscheidet, wo (opts.onDatei); ohne sie bleibt der Pfad gewöhnlicher Code.
+    if (opts.onDatei) {
+      const pfadGewaehlt = (e) => {
+        const c = e.target && typeof e.target.closest === 'function' ? e.target.closest('code.inline.pfad') : null;
+        if (!c || !spalte.contains(c) || (e.type === 'keydown' && e.key !== 'Enter')) return;
+        e.preventDefault();
+        const p = FP.dateiFlaeche ? FP.dateiFlaeche.pfadMitZeile(c.textContent) : { pfad: c.textContent, zeile: 0 };
+        opts.onDatei({ art: 'datei', pfad: p.pfad, zeile: p.zeile });
+      };
+      spalte.addEventListener('click', pfadGewaehlt);
+      spalte.addEventListener('keydown', pfadGewaehlt);
+    }
+    /** Karte eines Datei-Werkzeugs: ein Knopf öffnet die Datei rechts als Fläche (bei `read` an der gelesenen Stelle). */
+    const DATEI_WERKZEUG = /^(read|write|edit|multiedit|str_replace)$/;
+    function dateiAktion(t, args) {
+      if (!opts.onDatei || !t.aktionen || !DATEI_WERKZEUG.test(String(t.name || '').toLowerCase())) return;
+      const pfad = args && (args.path || args.file_path || args.pfad);
+      t.aktionen.textContent = '';
+      t.aktionen.hidden = !(typeof pfad === 'string' && pfad);
+      if (t.aktionen.hidden) return;
+      const zeile = Number(args.offset) > 0 ? Math.trunc(Number(args.offset)) : 0;
+      const b = el('button', 'leise-knopf karte-aktion', 'Datei öffnen');
+      b.type = 'button';
+      b.title = zeile ? `Rechts neben dem Gespräch öffnen, an Zeile ${zeile}` : 'Rechts neben dem Gespräch öffnen';
+      b.addEventListener('click', () => opts.onDatei({ art: 'datei', pfad, zeile }));
+      t.aktionen.appendChild(b);
+    }
+
     const melde = () => opts.onZustand && opts.onZustand(zustand());
     function zustand() {
       let offene = 0;
@@ -389,9 +420,30 @@
       else queue.push(op);
       plane();
     }
+    // Wache: bekommt das Fenster keine Animationsbilder, ohne sich für versteckt zu halten (ein verdeckter Bereich einer App, ein eingebettetes
+    // Fenster), bliebe die Warteschlange stehen und die Antwort unsichtbar. Dann zieht ein Zeitgeber den nächsten Schritt nach.
+    const wacheMs = opts.wacheMs === undefined ? 300 : opts.wacheMs;
+    let wache = null;
+    const bildZeit = () => (win.performance && typeof win.performance.now === 'function' ? win.performance.now() : now());
+    function wacheAus() {
+      if (wache === null) return;
+      win.clearTimeout(wache);
+      wache = null;
+    }
+    function takt() {
+      rafId = raf(tick);
+      if (!(wacheMs > 0) || wache !== null) return;
+      wache = win.setTimeout(() => {
+        wache = null;
+        if (rafId == null) return;
+        caf(rafId);
+        stats.wache = (stats.wache || 0) + 1;
+        tick(bildZeit());
+      }, wacheMs);
+    }
     function plane() {
       if (rafId != null || !queue.length) return;
-      rafId = raf(tick);
+      takt();
     }
     function rueckstand() {
       let n = 0;
@@ -400,6 +452,7 @@
     }
     function tick(ts) {
       rafId = null;
+      wacheAus();
       const dt = letzteZeit ? Math.min(100, Math.max(1, ts - letzteZeit)) : 16;
       letzteZeit = ts;
       // Rückstand holt sich selbst auf: je mehr wartet, desto schneller (kein ewiges Hinterherlaufen)
@@ -422,10 +475,11 @@
         if (!h.s) queue.shift();
         textSchreiben(teil);
       }
-      if (queue.length) rafId = raf(tick);
+      if (queue.length) takt();
       else letzteZeit = 0;
     }
     function flush() {
+      wacheAus();
       if (rafId != null) {
         caf(rafId);
         rafId = null;
@@ -437,6 +491,7 @@
 
     // --- Bausteine -----------------------------------------------------------
     function teil(e) {
+      warteWeg(); // es kommt Inhalt: gewartet wird nicht mehr
       if (!turn) startTurnDom({});
       e.classList.add('ein');
       turn.appendChild(e);
@@ -492,6 +547,8 @@
       flush();
       schliesseText();
       const wrap = el('div', 'mensch ein');
+      // Kennung des Eintrags beim Runner: daran hängen der Stand („Hierher zurück“) und das Zurückspulen (addZurueck)
+      if (m.kenn !== undefined && m.kenn !== null) wrap.dataset.eintrag = String(m.kenn);
       const blase = el('div', 'blase');
       const text = String(m.text == null ? '' : m.text);
       const re = /(^|\s)(@[\w./-]+)/g;
@@ -500,11 +557,52 @@
       while ((x = re.exec(text))) {
         const start = x.index + x[1].length;
         if (start > l) blase.appendChild(doc.createTextNode(text.slice(l, start)));
-        blase.appendChild(el('span', 'erwaehnung', x[2]));
+        // eine genannte Datei (@pfad) lässt sich öffnen, wenn die Seite das anbietet
+        const erw = el(opts.onDatei ? 'button' : 'span', 'erwaehnung', x[2]);
+        if (opts.onDatei) {
+          const pfad = x[2].slice(1);
+          erw.type = 'button';
+          erw.title = 'Datei rechts neben dem Gespräch öffnen';
+          erw.addEventListener('click', () => opts.onDatei({ art: 'datei', pfad, zeile: 0 }));
+        }
+        blase.appendChild(erw);
         l = start + x[2].length;
       }
       if (l < text.length) blase.appendChild(doc.createTextNode(text.slice(l)));
-      wrap.appendChild(blase);
+      if (text) wrap.appendChild(blase);
+      // Anhänge der Nachricht: ein Bild mit der kleinen Vorschau des Runners (nur eine geprüfte data-Adresse, runner-wege.js), eine Datei mit Namen
+      const anhaenge = Array.isArray(m.anhaenge) ? m.anhaenge : [];
+      if (anhaenge.length) {
+        const reihe = el('div', 'mensch-anhaenge');
+        reihe.setAttribute('aria-label', 'Anhänge');
+        for (const a of anhaenge) {
+          // liegt der Anhang beim Runner (er nennt den Ort), öffnet ein Klick ihn rechts als Fläche: das Bild groß, die Datei mit ihrem Inhalt
+          const klickbar = !!(opts.onAnhang && a.pfad);
+          reihe.setAttribute('role', klickbar ? 'group' : 'list');
+          const kachel = el(klickbar ? 'button' : 'span', `anhang-kachel ${a.art === 'bild' ? 'bild' : 'datei'}`);
+          if (klickbar) {
+            kachel.type = 'button';
+            kachel.addEventListener('click', () => opts.onAnhang(a));
+          } else kachel.setAttribute('role', 'listitem');
+          // Ein Bild, das das Modell nicht sieht (es hat keinen Bildteil), liegt nur als Datei beim Agenten: das steht sichtbar an der Kachel
+          const ungesehen = a.art === 'bild' && a.ansModell === false && a.groesse > 0;
+          const angaben = [a.name, a.breite && a.hoehe ? `${a.breite} × ${a.hoehe}` : '', ungesehen ? 'das Modell sieht es nicht, der Agent hat es als Datei' : ''].filter(Boolean).join(' · ');
+          kachel.title = a.pfad ? `${angaben}\n${a.pfad}` : angaben;
+          if (a.art === 'bild' && a.vorschau) {
+            const bild = el('img', 'anhang-vorschau');
+            bild.alt = `Bild ${a.name}`;
+            bild.src = a.vorschau;
+            kachel.appendChild(bild);
+          }
+          kachel.appendChild(el('span', 'anhang-kachel-name', a.name));
+          if (ungesehen) {
+            kachel.classList.add('ungesehen');
+            kachel.appendChild(el('span', 'anhang-kachel-hinweis', 'nur als Datei, das Modell sieht keine Bilder'));
+          }
+          reihe.appendChild(kachel);
+        }
+        wrap.appendChild(reihe);
+      }
       const hinweis = el('div', 'mensch-hinweis', 'wird nach dem Zug gesendet');
       hinweis.hidden = !m.queued;
       if (m.queued) wrap.classList.add('eingereiht');
@@ -729,21 +827,24 @@
       const liste = el('div', 'gruppe-liste');
       const auf = aufklapp(liste);
       g.append(kopf, auf);
-      aufklappKnopf(kopf, auf, false);
+      const setze = aufklappKnopf(kopf, auf, false);
       teil(g);
-      gruppe = { el: g, liste, label, detail, dauer, lesen: 0, suchen: 0, andere: 0, ms: 0, laufend: 0 };
+      gruppe = { el: g, liste, label, detail, dauer, setze, lesen: 0, suchen: 0, andere: 0, misslungen: 0, ms: 0, laufend: 0 };
       return gruppe;
     }
     function gruppeAktualisiere(g) {
       const t = [];
       if (g.lesen) t.push(g.lesen === 1 ? '1 Datei gelesen' : `${g.lesen} Dateien gelesen`);
       if (g.suchen) t.push(g.suchen === 1 ? '1 Suche' : `${g.suchen} Suchen`);
+      // Was scheiterte, abgewiesen oder abgebrochen wurde, zählt nicht als gelesen: die zugeklappte Gruppe nennt es beim Namen
+      if (g.misslungen) t.push(`${g.misslungen} nicht gelungen`);
       g.label.textContent = t.join(' · ') || 'Werkzeuge';
       g.el.dataset.zustand = g.laufend > 0 ? 'laeuft' : 'fertig';
       g.dauer.textContent = g.laufend > 0 ? '' : dauerKurz(g.ms);
     }
 
     function startToolDom(m, t0) {
+      warteWeg(); // ein Werkzeug läuft: auf das Modell wird nicht gewartet (auch wenn die Karte in eine bestehende Gruppe kommt)
       if (denken && !denken.fertig) endThinkingDom();
       schliesseText();
       const { art, label } = artVon(m.name);
@@ -785,6 +886,10 @@
       }
       const diffHalter = el('div', 'diff-halter');
       body.appendChild(diffHalter);
+      // Zeile für „Datei öffnen“ (nur Datei-Werkzeuge, nur wenn die Seite Flächen anbietet), über Eingabe und Ausgabe
+      const aktionen = el('div', 'karte-aktionen');
+      aktionen.hidden = true;
+      body.insertBefore(aktionen, body.firstChild);
       const auf = aufklapp(body);
       card.append(kopf, auf);
       const setze = aufklappKnopf(kopf, auf, art === 'bash');
@@ -800,10 +905,12 @@
         chips,
         ausgabe,
         diffHalter,
+        aktionen,
         setze,
         kf,
         grp: null,
       };
+      dateiAktion(t, m.args);
       if (grp) {
         const g = gruppeSicher();
         g.liste.appendChild(card);
@@ -830,6 +937,7 @@
           const t = tools.get(id);
           if (!t) return;
           if (u.args) {
+            dateiAktion(t, u.args);
             t.kf.textContent = kurzfassung(t.name, u.args);
             const e = t.card.querySelector('.eingabe');
             if (e && t.art !== 'edit') {
@@ -840,15 +948,25 @@
           if (typeof u.set === 'string') {
             t.ausgabe.el.hidden = false;
             t.ausgabe.setze(u.set);
+            t.roh = u.set;
           }
           if (typeof u.append === 'string' && u.append) {
             t.ausgabe.el.hidden = false;
             t.ausgabe.append(u.append);
+            t.roh = (t.roh || '') + u.append;
           }
           folge.follow();
         },
       });
     }
+    /** Ausgabe, wie sie zu lesen ist: ohne Terminal-Steuerzeichen und ohne überschriebene Fortschrittszeilen. Nur zum Vergleich mit dem live Gezeigten. */
+    const sichtText = (s) =>
+      String(s || '')
+        .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+        .split('\n')
+        .map((z) => z.slice(z.lastIndexOf('\r') + 1))
+        .join('\n')
+        .trimEnd();
     function endToolDom(id, r, t1) {
       const t = tools.get(id);
       if (!t || t.status !== 'laeuft') return;
@@ -862,9 +980,42 @@
       if (typeof r.output === 'string' && t.ausgabe.leer) {
         t.ausgabe.el.hidden = !r.output;
         if (r.output) t.ausgabe.append(r.output);
+      } else if (typeof r.output === 'string' && sichtText(r.output).length > sichtText(t.roh).length) {
+        // Was live ankam, ist nicht immer vollständig (ein Stück fehlte, etwa die Fehlerausgabe). Enthält die gespeicherte Ausgabe mehr,
+        // gilt sie: dieselbe, die ein erneutes Öffnen der Sitzung zeigt. Sonst bleibt, was live zu sehen war (Farben, mehr als das behaltene Ende).
+        t.ausgabe.setze(r.output);
+        t.roh = r.output;
+      }
+      // Exit-Code eines Befehls: Fußzeile im Terminal, bei einem Fehler auch im Kopf der Karte (dort sieht man ihn zugeklappt)
+      if (t.art === 'bash' && typeof r.exit === 'number') {
+        const fuss = el('div', r.exit === 0 ? 'terminal-fuss' : 'terminal-fuss fehler', `Exit ${r.exit}`);
+        fuss.setAttribute('aria-label', r.exit === 0 ? 'Befehl erfolgreich beendet, Exit-Code 0' : `Befehl fehlgeschlagen, Exit-Code ${r.exit}`);
+        (t.ausgabe.el.parentNode || t.diffHalter.parentNode).appendChild(fuss);
+        if (r.exit !== 0) t.chips.appendChild(el('span', 'exit', `Exit ${r.exit}`));
+      }
+      // Meldungen des Runners zu diesem Aufruf (gekürzte Ausgabe, Hinweis der Wache, Grund einer Abweisung): eigene Zeilen unter der Ausgabe
+      if (Array.isArray(r.hinweise) && r.hinweise.length) {
+        const box = el('div', 'karte-hinweise');
+        for (const h of r.hinweise) box.appendChild(el('div', `karte-hinweis ${h.stufe === 'error' ? 'fehler' : h.stufe === 'warn' ? 'warn' : ''}`.trim(), String(h.text || '')));
+        t.diffHalter.parentNode.insertBefore(box, t.diffHalter);
+        // ein abgewiesener Aufruf zeigt seinen Grund ohne Klick, auch wenn er in einer Gruppe steht (dann geht die Gruppe mit auf)
+        if (r.abgewiesen) {
+          t.setze(true);
+          if (t.grp) t.grp.setze(true);
+        }
       }
       if (r.diff) {
-        t.diffHalter.appendChild(erzeugeDiff(r.diff));
+        const d = erzeugeDiff(r.diff);
+        // die Änderung dieses Aufrufs groß: rechts neben dem Gespräch als Fläche
+        if (opts.onDatei && r.diff.datei) {
+          const gross = el('button', 'leise-knopf diff-auf', 'Groß ansehen');
+          gross.type = 'button';
+          gross.title = 'Diese Änderung rechts neben dem Gespräch zeigen';
+          gross.addEventListener('click', () => opts.onDatei({ art: 'diff', pfad: r.diff.datei, diff: r.diff }));
+          const kopfD = d.querySelector('.diff-kopf');
+          if (kopfD) kopfD.insertBefore(gross, kopfD.lastChild);
+        }
+        t.diffHalter.appendChild(d);
         const z = diffZahlen(r.diff);
         t.chips.appendChild(diffChips(z));
         t.setze(true);
@@ -873,6 +1024,11 @@
       if (t.grp) {
         t.grp.laufend = Math.max(0, t.grp.laufend - 1);
         t.grp.ms += ms;
+        if (status !== 'fertig') {
+          if (t.art === 'lesen') t.grp.lesen = Math.max(0, t.grp.lesen - 1);
+          else t.grp.suchen = Math.max(0, t.grp.suchen - 1);
+          t.grp.misslungen += 1;
+        }
         gruppeAktualisiere(t.grp);
       }
       ansage.sage(status === 'fehler' ? `${artVon(t.name).label} fehlgeschlagen` : `${artVon(t.name).label} fertig`);
@@ -894,25 +1050,44 @@
           schliesseText();
           gruppe = null;
           const risiko = RISIKO[m.risiko] ? m.risiko : 'medium';
-          const box = el('section', 'freigabe');
+          // Ein Plan des Agenten (Modus „planen“) ist dieselbe Karte mit dem Plan als Inhalt und „Ändern“ als drittem Weg
+          const istPlan = m.art === 'plan';
+          const box = el('section', istPlan ? 'freigabe plan' : 'freigabe');
           box.setAttribute('role', 'group');
-          box.setAttribute('aria-label', 'Freigabe erbeten');
+          box.setAttribute('aria-label', istPlan ? 'Plan zur Entscheidung' : 'Freigabe erbeten');
           box.dataset.zustand = 'offen';
           box.dataset.risiko = risiko;
           const kopf = el('div', 'fz-kopf');
           const frage = el('div', 'fz-frage');
-          frage.append(doc.createTextNode(`${anzeigename()} will: `), el('strong', null, m.aktion), m.ziel ? doc.createTextNode(' ') : doc.createTextNode(''));
-          if (m.ziel) frage.appendChild(el('code', 'inline', m.ziel));
-          const chip = el('span', 'chip risiko', RISIKO[risiko]);
+          if (istPlan) frage.append(doc.createTextNode(`${anzeigename()} legt einen Plan vor: `), el('strong', null, m.aktion));
+          else frage.append(doc.createTextNode(`${anzeigename()} will: `), el('strong', null, m.aktion), m.ziel ? doc.createTextNode(' ') : doc.createTextNode(''));
+          if (m.ziel && !istPlan) frage.appendChild(el('code', 'inline', m.ziel));
+          const chip = istPlan ? el('span', 'chip', 'Plan') : el('span', 'chip risiko', RISIKO[risiko]);
           kopf.append(frage, chip);
+          // Der Befehl, um den es geht: ganz und unverändert, damit niemand etwas erlaubt, das er nicht sieht
+          let befehlEl = null;
+          if (m.befehl && !istPlan) {
+            befehlEl = el('pre', 'fz-befehl', String(m.befehl));
+            befehlEl.setAttribute('aria-label', 'Befehl');
+            befehlEl.tabIndex = 0;
+          }
           const ktx = el('div', 'fz-kontext', m.kontext || '');
           ktx.hidden = !m.kontext;
+          // Der Plan selbst, als Markdown gezeichnet (nur Text des Runners, kein HTML)
+          let planEl = null;
+          if (istPlan && m.plan) {
+            planEl = el('div', 'fz-plan md');
+            const md = FP.createMarkdownStream(planEl);
+            md.write(String(m.plan));
+            md.end();
+          }
           const knoepfe = el('div', 'fz-knoepfe');
-          // Je Aktion eine eigene Freigabe: nur Erlauben oder Ablehnen (mit optionaler Notiz), keine Pauschalmodi
+          // Je Aktion eine eigene Freigabe: Erlauben oder Ablehnen (mit optionaler Notiz). Bietet der Runner es an (m.sitzung),
+          // gilt die Zustimmung auf Wunsch für den Rest der Sitzung.
           const notiz = el('input', 'fz-notiz');
           notiz.type = 'text';
-          notiz.placeholder = 'Notiz (optional)';
-          notiz.setAttribute('aria-label', 'Notiz zur Entscheidung (optional)');
+          notiz.placeholder = istPlan ? 'Was soll anders sein? (für „Ändern“)' : 'Notiz (optional)';
+          notiz.setAttribute('aria-label', istPlan ? 'Anmerkung zum Plan, bei „Ändern“ nötig' : 'Notiz zur Entscheidung (optional)');
           notiz.maxLength = 400;
           notiz.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter') {
@@ -924,26 +1099,49 @@
               entscheide(m.id, 'ablehnen', false, notiz.value);
             }
           });
-          const mk = (text, taste, cls, wert) => {
+          const mk = (text, taste, cls, beiKlick) => {
             const b = el('button', cls);
             b.type = 'button';
             b.setAttribute('aria-keyshortcuts', taste);
             b.append(doc.createTextNode(text + ' '), el('kbd', null, taste));
-            b.addEventListener('click', () => entscheide(m.id, wert, false, notiz.value));
+            b.addEventListener('click', beiKlick);
             return b;
           };
-          const b1 = mk('Erlauben', '1', 'primaer', 'erlauben');
-          const b3 = mk('Ablehnen', '2', 'gefahr', 'ablehnen');
-          knoepfe.append(b1, b3, notiz);
+          const b1 = mk(istPlan ? 'Plan ausführen' : 'Erlauben', '1', 'primaer', () => entscheide(m.id, 'erlauben', false, notiz.value));
+          const b3 = mk('Ablehnen', '2', 'gefahr', () => entscheide(m.id, 'ablehnen', false, notiz.value));
+          // Dritter Weg (Taste 3): beim Plan „Ändern“ (braucht die Anmerkung), bei einer Rückfrage „Für diese Sitzung“
+          let dritter = null;
+          let b4 = null;
+          if (istPlan) {
+            dritter = () => {
+              if (!notiz.value.trim()) {
+                notiz.placeholder = 'Schreib kurz, was anders sein soll';
+                notiz.setAttribute('aria-invalid', 'true');
+                notiz.focus();
+                return;
+              }
+              entscheide(m.id, 'aendern', false, notiz.value);
+            };
+            b4 = mk('Ändern', '3', 'fz-dritter', dritter);
+          } else if (m.sitzung) {
+            dritter = () => entscheide(m.id, 'erlauben', false, notiz.value, { sitzung: true });
+            b4 = mk('Für diese Sitzung', '3', 'fz-dritter', dritter);
+            b4.title = 'Erlauben und bei dieser Art von Aufruf in dieser Sitzung nicht mehr fragen';
+          }
+          knoepfe.append(...[b1, b4, b3, notiz].filter(Boolean));
           const b2 = notiz;
           const aktionen = aufklapp(knoepfe);
           aktionen.classList.add('offen', 'fz-aktionen');
           const ergebnis = el('div', 'fz-ergebnis');
-          box.append(kopf, ktx, aktionen, ergebnis);
-          const f = { id: m.id, box, aktionen, ergebnis, loese, offen: true, aktion: m.aktion, buttons: [b1, b2, b3] };
+          box.append(...[kopf, befehlEl, ktx, planEl, aktionen, ergebnis].filter(Boolean));
+          const f = { id: m.id, box, aktionen, ergebnis, loese, offen: true, aktion: m.aktion, buttons: [b1, b2, b3, b4].filter(Boolean), plan: istPlan, dritter };
           teil(box);
           freigaben.set(m.id, f);
-          ansage.sage(`Freigabe erbeten: ${m.aktion}${m.ziel ? ' ' + m.ziel : ''}. ${RISIKO[risiko]}. Taste 1 erlauben, 2 ablehnen.`);
+          ansage.sage(
+            istPlan
+              ? `Plan zur Entscheidung: ${m.aktion}. Taste 1 ausführen, 2 ablehnen, 3 ändern.`
+              : `Freigabe erbeten: ${m.aktion}${m.befehl ? ': ' + String(m.befehl).replace(/\s+/g, ' ').slice(0, 200) : m.ziel ? ' ' + m.ziel : ''}. ${RISIKO[risiko]}. Taste 1 erlauben, 2 ablehnen${m.sitzung ? ', 3 für diese Sitzung erlauben' : ''}.`,
+          );
           if (!opts.darfFokus || opts.darfFokus()) {
             try {
               b1.focus({ preventScroll: true });
@@ -956,18 +1154,23 @@
       });
       return versprechen;
     }
-    function entscheide(id, wert, extern, notiz) {
+    /** wert: 'erlauben' | 'ablehnen' | 'aendern' (nur Plan); extra: { sitzung } (Zustimmung für den Rest der Sitzung). */
+    function entscheide(id, wert, extern, notiz, extra) {
       const f = freigaben.get(id);
       if (!f || !f.offen) return false;
       f.offen = false;
       const ok = wert === 'erlauben';
+      const anders = wert === 'aendern';
+      const sitzung = !!(extra && extra.sitzung);
       const n = String(notiz || '').trim();
-      f.box.dataset.zustand = ok ? 'erlaubt' : 'abgelehnt';
+      f.box.dataset.zustand = ok ? 'erlaubt' : anders ? 'geaendert' : 'abgelehnt';
       f.aktionen.classList.remove('offen');
-      f.ergebnis.textContent = `${ok ? 'Erlaubt' : 'Abgelehnt'}: ${f.aktion}${n ? ` · ${n}` : ''}`;
+      const wort = f.plan ? (ok ? 'Plan wird ausgeführt' : anders ? 'Änderung gewünscht' : 'Plan abgelehnt') : ok ? (sitzung ? 'Für diese Sitzung erlaubt' : 'Erlaubt') : 'Abgelehnt';
+      f.ergebnis.textContent = `${wort}: ${f.aktion}${n ? ` · ${n}` : ''}`;
       ansage.sage(f.ergebnis.textContent);
-      f.loese({ wert, notiz: n });
-      if (opts.onEntscheidung && !extern) opts.onEntscheidung(id, wert, n);
+      // `extern`: die Entscheidung kam vom Runner (anderes Fenster, Panel); wer das Versprechen liest, sendet sie nicht noch einmal
+      f.loese({ wert, notiz: n, sitzung, extern: !!extern });
+      if (opts.onEntscheidung && !extern) opts.onEntscheidung(id, wert, n, { sitzung });
       folge.follow();
       melde();
       return true;
@@ -978,7 +1181,14 @@
         fn: () => {
           schliesseText();
           gruppe = null;
-          teil(el('div', `notiz ${art || ''}`.trim(), text));
+          const n = el('div', `notiz ${art || ''}`.trim(), text);
+          // Außerhalb eines Zugs steht die Zeile für sich: kein leerer Kopf des Agenten, und die Ansicht gilt nicht als beschäftigt
+          if (turn) teil(n);
+          else {
+            n.classList.add('ein');
+            spalte.appendChild(n);
+            folge.follow();
+          }
         },
       });
     }
@@ -990,6 +1200,12 @@
       const f = offeneFreigabe();
       if (!f || e.metaKey || e.ctrlKey || e.altKey) return false;
       const k = String(e.key).toLowerCase();
+      // Taste 3: der dritte Weg der Karte, wenn sie einen hat (Plan ändern, für die Sitzung erlauben)
+      if (k === '3' && f.dritter) {
+        if (e.preventDefault) e.preventDefault();
+        f.dritter();
+        return true;
+      }
       const wert = k === '1' || k === 'y' ? 'erlauben' : k === '2' || k === 'n' || k === 'escape' ? 'ablehnen' : null;
       if (!wert) return false;
       if (e.preventDefault) e.preventDefault();
@@ -1001,6 +1217,7 @@
     function addMarker(m) {
       enqueue({
         fn: () => {
+          warteWeg();
           schliesseText();
           gruppe = null;
           turn = null;
@@ -1013,6 +1230,7 @@
             text = text || (m.von != null && m.nach != null ? `Kontext verdichtet: ${zahlK(m.von)} → ${zahlK(m.nach)}` : 'Verlauf verdichtet');
             titel = 'Das Modell sieht ab hier die Zusammenfassung und das Folgende.';
           } else if (m.kind === 'abzweig') titel = 'Neues Gespräch ab dieser Stelle.';
+          else if (m.kind === 'halt') titel = 'Der Runner hat diesen Zug selbst beendet. Was dahinter eingereiht war, wurde zugestellt.';
           const mk = el('div', `marker ein`);
           mk.dataset.kind = m.kind || 'info';
           mk.setAttribute('role', 'note');
@@ -1025,11 +1243,125 @@
       });
     }
 
+    // --- Stände und Zurückspulen ---------------------------------------------
+    const nachrichtMit = (kenn) => {
+      for (const n of spalte.children) if (n.classList.contains('mensch') && n.dataset.eintrag === String(kenn)) return n;
+      return null;
+    };
+    const standZeile = (n) => {
+      for (const k of n.children) if (k.classList.contains('mensch-stand')) return k;
+      return null;
+    };
+    /**
+     * Der Runner hat zurückgespult (Eintrag `fyos.zurueck`). Mit `ab` (Kennung der Nachricht, ab der nichts mehr zählt) steht alles von dieser
+     * Nachricht bis hierher als zurückgenommen da: lesbar, aber blass. Darunter eine Zeile, die sagt, was geschah. `m`: { ab?, text }
+     */
+    function addZurueck(m) {
+      enqueue({
+        fn: () => {
+          warteWeg();
+          schliesseText();
+          gruppe = null;
+          turn = null;
+          if (m.ab !== undefined && m.ab !== null) {
+            for (let n = nachrichtMit(m.ab); n; n = n.nextElementSibling) {
+              n.classList.add('zurueckgenommen');
+              const stand = n.classList.contains('mensch') ? standZeile(n) : null;
+              if (stand) stand.remove();
+            }
+          }
+          const mk = el('div', 'marker ein');
+          mk.dataset.kind = 'zurueck';
+          mk.setAttribute('role', 'note');
+          mk.append(el('span', 'linie'), el('span', 'marker-text', m.text || 'Zurückgesetzt'), el('span', 'linie'));
+          spalte.appendChild(mk);
+          folge.follow();
+          ansage.sage(m.text || 'Zurückgesetzt');
+        },
+      });
+    }
+    /**
+     * Unter jede Nachricht, vor der es einen Stand gibt (der Agent hat auf sie hin Dateien geändert), eine Zeile „Stand 17:31 · Hierher zurück“.
+     * `liste`: [{ id (Kennung der Nachricht), text (z. B. „Stand 17:31 · 2 Dateien“) }]; `beiKlick(id)`. Eine leere Liste nimmt alle Zeilen weg.
+     */
+    function zeigeStaende(liste, beiKlick) {
+      enqueue({
+        fn: () => {
+          const nachId = new Map((Array.isArray(liste) ? liste : []).map((s) => [String(s.id), s]));
+          for (const n of spalte.children) {
+            if (!n.classList.contains('mensch')) continue;
+            const s = n.dataset.eintrag !== undefined && !n.classList.contains('zurueckgenommen') ? nachId.get(n.dataset.eintrag) : null;
+            let zeile = standZeile(n);
+            if (!s) {
+              if (zeile) zeile.remove();
+              continue;
+            }
+            if (!zeile) {
+              zeile = el('div', 'mensch-stand');
+              const knopf = el('button', 'stand-knopf', 'Hierher zurück');
+              knopf.type = 'button';
+              knopf.addEventListener('click', () => beiKlick && beiKlick(n.dataset.eintrag));
+              zeile.append(el('span', 'stand-text'), knopf);
+              n.appendChild(zeile);
+            }
+            const t = zeile.querySelector('.stand-text');
+            if (t.textContent !== s.text) t.textContent = s.text;
+            zeile.querySelector('.stand-knopf').title = 'Dateien und Gespräch auf den Stand vor dieser Nachricht zurücksetzen';
+          }
+        },
+      });
+    }
+
+    // --- Wartezeile ----------------------------------------------------------
+    // Am Ende des laufenden Zugs: worauf der Agent wartet und seit wann (das Modell, ein neuer Versuch). Neuer Inhalt nimmt sie weg.
+    const WARTE_AB_MS = 1000; // erst danach sichtbar: zwischen zwei schnellen Schritten soll nichts aufblitzen
+    let warten = null; // { el, text, zeit, start, takt }
+    function warteWeg() {
+      if (!warten) return;
+      clearIv(warten.takt);
+      alleTimer.delete(warten.takt);
+      warten.el.remove();
+      warten = null;
+    }
+    function warteZeichne() {
+      if (!warten) return;
+      const ms = now() - warten.start;
+      warten.el.hidden = ms < WARTE_AB_MS;
+      warten.zeit.textContent = ms >= WARTE_AB_MS ? dauerText(ms) : '';
+    }
+    /** `text`: worauf gewartet wird; `null` nimmt die Zeile weg. `seit`: Zeitpunkt, ab dem gezählt wird (Vorgabe jetzt). Nur in einem laufenden Zug. */
+    function warte(text, seit) {
+      enqueue({
+        fn: () => {
+          if (!text) return warteWeg();
+          if (warten) {
+            // ein neuer Anlass (nächste Anfrage, neuer Versuch): die Zeit zählt von vorn
+            warten.text.textContent = text;
+            warten.start = typeof seit === 'number' ? seit : now();
+            warteZeichne();
+            return;
+          }
+          if (!turn) return;
+          const zeile = el('div', 'wartezeile');
+          zeile.setAttribute('role', 'status');
+          const t = el('span', reduziert() ? 'wz-text' : 'wz-text schimmer', text);
+          const z = el('span', 'wz-zeit', '');
+          zeile.append(t, z);
+          turn.appendChild(zeile);
+          const takt = setIv(warteZeichne, 1000);
+          alleTimer.add(takt);
+          warten = { el: zeile, text: t, zeit: z, start: typeof seit === 'number' ? seit : now(), takt };
+          warteZeichne();
+        },
+      });
+    }
+
     // --- Ende ----------------------------------------------------------------
     function endTurn(r) {
       r = r || {};
       enqueue({
         fn: () => {
+          warteWeg();
           if (!turn && !r.stopped) {
             busy = false;
             melde();
@@ -1059,7 +1391,7 @@
       for (const id of alleTimer) clearIv(id);
       alleTimer.clear();
       spalte.textContent = '';
-      turn = seg = denken = gruppe = null;
+      turn = seg = denken = gruppe = warten = null;
       tools.clear();
       freigaben.clear();
       busy = false;
@@ -1077,9 +1409,12 @@
       updateTool,
       endTool,
       askApproval,
-      resolveApproval: (id, wert, notiz) => enqueue({ fn: () => entscheide(id, wert, true, notiz) }),
+      resolveApproval: (id, wert, notiz, extra) => enqueue({ fn: () => entscheide(id, wert, true, notiz, extra) }),
       addNote,
       addMarker,
+      addZurueck,
+      zeigeStaende,
+      warte,
       endTurn,
       handleKey,
       flush,

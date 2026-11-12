@@ -45,6 +45,41 @@ test server and checks: update, settings/data/plugins untouched, "go back", tamp
 missing manifest, server down, **no downgrade and no same-version install even with a valid signature**, a stranger's server on the helper's port.
 On Linux the same loop runs as an AppImage under Xvfb (`docker/bauen-linux.sh schleife`, `pixel`).
 
+## A local runner for the agent profile (contract, version 1)
+
+The shell is public and ships **no** runner. In the *agent* profile you can point it at any program on your own machine
+(*Settings → Local runner*: absolute path, plus an argument template with `{port}` and `{ordner}`, the folder). The shell starts that
+program as a child in its own process group, waits up to 30 s for it to answer, restarts it after an unexpected exit
+(after 1, 2, 4, 8, 15, then 30 s; the staircase starts over once it ran for 60 s) and stops it when the app quits.
+A new port and a new token (256 bit) are made for every start; they live only in memory and in the program's environment.
+
+A program fits if it does this:
+
+1. **Read its environment.** `FYOS_RUNNER_PORT` (TCP port), `FYOS_RUNNER_TOKEN` (64 hex characters, never passed as an argument),
+   `FYOS_RUNNER_HOST` (always `127.0.0.1`), `FYOS_RUNNER_DATEN` (a folder of its own for state, below the shell's data folder),
+   `FYOS_RUNNER_ORDNER_ERLAUBT` (allowed root folders, absolute paths, separated by `:`, on Windows by `;`; may be empty).
+2. **Listen only on `127.0.0.1:<FYOS_RUNNER_PORT>`** and answer `401` to every request without `Authorization: Bearer <FYOS_RUNNER_TOKEN>`.
+3. **`GET /api/health` → `200 {"ok": true, …}`** as soon as it is ready.
+4. **Speak the interface of a remote runner**, which is what the page uses: `/api/gespraeche`, `/api/gespraech/<id>` (with `/ansicht`, `/ereignisse`),
+   `/api/strom` (server-sent events), `/api/konfiguration`, `/api/modelle`, `/api/freigaben`, `/api/laeufe`, and
+   `GET /api/ordner?pfad=<absolute, optional>` → `{wurzeln, pfad, eintraege: [{name, ordner: true}], erlaubt}`
+   (outside the roots `403 {"fehler":"ausserhalb"}`, missing `404`). `POST /api/gespraeche` takes `ordner` (absolute, inside a root);
+   the folder then shows up as `agent.cwd` of that conversation.
+5. **`POST /api/ordner/erlauben {"pfad": "<absolute>"}` → `200 {"wurzeln": [...]}`** adds a folder the person picked in the system dialog
+   to the roots until the process ends. Only the shell calls this.
+6. **End cleanly within 8 s of SIGTERM.** After that the whole process group is killed. What it prints to stdout and stderr lands in
+   `lokaler-runner.log` in the data folder.
+
+Not covered by the shell: if the shell itself is killed with SIGKILL, the program keeps running (macOS has no "parent is gone" signal).
+A program that keeps state on disk should therefore make sure only one copy of itself works on a data folder.
+
+The source of the contract is `crates/shell-core/src/agent/lokal.rs`. `tools/lokaler_runner_test.py` is a neutral stand-in that fulfils it
+(no agent, no model, no tools) and shows how little is needed; `tools/e2e_agent.py` runs the shell against it.
+A full program for this contract is the local runner of FYOS Agent: a small start program (`runner/lokal/starten.mjs` there) translates
+this contract for [FLE Durable](https://github.com/sirfyyn/fle-durable), the agent runtime behind `flelink code` in
+[FLE Link](https://github.com/sirfyyn/flelink). It brings the agent, the tools and the approvals, and takes its model from FLE Link or from
+any other OpenAI-compatible server.
+
 ## First start without code signing
 
 The installers are **not signed or notarized** (no Apple developer account, no Windows certificate). *Updates* are signed (see [SECURITY.md](SECURITY.md)).
@@ -67,6 +102,10 @@ Eine Tauri-2-Hülle für drei Apps (FLE Studio, FYOS Agent, FYOS OS) auf macOS, 
 macOS: Rechtsklick → „Öffnen“, oder *Datenschutz & Sicherheit → Trotzdem öffnen*, oder `xattr -d com.apple.quarantine /Applications/<App>.app`.
 Windows: SmartScreen → „Weitere Informationen“ → „Trotzdem ausführen“. Linux: `chmod +x <App>.AppImage`. **Updates** sind signiert (Minisign, ein Schlüssel je Profil),
 dazu Rollback-Schutz: eine ältere oder gleiche Version wird nie installiert, auch nicht mit gültiger Signatur; nur der ausdrückliche „Zurück“-Weg auf die gemerkte Vorversion.
+
+**Lokaler Runner (Profil Agent):** Die Hülle enthält keinen Runner. Unter *Einstellungen → Lokaler Runner* lässt sich ein eigenes Programm eintragen;
+was es können muss (Umgebung, nur `127.0.0.1`, Token, `/api/health`, Schnittstelle, sauberes Ende), steht oben im Abschnitt
+„A local runner for the agent profile“. Ein fertiges Programm dafür ist der lokale Runner von FYOS Agent; er läuft auf FLE Durable, der Laufzeit hinter `flelink code` in FLE Link.
 
 ## Licence
 

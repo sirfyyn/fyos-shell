@@ -49,9 +49,10 @@
     const zurueck = new Set(); // „Später“: nur in diesem Fenster gemerkt
     const arbeitet = new Set(); // Freigaben, deren Entscheidung gerade unterwegs ist
     const nachfrage = new Set(); // zerstörerische Freigaben, bei denen „Erlauben“ schon einmal gedrückt wurde („Wirklich erlauben“ steht aus)
+    const sitzungWahl = new Set(); // davon die, bei denen „Für diese Sitzung“ gedrückt wurde (die Bestätigung nennt es)
     const notizen = new Map(); // id → Text im Notizfeld (überlebt das Neuzeichnen der Liste)
     let zeichneSig = '';
-    const sig = () => JSON.stringify([offene(alle).map((f) => [f.id, f.risiko, f.aktion, f.kontext, f.befehl, f.gespraechTitel, !!f.zerstoererisch, zurueck.has(String(f.id)), arbeitet.has(String(f.id)), nachfrage.has(String(f.id))]), geladen, fehler >= 2, hinweisText]);
+    const sig = () => JSON.stringify([offene(alle).map((f) => [f.id, f.art, f.risiko, f.aktion, f.kontext, f.befehl, f.gespraechTitel, !!f.zerstoererisch, zurueck.has(String(f.id)), arbeitet.has(String(f.id)), nachfrage.has(String(f.id))]), geladen, fehler >= 2, hinweisText]);
 
     function hinweis(text) {
       hinweisText = text || '';
@@ -64,6 +65,9 @@
       const aufgeschoben = zurueck.has(id);
       const busy = arbeitet.has(id);
       const zerst = !!f.zerstoererisch;
+      const istPlan = f.art === 'plan'; // Plan des Agenten: ausführen, ändern oder ablehnen
+      const istKarte = f.art === 'karte' || istPlan; // Entscheidung ohne Zerstörendes: Ja, Nein, Ändern
+      const fuerSitzung = f.sitzungMoeglich === true && !istKarte; // der Runner bietet an, diese Art von Aufruf für die Sitzung zu erlauben
       const k = el('article', `fp-karte${f.risiko === 'high' ? ' high' : ''}${zerst ? ' zerst' : ''}`);
       k.dataset.id = id;
       if (zerst) k.dataset.zerstoererisch = '1';
@@ -85,10 +89,11 @@
       const kopf = el('div', 'fp-kopf');
       const chips = el('span', 'fp-chips');
       if (zerst) chips.append(el('span', 'chip zerst', 'zerstörerisch'));
-      chips.append(el('span', 'chip risiko', risikoText(f.risiko)));
-      kopf.append(el('span', 'fp-titel', 'Freigabe nötig'), chips);
+      if (!istKarte) chips.append(el('span', 'chip risiko', risikoText(f.risiko)));
+      kopf.append(el('span', 'fp-titel', istPlan ? 'Plan' : istKarte ? 'Entscheidung' : 'Freigabe nötig'), chips);
       k.append(kopf, el('div', 'fp-aktion', String(f.aktion || 'Aktion ohne Beschreibung')));
       if (f.kontext) k.append(el('div', 'fp-kontext', String(f.kontext)));
+      if (istPlan && f.plan) k.append(el('pre', 'fp-plan', String(f.plan)));
       const befehl = f.befehl || f.werkzeug;
       if (befehl) k.append(el('code', 'fp-befehl', String(befehl)));
       const knoepfe = el('div', 'fp-knoepfe');
@@ -97,13 +102,13 @@
         feld.rows = 2;
         feld.maxLength = NOTIZ_MAX;
         feld.value = notizen.get(id) || '';
-        feld.placeholder = 'Notiz (optional)';
-        feld.setAttribute('aria-label', 'Notiz zur Entscheidung (optional)');
+        feld.placeholder = istKarte ? 'Was soll anders sein? (für „Ändern“)' : 'Notiz (optional)';
+        feld.setAttribute('aria-label', istKarte ? 'Notiz zur Entscheidung, bei „Ändern“ nötig' : 'Notiz zur Entscheidung (optional)');
         feld.disabled = busy;
         feld.addEventListener('input', () => notizen.set(id, feld.value));
         k.append(feld);
         const notizMerken = () => notizen.set(id, feld.value);
-        const nein = el('button', 'gefahr fp-ablehnen', 'Ablehnen');
+        const nein = el('button', 'gefahr fp-ablehnen', istKarte ? 'Nein' : 'Ablehnen');
         const spaeter = el('button', 'fp-spaeter', 'Später');
         nein.addEventListener('click', () => { notizMerken(); entscheide(id, 'abgelehnt'); });
         spaeter.addEventListener('click', () => {
@@ -112,17 +117,35 @@
           nachfrage.delete(id);
           zeichne();
         });
-        if (zerst && nachfrage.has(id)) {
+        if (istKarte) {
+          const ja = el('button', 'primaer fp-erlauben', istPlan ? 'Ausführen' : 'Ja');
+          const anders = el('button', 'fp-aendern', 'Ändern');
+          for (const b of [ja, anders, nein, spaeter]) b.type = 'button';
+          ja.disabled = anders.disabled = nein.disabled = busy;
+          ja.addEventListener('click', () => { notizMerken(); entscheide(id, 'erteilt'); });
+          anders.addEventListener('click', () => {
+            notizMerken();
+            if (!feld.value.trim()) {
+              hinweis('Schreib kurz, was anders sein soll.');
+              feld.focus();
+              return;
+            }
+            entscheide(id, 'geaendert');
+          });
+          knoepfe.append(ja, anders, nein, spaeter);
+        } else if (zerst && nachfrage.has(id)) {
           // zweite, bewusste Bestätigung nur bei zerstörerischen Freigaben
-          k.append(el('div', 'fp-warnung', 'Diese Aktion ist zerstörerisch und lässt sich unter Umständen nicht rückgängig machen. Wirklich erlauben?'));
-          const wirklich = el('button', 'primaer fp-wirklich', 'Wirklich erlauben');
+          const auchSitzung = fuerSitzung && sitzungWahl.has(id);
+          k.append(el('div', 'fp-warnung', `Diese Aktion ist zerstörerisch und lässt sich unter Umständen nicht rückgängig machen. ${auchSitzung ? 'Wirklich für die ganze Sitzung erlauben?' : 'Wirklich erlauben?'}`));
+          const wirklich = el('button', 'primaer fp-wirklich', auchSitzung ? 'Wirklich für die Sitzung erlauben' : 'Wirklich erlauben');
           const zur = el('button', 'fp-zurueck', 'Zurück');
           for (const b of [wirklich, nein, zur]) b.type = 'button';
           wirklich.disabled = nein.disabled = busy;
-          wirklich.addEventListener('click', () => { notizMerken(); entscheide(id, 'erteilt'); });
+          wirklich.addEventListener('click', () => { notizMerken(); entscheide(id, 'erteilt', { sitzung: auchSitzung }); });
           zur.addEventListener('click', () => {
             notizMerken();
             nachfrage.delete(id);
+            sitzungWahl.delete(id);
             zeichne();
             const b = refs.liste.querySelector(`.fp-karte[data-id="${CSS_ESC(id)}"] .fp-erlauben`);
             if (b) b.focus();
@@ -130,17 +153,24 @@
           knoepfe.append(wirklich, nein, zur);
         } else {
           const ja = el('button', 'primaer fp-erlauben', 'Erlauben');
-          for (const b of [ja, nein, spaeter]) b.type = 'button';
+          // „Für diese Sitzung“ nur, wenn der Runner es anbietet (Rückfrage mit sitzungMoeglich): erlaubt diese Art von Aufruf bis zum Ende der Sitzung
+          const immer = fuerSitzung ? el('button', 'fp-sitzung-erlauben', 'Für diese Sitzung') : null;
+          for (const b of [ja, immer, nein, spaeter].filter(Boolean)) b.type = 'button';
           ja.disabled = nein.disabled = busy;
-          ja.addEventListener('click', () => {
+          if (immer) immer.disabled = busy;
+          const erlaube = (sitzung) => {
             notizMerken();
-            if (!zerst) return entscheide(id, 'erteilt');
+            if (!zerst) return entscheide(id, 'erteilt', { sitzung });
+            if (sitzung) sitzungWahl.add(id);
+            else sitzungWahl.delete(id);
             nachfrage.add(id);
             zeichne();
             const b = refs.liste.querySelector(`.fp-karte[data-id="${CSS_ESC(id)}"] .fp-wirklich`);
             if (b) b.focus();
-          });
-          knoepfe.append(ja, nein, spaeter);
+          };
+          ja.addEventListener('click', () => erlaube(false));
+          if (immer) immer.addEventListener('click', () => erlaube(true));
+          knoepfe.append(...[ja, immer, nein, spaeter].filter(Boolean));
         }
         k.append(knoepfe);
       } else {
@@ -213,7 +243,7 @@
       }
     }
 
-    async function entscheide(id, entscheidung) {
+    async function entscheide(id, entscheidung, extra) {
       if (arbeitet.has(id)) return;
       arbeitet.add(id);
       zeichne();
@@ -221,14 +251,17 @@
         const notiz = String(notizen.get(id) || '').trim().slice(0, NOTIZ_MAX);
         const koerper = { entscheidung, von: 'mensch' };
         if (notiz) koerper.notiz = notiz; // leer: kein Feld (der Runner legt die Notiz sonst als null ab)
+        if (extra && extra.sitzung && entscheidung === 'erteilt') koerper.sitzung = true;
         const r = await opts.transport.api('POST', `/api/freigaben/${encodeURIComponent(id)}`, koerper);
         arbeitet.delete(id);
         zurueck.delete(id);
         nachfrage.delete(id);
+        sitzungWahl.delete(id);
         notizen.delete(id);
         if (r && Array.isArray(r.freigaben)) setze(r.freigaben);
         else await lade();
-        hinweis(entscheidung === 'erteilt' ? 'Freigabe erteilt.' : 'Freigabe abgelehnt.');
+        hinweis({ erteilt: extra && extra.sitzung ? 'Für diese Sitzung erlaubt.' : 'Freigabe erteilt.', abgelehnt: 'Freigabe abgelehnt.', geaendert: 'Änderung übergeben.' }[entscheidung]);
+        if (opts.beiEntschieden) opts.beiEntschieden(id, entscheidung);
       } catch (f) {
         arbeitet.delete(id);
         hinweis(`Entscheidung nicht gespeichert: ${fehlerText(f)}`);

@@ -1,0 +1,60 @@
+/* Tafel „Änderungen“ (staende-tafel.js) und, im Gespräch, die Zeile „Stand … Hierher zurück“ samt zurückgenommenen Zügen. Nur Farben aus
+ * chat.css; die Signalfarbe trägt hier nichts (auch der Knopf „Zurücksetzen“ nicht: Pink gehört dem einen Hauptknopf und Laufendem).
+ * Bewegung endet mit dem Block „prefers-reduced-motion“ in chat.css. */
+
+.st-dateien, .st-staende { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.st-kopf { margin: 14px 0 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--leise); }
+.st-datei, .st-stand { min-width: 0; padding: 4px 6px; border: 1px solid transparent; border-radius: 9px; transition: border-color .15s, background-color .15s; }
+.st-datei:has(.st-name[aria-expanded="true"]), .st-datei:has(.st-frage), .st-stand:has(.st-frage) { border-color: var(--linie); background: var(--flaeche2); }
+.st-zeile { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.st-name { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 2px 4px; border: 0; border-radius: 6px; background: none; text-align: left; }
+.st-name:hover:not(:disabled) { background: rgba(255, 255, 255, .04); border: 0; }
+.st-dname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12.5px var(--mono); }
+.st-dordner { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--leise); direction: rtl; text-align: left; }
+.st-datei[data-zustand="geloescht"] .st-dname { text-decoration: line-through; color: var(--leise); }
+.st-marke { flex: none; font-size: 10.5px; padding: 0 6px; }
+.st-zahlen { flex: none; }
+.st-knopf { flex: none; padding: 2px 8px; font-size: 11.5px; color: var(--leise); }
+.st-knopf:hover:not(:disabled) { color: var(--text); }
+.st-knopf:disabled { opacity: .45; }
+/* „Zurücknehmen“ ist ein Zeichen neben der Datei und tritt erst hervor, wenn man in der Zeile ist */
+.st-zurueck { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; padding: 0; border-radius: 7px; opacity: .55; transition: opacity .12s; }
+.st-zurueck svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.st-datei:hover .st-zurueck:not(:disabled), .st-datei:focus-within .st-zurueck:not(:disabled) { opacity: 1; }
+.st-hinweis { margin: 1px 4px 2px; font-size: 11px; color: var(--leise); }
+.st-datei .st-hinweis { color: var(--warn); }
+.st-stand-text { display: flex; align-items: baseline; gap: 7px; flex: 1; min-width: 0; padding: 2px 4px; }
+.st-zeit { flex: none; font: 11.5px var(--mono); color: var(--leise); }
+.st-stand-titel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.st-fuss { margin: 12px 4px 0; font-size: 11px; }
+
+/* Unterschied einer Datei: in der schmalen Leiste rollt er zur Seite */
+.st-diff { margin: 4px 0 2px; animation: ein .16s ease; }
+.st-diff .diff { margin-top: 0; }
+.st-diff .diff-tabelle { font-size: 11.5px; }
+.st-diff .diff-scroll { max-height: 320px; overflow: auto; }
+.st-diff-text { margin: 4px; font-size: 11.5px; }
+
+/* Rückfrage vor dem Zurücksetzen */
+.st-frage { margin: 6px 0 4px; padding: 8px 9px; border: 1px solid var(--linie-stark); border-radius: 8px; background: var(--flaeche); display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; animation: ein .16s ease; }
+.st-frage-titel { font-size: 12.5px; }
+.st-frage-dateien { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 160px; overflow: auto; font: 11.5px/1.45 var(--mono); overflow-wrap: anywhere; }
+.st-frage-dateien li.warn { color: var(--warn); }
+.st-frage-text { margin: 0; font-size: 12px; line-height: 1.45; }
+.st-frage-warnung { margin: 0; font-size: 12px; line-height: 1.45; color: var(--warn); }
+.st-frage-fehler { margin: 0; font-size: 12px; color: var(--schlecht); overflow-wrap: anywhere; }
+.st-frage-knoepfe { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.st-frage-knoepfe button { padding: 3px 10px; font-size: 12px; }
+.st-frage-knoepfe .st-knopf { color: var(--text); }
+.st-ja { font-weight: 600; color: var(--text); background: var(--wahl); border-color: var(--linie-stark); }
+.st-ja:hover:not(:disabled) { border-color: var(--text); }
+
+/* Im Gespräch: der Stand unter der Nachricht, und was ein Zurückspulen zurückgenommen hat */
+.mensch-stand { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: 3px 4px 0; font-size: 11.5px; color: var(--leise); }
+.stand-text { font-family: var(--mono); }
+.stand-knopf { padding: 1px 8px; font-size: 11.5px; color: var(--leise); border-radius: 999px; opacity: .7; transition: opacity .12s, color .12s; }
+.mensch:hover .stand-knopf, .stand-knopf:focus-visible { opacity: 1; color: var(--text); }
+/* `animation: none`: das Einblenden (.ein) hielte die Deckkraft sonst für immer auf 1 */
+.zurueckgenommen { animation: none; opacity: .4; filter: grayscale(.6); transition: opacity .4s ease, filter .4s ease; }
+.zurueckgenommen:hover, .zurueckgenommen:focus-within { opacity: .75; }
+.marker[data-kind="zurueck"] .marker-text { white-space: normal; text-align: center; color: var(--text); }
