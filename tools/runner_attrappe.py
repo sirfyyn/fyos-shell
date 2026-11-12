@@ -42,11 +42,22 @@ import posixpath
 import queue
 import re
 import signal
+import socketserver
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
+
+
+def _binden_ohne_namensaufloesung(self):
+    """Wie HTTPServer.server_bind, aber ohne socket.getfqdn(): die Rückwärtsauflösung der Adresse kann auf manchen Rechnern
+    (beobachtet auf macOS-Läufern der CI) viele Sekunden hängen, und so lange lauscht der Server noch nicht."""
+    socketserver.TCPServer.server_bind(self)
+    self.server_name, self.server_port = self.server_address[0], self.server_address[1]
+
+
+ThreadingHTTPServer.server_bind = _binden_ohne_namensaufloesung
 
 SZENARIEN = {
     "streaming": "Antwort in Teilen (Streaming)",

@@ -2287,7 +2287,7 @@ dom('Seite: Suchfeld – Anfrage mit q, limit=20 und archiv=alle, Trefferliste s
   }
 });
 
-dom('Seite: Cmd+K und „/“ holen den Fokus ins Suchfeld; „/“ im Eingabefeld tippt einen Schrägstrich; ältere Runner ohne /api/suche (404) blenden das Feld aus', async () => {
+dom('Seite: „/“ holt den Fokus ins Suchfeld, Cmd/Strg+K öffnet und schließt die Palette; „/“ im Eingabefeld tippt einen Schrägstrich; ältere Runner ohne /api/suche (404) blenden das Feld aus', async () => {
   const f = arbeitsplatz();
   try {
     await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
@@ -2303,16 +2303,19 @@ dom('Seite: Cmd+K und „/“ holen den Fokus ins Suchfeld; „/“ im Eingabefe
     f.g('leisteSchalter').dispatchEvent(schraeg);
     assert.equal(schraeg.defaultPrevented, true);
     assert.equal(f.d.activeElement, f.g('sucheFeld'));
-    // Cmd+K auch aus der Eingabe
+    // Cmd+K aus der Eingabe öffnet die Palette (nicht mehr das Suchfeld der Leiste); noch einmal schließt sie, der Fokus kehrt zurück
     f.g('eingabe').focus();
-    f.g('eingabe').dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }));
-    assert.equal(f.d.activeElement, f.g('sucheFeld'));
-    f.g('eingabe').focus();
-    f.g('eingabe').dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }));
-    assert.equal(f.d.activeElement, f.g('sucheFeld'));
+    const auf = new f.w.KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true });
+    f.g('eingabe').dispatchEvent(auf);
+    assert.equal(auf.defaultPrevented, true);
+    assert.equal(f.g('palette').hidden, false);
+    assert.equal(f.d.activeElement, f.d.querySelector('.pal-feld'));
+    f.d.querySelector('.pal-feld').dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }));
+    assert.equal(f.g('palette').hidden, true);
+    assert.equal(f.d.activeElement, f.g('eingabe'));
     // Cmd+Umschalt+K ist es nicht
-    f.g('eingabe').focus();
     f.g('eingabe').dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'k', metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    assert.equal(f.g('palette').hidden, true);
     assert.equal(f.d.activeElement, f.g('eingabe'));
     // Dieser Speicher-Runner kennt /api/suche nicht (404 „Unbekannte Route“): das Feld verschwindet
     f.g('sucheFeld').value = 'abc';
@@ -2324,6 +2327,81 @@ dom('Seite: Cmd+K und „/“ holen den Fokus ins Suchfeld; „/“ im Eingabefe
     f.g('leisteSchalter').dispatchEvent(nochmal);
     assert.equal(nochmal.defaultPrevented, false, 'ohne Suche kein Abfangen des Schrägstrichs');
     assert.equal(f.g('leisteListe').classList.contains('suche-aktiv'), false);
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Seite: die Palette nennt Handgriffe und Sitzungen; eine gewählte Sitzung wird sichtbar, ein Handgriff öffnet den Überblick', async () => {
+  const f = arbeitsplatz();
+  try {
+    await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    await bis(() => f.d.activeElement === f.g('eingabe'));
+    const A = f.w.__arbeitsplatz;
+    const namen = () => A.palette.zustand().zeilen.map((z) => z.name);
+    const tippe = (text) => {
+      const feld = f.d.querySelector('.pal-feld');
+      feld.value = text;
+      feld.dispatchEvent(new f.w.Event('input', { bubbles: true }));
+    };
+    const taste = (key) => f.d.querySelector('.pal-feld').dispatchEvent(new f.w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    assert.equal(String(A.aktiv.id), '1');
+    A.palette.oeffne();
+    assert.deepEqual([...namen().slice(0, 5)], ['Neue Sitzung', 'Überblick', 'Freigaben zeigen', 'Einstellungen', 'Seitenleiste ein- oder ausblenden']);
+    assert.ok(namen().includes('Tafel Sitzungen'), 'die Tafel, deren Knopf dasteht');
+    assert.equal(namen().includes('Tafel Dateien'), false, 'keine Tafel, die dieser Runner nicht anbietet');
+    assert.deepEqual([...namen().slice(-2)], ['Haupt', 'Zweite']);
+    tippe('zwei');
+    assert.deepEqual([...namen()], ['Zweite']);
+    taste('Enter');
+    assert.equal(f.g('palette').hidden, true);
+    await bis(() => String(A.aktiv.id) === '2');
+    // Handgriff: Überblick
+    A.palette.oeffne('> überb');
+    assert.deepEqual([...namen()], ['Überblick']);
+    taste('Enter');
+    await bis(() => f.g('start').hidden === false);
+    assert.equal(f.g('panes').hidden, true);
+  } finally {
+    f.schliesse();
+  }
+});
+
+dom('Seite: der Überblick steht anstelle des Gesprächs; Knopf und Cmd/Strg+Umschalt+U schalten um, eine gewählte Sitzung löst ihn ab', async () => {
+  const f = arbeitsplatz();
+  try {
+    await bis(() => f.d.querySelectorAll('#sitzungsliste .sitzung').length === 2);
+    await bis(() => f.d.activeElement === f.g('eingabe'));
+    const A = f.w.__arbeitsplatz;
+    const haupt = f.d.querySelector('.haupt');
+    assert.equal(f.g('start').hidden, true);
+    assert.equal(f.g('ueberblickKnopf').getAttribute('aria-pressed'), 'false');
+    f.g('ueberblickKnopf').click();
+    assert.equal(f.g('start').hidden, false);
+    assert.equal(f.g('panes').hidden, true);
+    assert.equal(haupt.classList.contains('ueb-an'), true);
+    assert.equal(f.g('ueberblickKnopf').getAttribute('aria-pressed'), 'true');
+    assert.equal(f.d.querySelector('.ueb-gruss').textContent, 'Nichts braucht dich, nichts läuft.');
+    assert.deepEqual([...f.d.querySelectorAll('.ueb-sitzung .ueb-name')].map((b) => b.textContent), ['Haupt', 'Zweite']);
+    // Zurück über den Knopf der Seite
+    f.d.querySelector('.ueb-zurueck').click();
+    assert.equal(f.g('start').hidden, true);
+    assert.equal(f.g('panes').hidden, false);
+    assert.equal(haupt.classList.contains('ueb-an'), false);
+    // Tastenkürzel, dann eine Sitzung aus „Zuletzt“
+    f.d.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'U', metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    assert.equal(f.g('start').hidden, false);
+    f.d.querySelectorAll('.ueb-sitzung')[1].click();
+    await bis(() => String(A.aktiv.id) === '2');
+    assert.equal(f.g('start').hidden, true);
+    assert.equal(f.g('panes').hidden, false);
+    // Auch die schon sichtbare Sitzung löst den Überblick ab
+    A.ueberblickZeigen(true);
+    assert.equal(f.g('start').hidden, false);
+    f.d.querySelectorAll('.ueb-sitzung')[1].click();
+    await bis(() => f.g('start').hidden === true);
+    assert.equal(String(A.aktiv.id), '2');
+    assert.equal(f.g('panes').hidden, false);
   } finally {
     f.schliesse();
   }

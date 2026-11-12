@@ -38,6 +38,8 @@
   let modelle = [];
   const ansichten = new Map(); // String(id) → { id, chat, pane, benutzt, entwurf, anhaenge, sendeArt, wechselt, cwd }
   let aktiv = null;
+  let listenDaten = { sitzungen: [], weitere: [], archiv: [] }; // die Zeilen der Leiste (zeichneListe); Palette und Überblick lesen sie
+  let ueberblick = null; // Startseite (start.js), weiter unten angelegt
   let wechselKette = Promise.resolve();
   let stromBesitzer = null; // Id der Sitzung, deren Ereignisstrom offen ist
 
@@ -168,7 +170,10 @@
       transport,
       // Sprung in die Sitzung der Freigabe: dieselbe Funktion wie in der Leiste, die Ansicht bleibt aufgebaut (kein Neuaufbau)
       beiSprung: (id) => wechsle(id),
-      beiAenderung: () => zeigeAktiv(),
+      beiAenderung: () => {
+        zeigeAktiv();
+        if (ueberblick) ueberblick.zeichne();
+      },
       // ein genehmigter Plan ändert beim Runner den Modus der Sitzung: die Liste zieht nach
       beiEntschieden: () => setTimeout(ladeListe, 300),
     }
@@ -583,6 +588,8 @@
     }
     leiste.zeichne(daten, aktiv ? aktiv.id : null);
     window.__liste = daten;
+    listenDaten = daten;
+    if (ueberblick) ueberblick.zeichne();
   }
   function planeZeichnen() {
     if (zeichnenGeplant) return;
@@ -650,6 +657,101 @@
   }
   $('leisteSchalter').addEventListener('click', () => leisteUmschalten());
   if (window.innerWidth < 760) leisteUmschalten(false);
+
+  // --- Überblick (start.js): was über alle Sitzungen wartet und läuft. Steht anstelle des Gesprächs in der Mitte; entschieden wird im Panel
+  // der Freigaben, nicht dort. ---
+  const haupt = document.querySelector('.haupt');
+  ueberblick = FP.start.createStart(
+    { wurzel: $('start') },
+    {
+      sitzungen: () => listenDaten.sitzungen,
+      freigaben: () => freigaben.offene(),
+      aufgaben: (id) => wege.aufgaben(id),
+      laeufe: () => wege.laeufe(),
+      jobs: () => wege.jobs(),
+      betrieb: () => wege.betrieb(),
+      beiSitzung: (id) => wechsle(id),
+      beiFreigaben: () => freigaben.zeige(true),
+      beiPalette: () => palette.oeffne(),
+      beiNeu: () => {
+        ueberblickZeigen(false);
+        neuOeffnen();
+      },
+      beiZurueck: () => ueberblickZeigen(false),
+    }
+  );
+  /** Den Überblick ein- oder ausblenden (ohne Angabe: umschalten). Ein Bereich der Plattform und der Überblick lösen einander ab. */
+  function ueberblickZeigen(an) {
+    const soll = an === undefined ? !ueberblick.sichtbar() : !!an;
+    if (soll === ueberblick.sichtbar()) return;
+    if (soll && plattform.bereich() !== 'chat') void plattform.wechsle('chat');
+    haupt.classList.toggle('ueb-an', soll);
+    $('panes').hidden = soll || plattform.bereich() !== 'chat';
+    $('ueberblickKnopf').setAttribute('aria-pressed', soll ? 'true' : 'false');
+    $('ueberblickKnopf').classList.toggle('aktiv', soll);
+    if (soll) ueberblick.zeige();
+    else ueberblick.verberge();
+  }
+  $('ueberblickKnopf').addEventListener('click', () => ueberblickZeigen());
+  $('bereiche').addEventListener('click', (e) => {
+    if (e.target.closest('[data-bereich]')) ueberblickZeigen(false);
+  });
+
+  // --- Palette (palette.js): Cmd/Strg+K führt zu Sitzungen, Dateien, Befehlen, Skills, Hub-Werkzeugen und Handgriffen ---
+  /** Text ans Ende der Nachricht setzen (Befehl, Name eines Werkzeugs) und die Schreibmarke dahinter. */
+  function setzeEin(text) {
+    ueberblickZeigen(false);
+    const davor = eingabe.value.replace(/\s+$/, '');
+    eingabe.value = davor ? `${davor} ${text}` : text;
+    eingabe.setSelectionRange(eingabe.value.length, eingabe.value.length);
+    eingabe.dispatchEvent(new Event('input', { bubbles: true }));
+    waechst();
+    eingabe.focus();
+  }
+  const TAFEL_NAMEN = [['gespraeche', 'Sitzungen', 'schieneGespraeche'], ['aufgaben', 'Aufgaben', 'schieneAufgaben'], ['laeufe', 'Läufe', 'schieneLaeufe'], ['aenderungen', 'Änderungen', 'schieneAenderungen'], ['dateien', 'Dateien', 'schieneDateien']];
+  const palette = FP.palette.createPalette(
+    { wurzel: $('palette') },
+    {
+      aktionen: () => [
+        { name: 'Neue Sitzung', zusatz: 'anlegen Ordner', rechts: '⌘⇧O', wahl: () => { ueberblickZeigen(false); neuOeffnen(); } },
+        { name: 'Überblick', zusatz: 'Startseite braucht dich läuft Betrieb', rechts: '⌘⇧U', wahl: () => ueberblickZeigen(true) },
+        { name: 'Freigaben zeigen', zusatz: 'erlauben ablehnen Plan', wahl: () => freigaben.zeige(true) },
+        { name: 'Einstellungen', zusatz: 'Runner Token lokal', rechts: '⌘,', wahl: () => einstellungenOeffnen() },
+        { name: 'Seitenleiste ein- oder ausblenden', zusatz: 'Leiste', rechts: '⌘B', wahl: () => leisteUmschalten() },
+        // die Tafeln der Schiene, soweit der Runner sie anbietet (ihr Knopf steht da)
+        ...TAFEL_NAMEN.filter(([, , knopf]) => !$(knopf).hidden).map(([name, titel]) => ({
+          name: `Tafel ${titel}`,
+          zusatz: 'Seitenleiste Schiene',
+          wahl: () => {
+            ueberblickZeigen(false);
+            leisteUmschalten(true);
+            werkbank.zeige(name);
+          },
+        })),
+      ],
+      sitzungen: () => [...listenDaten.sitzungen, ...listenDaten.weitere, ...listenDaten.archiv].map((z) => ({ id: z.id, titel: z.titel, ort: z.ordner, archiviert: z.archiviert, angepinnt: z.angepinnt })),
+      beiSitzung: (id) => wechsle(id),
+      // Dateien im Ordner der sichtbaren Sitzung (nur der lokale Runner sucht dort); ohne Ordner keine Quelle
+      dateien: (q) => (aktiv && ordnerPfad(aktiv) ? wege.dateiSuche(aktiv.id, q, { limit: 20 }) : Promise.resolve(null)),
+      beiDatei: (relativ) => {
+        if (!aktiv || !ordnerPfad(aktiv)) return;
+        ueberblickZeigen(false);
+        const pfad = `${ordnerPfad(aktiv).replace(/[\\/]+$/, '')}/${relativ}`;
+        return FP.dateien.istBild(relativ) ? dateiFlaeche.oeffneBild({ pfad }) : dateiFlaeche.oeffneDatei({ pfad });
+      },
+      befehle: () => (aktiv ? aktiv.chat.befehle() : Promise.resolve(null)),
+      beiBefehl: (name) => setzeEin(`/${name} `),
+      werkzeuge: (q) => wege.werkzeuge(q),
+      beiWerkzeug: (name) => setzeEin(`Nutze das Hub-Werkzeug ${name}: `),
+      // Treffer im Verlauf; Treffer im Titel stehen schon unter „Sitzung“
+      verlauf: (q) =>
+        suche.verfuegbar
+          ? wege.suche(q, { limit: 8 }).then((r) => ({ treffer: r.treffer.filter((t) => t.quelle !== 'titel').map((t) => ({ ...t, auszug: t.ausschnitt })) }))
+          : Promise.resolve(null),
+      beiTreffer: (t) => waehleTreffer(t),
+      beiFehler: (text) => aktiv && aktiv.chat.view.addNote(`Nicht möglich: ${text}`, 'fehler'),
+    }
+  );
 
   // --- Ansichten der Sitzungen ---
   function paneBauen(id) {
@@ -831,6 +933,7 @@
   }
   async function wechsleJetzt(id) {
     const schluessel = String(id);
+    if (ueberblick && ueberblick.sichtbar()) ueberblickZeigen(false); // eine gewählte Sitzung löst den Überblick ab
     if (aktiv && String(aktiv.id) === schluessel) {
       eingabe.focus();
       return;
@@ -1197,9 +1300,18 @@
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
     const mod = e.metaKey || e.ctrlKey;
-    // Suche: Cmd/Strg+K immer, „/“ nur wenn der Fokus nicht in einem Eingabefeld liegt (sonst tippt man einen Schrägstrich)
+    // Palette: Cmd/Strg+K öffnet und schließt sie. Suche der Leiste: „/“, nur wenn der Fokus nicht in einem Eingabefeld liegt (sonst tippt man
+    // einen Schrägstrich)
     if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
-      if (sucheOeffnen()) e.preventDefault();
+      e.preventDefault();
+      if (palette.offen()) palette.schliesse();
+      else palette.oeffne();
+      return;
+    }
+    // Überblick: Cmd/Strg+Umschalt+U
+    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'u') {
+      e.preventDefault();
+      ueberblickZeigen();
       return;
     }
     if (e.key === '/' && !mod && !e.altKey) {
@@ -1315,7 +1427,7 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)

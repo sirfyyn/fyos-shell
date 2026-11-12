@@ -1,0 +1,59 @@
+/* Startseite („Überblick“), start.js. Farben nur aus den Variablen der Seite. Die Signalfarbe steht nur am Hauptknopf (Klasse primaer der
+   Seite) und am Punkt einer arbeitenden Sitzung. */
+.haupt.ueb-an > .kopf, .haupt.ueb-an > .unten { display: none; }
+.haupt.ueb-an { grid-template-rows: minmax(0, 1fr); }
+/* Das Banner „Eine Freigabe wartet“ läge über dem Kopf der Seite; hier steht dasselbe unter „Braucht dich“. */
+.haupt.ueb-an .fp-banner { display: none; }
+.ueb { min-height: 0; height: 100%; overflow-y: auto; padding: 22px 24px 40px; background: var(--hg); }
+.ueb[hidden] { display: none; }
+.ueberblick-knopf { margin-top: 6px; width: 100%; text-align: left; }
+.ueberblick-knopf.aktiv { color: var(--text); background: var(--wahl); }
+.ueb-spalte { max-width: var(--spalte); margin: 0 auto; display: grid; gap: 18px; }
+.ueb-kopf { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.ueb-gruss { margin: 0; font-size: 19px; font-weight: 650; line-height: 1.3; }
+.ueb-knoepfe { display: flex; gap: 8px; }
+.ueb-titel { margin: 0 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--leise); font-weight: 650; }
+.ueb-leer { margin: 0; padding: 8px 2px; color: var(--leise); font-size: 13px; }
+.ueb-zeile { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; width: 100%; padding: 8px 12px; border: 0; border-radius: 9px; background: transparent; color: inherit; font: inherit; text-align: left; }
+.ueb-text { min-width: 0; display: grid; gap: 1px; }
+.ueb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+.ueb-unter { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--leise); font-size: 12px; }
+.ueb-rechts { color: var(--leise); font: 11.5px var(--mono); white-space: nowrap; }
+.ueb-klickbar { cursor: pointer; }
+.ueb-klickbar:hover { background: rgba(255, 255, 255, .04); }
+.ueb-klickbar:focus-visible { outline: 2px solid var(--fokus); outline-offset: -2px; }
+
+/* Braucht dich: Karte mit warnendem Rand, ernst (zerstörerisch, hohes Risiko) mit rotem */
+.ueb-wartet { margin-bottom: 6px; border: 1px solid var(--linie); border-left: 3px solid var(--warn); border-radius: 10px; background: var(--flaeche); }
+.ueb-wartet.ernst { border-left-color: var(--schlecht); }
+.ueb-zeilenknoepfe { display: flex; gap: 6px; }
+
+/* Läuft: Punkt, Text, Balken, Zahl */
+.ueb-lauf { grid-template-columns: 10px minmax(0, 1fr) 90px auto; }
+.ueb-lauf:nth-child(odd) { background: var(--flaeche); }
+.ueb-punkt { width: 8px; height: 8px; border-radius: 50%; background: var(--leise); }
+.ueb-punkt.arbeitet { background: var(--akzent); animation: puls-punkt 1.2s ease-in-out infinite; }
+.ueb-punkt.haelt { background: var(--warn); }
+.ueb-balken { height: 4px; border-radius: 2px; background: var(--linie); overflow: hidden; }
+.ueb-balken i { display: block; height: 100%; width: calc(var(--w, 0) * 100%); background: var(--gut); transition: width var(--dauer) ease-out; }
+.ueb-lauf:not(:has(.ueb-balken)) { grid-template-columns: 10px minmax(0, 1fr) auto; }
+
+/* Betrieb: Kacheln */
+.ueb-betrieb .ueb-koerper { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+.ueb-kachel { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--linie); border-radius: 10px; background: var(--flaeche); }
+.ueb-kachelkopf { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.ueb-kachelkopf .chip { padding: 1px 7px; border: 1px solid var(--linie-stark); border-radius: 999px; color: var(--leise); font-size: 11px; white-space: nowrap; }
+.ueb-kachelkopf .chip.gut { color: var(--gut); border-color: color-mix(in srgb, var(--gut) 45%, transparent); }
+.ueb-kachelkopf .chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.ueb-kachelkopf .chip.schlecht { color: var(--schlecht); border-color: color-mix(in srgb, var(--schlecht) 45%, transparent); }
+.ueb-wert { color: var(--leise); font-size: 12.5px; overflow-wrap: anywhere; }
+
+.ueb-sitzung:nth-child(odd) { background: var(--flaeche); }
+
+@media (max-width: 640px) {
+  .ueb { padding: 16px 14px 32px; }
+  .ueb-wartet { grid-template-columns: minmax(0, 1fr); }
+  .ueb-lauf { grid-template-columns: 10px minmax(0, 1fr) auto; }
+  .ueb-lauf .ueb-balken { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .ueb-punkt.arbeitet { animation: none; } .ueb-balken i { transition: none; } }

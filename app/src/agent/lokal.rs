@@ -218,8 +218,11 @@ mod tests {
         p.display().to_string()
     }
 
+    // Der Server bindet ohne `socket.getfqdn()` (das täte `HTTPServer.server_bind`): die Namensauflösung des eigenen Rechners
+    // kann auf einem Mac viele Sekunden hängen, und dann antwortet das Programm nicht innerhalb der Startfrist.
     const SKRIPT: &str = r#"#!/usr/bin/env python3
-import json, os, sys
+import json, os, socketserver, sys, time
+print("probe: gestartet", round(time.time(), 2), sys.version.split()[0], file=sys.stderr, flush=True)
 from http.server import BaseHTTPRequestHandler, HTTPServer
 TOKEN = os.environ["FYOS_RUNNER_TOKEN"]
 class H(BaseHTTPRequestHandler):
@@ -229,10 +232,35 @@ class H(BaseHTTPRequestHandler):
             self.send_response(401); self.end_headers(); return
         b = json.dumps({"ok": True, "agent": "probe", "pid": os.getpid()}).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
-HTTPServer(("127.0.0.1", int(os.environ["FYOS_RUNNER_PORT"])), H).serve_forever()
+class S(HTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[0], self.server_address[1]
+s = S(("127.0.0.1", int(os.environ["FYOS_RUNNER_PORT"])), H)
+print("probe: lauscht", round(time.time(), 2), file=sys.stderr, flush=True)
+s.serve_forever()
 "#;
 
+    /// Startet den lokalen Runner; scheitert der Start, steht in der Meldung, was das Test-Programm bis dahin ausgegeben hat
+    /// (ohne das bleibt auf einem fremden Rechner unsichtbar, ob es gar nicht anlief oder nur nicht antwortete).
+    fn starte(l: &Lokal, h: &Huelle) {
+        if let Err(f) = l.starten(h, vec![]) {
+            let ausgabe = std::fs::read_to_string(h.pfade.daten.join("lokaler-runner.log")).unwrap_or_default();
+            panic!("der lokale Runner startet nicht: {f:?}\nAusgabe des Test-Programms:\n{ausgabe}");
+        }
+    }
+
+    /// Python einmal je Testlauf anwerfen, bevor die Startfrist läuft: der erste Start des Interpreters auf einem frischen
+    /// Rechner (CI) kann viele Sekunden dauern, und die Frist des Vertrags soll den Runner messen, nicht das.
+    fn python_warm() {
+        static EINMAL: std::sync::Once = std::sync::Once::new();
+        EINMAL.call_once(|| {
+            let _ = std::process::Command::new("/usr/bin/env").args(["python3", "-c", "import http.server, json, socketserver"]).status();
+        });
+    }
+
     fn huelle(d: &std::path::Path, prog: String) -> Huelle {
+        python_warm();
         let h = Huelle::laden(Profil::Agent, "0.0.1", Pfade::neu(d.join("daten"))).unwrap();
         crate::zustand::sperre(&h.einstellungen).agent.lokal = LokalKonfig { programm: prog, args: vec![] };
         h
@@ -254,7 +282,7 @@ HTTPServer(("127.0.0.1", int(os.environ["FYOS_RUNNER_PORT"])), H).serve_forever(
         let h = huelle(d.path(), programm(d.path(), SKRIPT));
         let l = Lokal::default();
         assert_eq!(l.stand_text(), AUS);
-        l.starten(&h, vec![]).unwrap();
+        starte(&l, &h);
         assert_eq!(l.stand_text(), LAEUFT);
         let (basis, token) = l.ziel().unwrap();
         assert!(basis.starts_with("http://127.0.0.1:") && token.len() == 64);
@@ -280,7 +308,7 @@ HTTPServer(("127.0.0.1", int(os.environ["FYOS_RUNNER_PORT"])), H).serve_forever(
         let d = tempfile::tempdir().unwrap();
         let h = huelle(d.path(), programm(d.path(), SKRIPT));
         let l = Lokal::default();
-        l.starten(&h, vec![]).unwrap();
+        starte(&l, &h);
         let (basis, token) = l.ziel().unwrap();
         let pid = http::gesundheit(&basis, &token).unwrap()["pid"].as_i64().unwrap() as i32;
         unsafe {

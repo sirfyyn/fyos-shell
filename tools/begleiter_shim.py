@@ -20,10 +20,21 @@ import os
 import select
 import signal
 import socket
+import socketserver
 import subprocess
 import sys
 import threading
 import time
+
+
+def _binden_ohne_namensaufloesung(self):
+    """Wie HTTPServer.server_bind, aber ohne socket.getfqdn(): die Rückwärtsauflösung der Adresse kann auf manchen Rechnern
+    (beobachtet auf macOS-Läufern der CI) viele Sekunden hängen, und so lange lauscht der Server noch nicht."""
+    socketserver.TCPServer.server_bind(self)
+    self.server_name, self.server_port = self.server_address[0], self.server_address[1]
+
+
+http.server.HTTPServer.server_bind = _binden_ohne_namensaufloesung
 
 KOPF = "X-FYOS-Kennung"
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}

@@ -18,7 +18,7 @@ from pathlib import Path
 SHIM = Path(__file__).resolve().parent / "begleiter_shim.py"
 
 STUDIO = r'''
-import http.server, sys, time
+import http.server, socketserver, sys, time
 class H(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, *a): pass
@@ -37,6 +37,9 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0); d = self.rfile.read(n)
         b = b"echo:" + d; self.send_response(200); self.send_header("Content-Length",str(len(b))); self.end_headers(); self.wfile.write(b)
+def _binden(self):  # ohne socket.getfqdn(): die kann auf manchen Rechnern viele Sekunden hängen
+    socketserver.TCPServer.server_bind(self); self.server_name, self.server_port = self.server_address[0], self.server_address[1]
+http.server.HTTPServer.server_bind = _binden
 http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 '''
 

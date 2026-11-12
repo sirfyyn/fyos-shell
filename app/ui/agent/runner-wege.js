@@ -191,6 +191,47 @@
     };
   }
 
+  // --- Palette und Startseite: Hub-Werkzeuge und was der Runner über sich meldet, nur bekannte Felder ---
+  /** Ein Hub-Werkzeug aus GET /api/werkzeuge: Name und die erste Zeile der Beschreibung. */
+  function werkzeugBereinigen(w) {
+    if (!w || typeof w.name !== 'string' || !w.name.trim()) return null;
+    const b = typeof w.beschreibung === 'string' ? w.beschreibung : typeof w.description === 'string' ? w.description : '';
+    return { name: text(w.name.trim(), 200), beschreibung: text(b.trim().split('\n')[0].trim(), 300) };
+  }
+
+  /**
+   * GET /api/health als das, was die Startseite zeigt. Was der Runner nicht meldet, bleibt null (der volle Runner nennt kein Modell):
+   * { pausiert, spielmodus, gespraeche, modell: { name, antwortet: true|false|null } | null, wartend: Zahl | null,
+   *   hub: { erreichbar, eingerichtet, text } | null }
+   */
+  function betriebBereinigen(r) {
+    r = r && typeof r === 'object' ? r : {};
+    const m = r.model && typeof r.model === 'object' ? r.model : null;
+    const q = r.queue && typeof r.queue === 'object' ? r.queue : null;
+    const h = r.hub && typeof r.hub === 'object' ? r.hub : null;
+    let hub = null;
+    if (h) {
+      if (h.ok === true) {
+        const p = h.daten && typeof h.daten === 'object' ? h.daten.plugins : null;
+        const n = Array.isArray(p) ? p.length : Number.isFinite(p) ? Math.trunc(p) : null;
+        const krank = Array.isArray(p) ? p.filter((x) => x && x.healthy === false).length : 0;
+        hub = { erreichbar: true, eingerichtet: true, text: n === null ? '' : `${n} Erweiterungen${krank ? ` · ${krank} nicht gesund` : ''}` };
+      } else {
+        // Ein Runner ohne Hub meldet das als Fehler der Abfrage („Kein Hub konfiguriert“): das ist kein Ausfall.
+        const grund = text(h.fehler, 200);
+        hub = { erreichbar: false, eingerichtet: !/kein hub|no hub|nicht konfiguriert|nicht eingerichtet|not configured/i.test(grund), text: grund };
+      }
+    }
+    return {
+      pausiert: r.pausiert === true,
+      spielmodus: text(r.spielmodus, 60),
+      gespraeche: Math.max(0, Math.trunc(zahlOder(r.gespraeche, 0))),
+      modell: m && (typeof m.name === 'string' || typeof m.answers === 'boolean') ? { name: text(m.name, 120), antwortet: typeof m.answers === 'boolean' ? m.answers : null } : null,
+      wartend: q && Number.isFinite(q.waiting) ? Math.max(0, Math.trunc(q.waiting)) : null,
+      hub,
+    };
+  }
+
   // --- Browser des Agenten: Stand und Bild der Seite, nur bekannte Felder ---
   const BILD_ARTEN = ['image/jpeg', 'image/png'];
   const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -462,6 +503,15 @@
       async staendeDiff(id, pfad) {
         return staendeDiffBereinigen(await api(`/api/gespraech/${kodiere(id)}/staende/diff?pfad=${kodiere(pfad)}`));
       },
+      /** Hub-Werkzeuge, die zur Eingabe passen (höchstens 50). Ein Runner ohne Hub antwortet mit einer leeren Liste. */
+      async werkzeuge(q) {
+        const r = await api(`/api/werkzeuge?q=${kodiere(q)}`);
+        return (r && Array.isArray(r.werkzeuge) ? r.werkzeuge : []).map(werkzeugBereinigen).filter(Boolean).slice(0, 50);
+      },
+      /** Was der Runner über sich meldet: Pause, Zahl der Sitzungen, Modell (lokaler Runner), Hub. */
+      async betrieb() {
+        return betriebBereinigen(await api('/api/health'));
+      },
     };
   }
 
@@ -499,5 +549,6 @@
   FP.wege = {
     createWege, klassifiziere, fehlerTeile, wegFehlt, kodiere, markierungenPruefen, trefferBereinigen, archivListePruefen, fensterAusModellen, modellEintrag, MELDUNG,
     aufgabenBereinigen, laufBereinigen, jobBereinigen, browserBereinigen, staendeBereinigen, staendeDiffBereinigen, zurueckBereinigen, anhaengeBereinigen, nachrichtAnhaenge, dateiBildBereinigen,
+    werkzeugBereinigen, betriebBereinigen,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

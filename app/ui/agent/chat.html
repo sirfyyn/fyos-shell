@@ -14,6 +14,8 @@
   <link rel="stylesheet" href="browser-flaeche.css">
   <link rel="stylesheet" href="flaechen.css">
   <link rel="stylesheet" href="dateien.css">
+  <link rel="stylesheet" href="palette.css">
+  <link rel="stylesheet" href="start.css">
 </head>
 <body>
   <div class="app" id="app">
@@ -44,6 +46,7 @@
       </nav>
       <div class="leiste-kopf">
         <button id="neueSitzung" type="button" class="neu-knopf" aria-keyshortcuts="Meta+Shift+O Control+Shift+O">Neue Sitzung</button>
+        <button id="ueberblickKnopf" type="button" class="leise-knopf ueberblick-knopf" aria-pressed="false" aria-controls="start" title="Überblick: was dich braucht und was läuft (Cmd/Strg+Umschalt+U)" aria-keyshortcuts="Meta+Shift+U Control+Shift+U">Überblick</button>
       </div>
       <form id="neuForm" class="neu-form" autocomplete="off" hidden>
         <label for="neuTitel">Name</label>
@@ -153,6 +156,7 @@
         <button id="freigabenBanner" type="button" class="fp-banner" aria-controls="freigabenPanel" title="Offene Freigaben ansehen" hidden></button>
         <div id="panes" class="panes"></div>
         <div id="plattform" class="pf-wurzel" hidden></div>
+        <div id="start" aria-label="Überblick" hidden></div>
         <aside id="freigabenPanel" class="fp-panel" aria-label="Offene Freigaben" hidden>
           <div class="fp-panel-kopf"><strong>Offene Freigaben</strong><button id="freigabenZu" type="button" class="leise-knopf" aria-label="Schließen">Schließen</button></div>
           <p id="freigabenHinweis" class="fp-hinweis" role="status" hidden></p>
@@ -244,6 +248,7 @@
       </div>
     </aside>
     <div id="ansage" class="sr" aria-live="polite" aria-atomic="true"></div>
+    <div id="palette" hidden></div>
   </div>
 
   <script src="markdown-strom.js"></script>
@@ -269,6 +274,8 @@
   <script src="eingabe.js"></script>
   <script src="anhaenge.js"></script>
   <script src="plattform.js"></script>
+  <script src="palette.js"></script>
+  <script src="start.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

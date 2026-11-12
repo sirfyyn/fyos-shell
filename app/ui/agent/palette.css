@@ -1,0 +1,28 @@
+/* Palette (Cmd/Strg+K), palette.js. Farben nur aus den Variablen der Seite; die gewählte Zeile ist neutral unterlegt (Signalfarbe nur für
+   Hauptknopf und Laufendes). */
+.pal { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 16px; background: rgba(4, 6, 10, .55); }
+.pal[hidden] { display: none; }
+.pal-kasten { width: min(620px, 100%); max-height: min(70vh, 560px); display: flex; flex-direction: column; border: 1px solid var(--linie-stark); border-radius: 12px; background: var(--flaeche2); box-shadow: 0 20px 60px rgba(0, 0, 0, .6); overflow: hidden; animation: pal-ein var(--dauer) ease-out both; }
+@keyframes pal-ein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.pal-kopf { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--linie); }
+.pal-feld { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 15px; }
+.pal-feld::placeholder { color: var(--leise); }
+.pal-taste { flex: none; padding: 1px 6px; border: 1px solid var(--linie-stark); border-radius: 5px; color: var(--leise); font: 11px var(--mono); }
+.pal-liste { overflow-y: auto; padding: 4px 0; }
+.pal-zeile { display: grid; grid-template-columns: 76px minmax(0, 1fr) minmax(0, auto); gap: 10px; align-items: baseline; padding: 7px 12px; font-size: 13.5px; cursor: default; }
+.pal-zeile:hover { background: rgba(255, 255, 255, .035); }
+.pal-zeile.gewaehlt { background: var(--wahl); box-shadow: inset 2px 0 0 var(--fokus); }
+.pal-art { color: var(--leise); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+.pal-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-zeile[data-art="datei"] .pal-name, .pal-zeile[data-art="werkzeug"] .pal-name, .pal-zeile[data-art="befehl"] .pal-name, .pal-zeile[data-art="skill"] .pal-name { font-family: var(--mono); font-size: 12.5px; }
+.pal-rechts { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--leise); font-size: 12px; text-align: right; }
+.pal-leer { margin: 0; padding: 14px 12px; color: var(--leise); font-size: 13px; }
+.pal-fuss { display: flex; justify-content: space-between; gap: 12px; padding: 7px 12px; border-top: 1px solid var(--linie); color: var(--leise); font-size: 11.5px; }
+.pal-lage { flex: none; }
+@media (max-width: 560px) {
+  .pal { padding-top: 6vh; }
+  .pal-zeile { grid-template-columns: 62px minmax(0, 1fr); }
+  .pal-rechts { display: none; }
+  .pal-hilfe { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .pal-kasten { animation: none; } }
