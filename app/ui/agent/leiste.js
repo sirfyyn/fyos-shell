@@ -205,7 +205,7 @@
       b.dataset.angepinnt = z.angepinnt ? '1' : '0';
       const titel = b.querySelector('.sitzung-titel');
       if (titel.textContent !== z.titel) titel.textContent = z.titel;
-      const meta = [z.ordner || z.bereich, z.laeuft ? 'arbeitet' : z.zeitText].filter(Boolean).join(' · ');
+      const meta = [z.zweig || z.ordner || z.bereich, z.laeuft ? 'arbeitet' : z.zeitText].filter(Boolean).join(' · ');
       const m = b.querySelector('.sitzung-meta');
       if (m.textContent !== meta) m.textContent = meta;
       b.title = [z.titel, z.pfad || z.bereich].filter(Boolean).join('\n');

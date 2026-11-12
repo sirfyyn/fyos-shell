@@ -302,3 +302,17 @@ code.inline { background: var(--flaeche2); border-radius: 5px; padding: 1px 5px;
 /* Knopf im Kopf (Bericht speichern) */
 .leise-knopf { padding: 3px 10px; border: 1px solid var(--linie); border-radius: 999px; background: none; color: var(--leise); font: inherit; font-size: 12px; cursor: pointer; }
 .leise-knopf:hover { color: var(--text, inherit); }
+
+/* Git je Sitzung (git-kasten.js) oben in der Tafel „Änderungen“; Kürzel gk- */
+.gk-kasten { display: grid; gap: 6px; margin: 0 0 12px; padding: 8px 10px; border: 1px solid var(--linie); border-radius: 10px; }
+.gk-kasten[hidden] { display: none; }
+.gk-stand { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--text, inherit); overflow-wrap: anywhere; }
+.gk-zeile { display: flex; gap: 6px; }
+.gk-zeile input { flex: 1; min-width: 0; padding: 3px 8px; border: 1px solid var(--linie); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; }
+.gk-zeile button { padding: 3px 10px; font-size: 12px; }
+.gk-pr { justify-self: start; }
+.gk-meldung { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.gk-meldung.gk-fehler { color: var(--schlecht); }
+/* Häkchen „Eigener Arbeitsbaum“ beim Anlegen einer Sitzung */
+.neu-haken { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--leise); }
+.neu-haken[hidden] { display: none; }

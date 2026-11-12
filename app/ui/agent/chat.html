@@ -61,6 +61,7 @@
           <ul id="ordnerBaum" class="ordner-baum" role="tree" aria-label="Ordner auf dem Runner"></ul>
           <p id="ordnerFehler" class="neu-fehler" role="alert" hidden></p>
         </fieldset>
+        <label id="neuBaumLabel" class="neu-haken" title="Die Sitzung arbeitet auf einem eigenen Zweig in einem eigenen Arbeitsbaum (git worktree) des Repos; dein Arbeitsbaum bleibt unberührt" hidden><input id="neuBaum" type="checkbox"> Eigener Arbeitsbaum (Git-Zweig nur für diese Sitzung)</label>
         <label for="neuOrdner" id="neuOrdnerLabel">Arbeitsordner</label>
         <select id="neuOrdner"></select>
         <p id="neuPfad" class="leise neu-pfad"></p>
@@ -107,6 +108,16 @@
       </div>
       <div id="tafelAenderungen" class="tafel wb-tafel" role="tabpanel" aria-labelledby="schieneAenderungen" hidden>
         <h2 class="wb-titel">Änderungen</h2>
+        <!-- Git je Sitzung (git-kasten.js): nur bei einer Sitzung mit eigenem Arbeitsbaum -->
+        <section id="gitKasten" class="gk-kasten" aria-label="Git dieser Sitzung" hidden>
+          <p id="gitStand" class="gk-stand"></p>
+          <div class="gk-zeile">
+            <input id="gitNachricht" type="text" maxlength="4000" placeholder="Commit-Nachricht" aria-label="Commit-Nachricht">
+            <button id="gitCommit" type="button" disabled>Committen</button>
+          </div>
+          <button id="gitPr" type="button" class="leise-knopf gk-pr" disabled>PR anlegen</button>
+          <p id="gitMeldung" class="leise gk-meldung" role="status" hidden></p>
+        </section>
         <p id="staendeLeer" class="leise leer-hinweis">In dieser Sitzung hat der Agent noch keine Datei geändert.</p>
         <ul id="staendeDateien" class="st-dateien" aria-label="Geänderte Dateien"></ul>
         <h3 id="staendeKopf" class="st-kopf" hidden>Stände</h3>
@@ -282,6 +293,7 @@
   <script src="palette.js"></script>
   <script src="start.js"></script>
   <script src="rueckmeldung.js"></script>
+  <script src="git-kasten.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

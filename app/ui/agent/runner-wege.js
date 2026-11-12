@@ -505,6 +505,10 @@
       async staendeDiff(id, pfad) {
         return staendeDiffBereinigen(await api(`/api/gespraech/${kodiere(id)}/staende/diff?pfad=${kodiere(pfad)}`));
       },
+      /** Git je Sitzung (Runner src/arbeitsbaum.js): Stand des eigenen Arbeitsbaums; ohne Arbeitsbaum ein Fehler (404). */
+      async git(id) {
+        return api(`/api/gespraech/${kodiere(id)}/git`);
+      },
       /** Hub-Werkzeuge, die zur Eingabe passen (höchstens 50). Ein Runner ohne Hub antwortet mit einer leeren Liste. */
       async werkzeuge(q) {
         const r = await api(`/api/werkzeuge?q=${kodiere(q)}`);

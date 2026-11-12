@@ -318,6 +318,19 @@
       breit: () => !(window.matchMedia && window.matchMedia('(max-width: 1180px)').matches),
     }
   );
+  // --- Git je Sitzung (git-kasten.js): Zweig, Commit, PR der Sitzung mit eigenem Arbeitsbaum, oben in der Tafel „Änderungen“ ---
+  const gitKasten = FP.git.createGitKasten(
+    { kasten: $('gitKasten'), stand: $('gitStand'), nachricht: $('gitNachricht'), commit: $('gitCommit'), pr: $('gitPr'), meldung: $('gitMeldung') },
+    {
+      wege,
+      transport,
+      sitzung: () => (aktiv ? aktiv.id : null),
+      titel: () => {
+        const g = aktiv && gespraeche.find((x) => String(x.id) === String(aktiv.id));
+        return g && g.titel;
+      },
+    },
+  );
   // --- Tafel „Änderungen“: was der Agent in der Sitzung geändert hat, Unterschied je Datei, Stände und Zurückspulen (staende-tafel.js). ---
   // Kennt der Runner die Stände nicht, bleibt der Knopf der Schiene weg.
   const staendeTafel = FP.staende.createStaendeTafel(
@@ -416,6 +429,7 @@
   function planeStaende() {
     // der Baum der Tafel „Dateien“ zieht mit (auch bei einem Runner ohne Stände: dort nennt niemand sonst neue Dateien)
     dateienTafel.plane();
+    void gitKasten.neu();
     if (staendeGeplant) return;
     staendeGeplant = true;
     setTimeout(() => {
@@ -978,6 +992,7 @@
     aenderungenNachziehen();
     werkbank.setzeSitzung(rec.id);
     staendeTafel.setzeSitzung(rec.id);
+    void gitKasten.neu();
     dateiFlaeche.setzeSitzung(rec.id);
     dateienTafel.setzeSitzung(rec.id);
     zeichneListe();
@@ -1161,9 +1176,13 @@
       $('neuOrdner').hidden = $('neuOrdnerLabel').hidden = $('neuPfad').hidden = aus;
     };
     legacy(false);
+    $('neuBaum').checked = false;
+    $('neuBaumLabel').hidden = true;
     ordnerAuswahl.starte(runnerArt).then((ok) => {
       ordnerNutzbar = ok;
       legacy(ok);
+      // Git je Sitzung (Runner src/arbeitsbaum.js) geht nur mit einem gewählten Ordner; ob er in einem Repo liegt, prüft der Runner
+      $('neuBaumLabel').hidden = !ok;
     });
   }
   function pfadZeigen() {
@@ -1198,6 +1217,7 @@
       const koerper = { titel: $('neuTitel').value.trim() || undefined };
       const ordner = ordnerNutzbar ? ordnerAuswahl.wert() : '';
       if (ordner) koerper.ordner = ordner;
+      if (ordner && $('neuBaum').checked) koerper.arbeitsbaum = true;
       else if ($('neuOrdner').value && !ordnerNutzbar) koerper.arbeitsbereich = $('neuOrdner').value;
       if ($('neuModell').value) koerper.modell = $('neuModell').value;
       const r = await transport.api('POST', '/api/gespraeche', koerper);
@@ -1536,7 +1556,7 @@
 
   // Die Seite stellt sich dem Prüfskript (tools/e2e_agent.py) nur zur Verfügung, wenn Rust es erlaubt (Debug-Bau mit gesetzter Umgebung)
   Object.defineProperty(window, '__chat', { get: () => (aktiv ? aktiv.chat : null) });
-  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, rueck, ladeLage, ladeModelle, get aktiv() { return aktiv; } };
+  window.__arbeitsplatz = { wechsle, ansichten, ladeListe, aktivitaet, neuOeffnen, freigaben, aenderungen, suche, wege, werkbank, palette, ueberblick, ueberblickZeigen, rueck, ladeLage, ladeModelle, gitKasten, get aktiv() { return aktiv; } };
   if (window.__TAURI__) {
     window.__TAURI__.core.invoke('ziel_info').then((i) => {
       // Das Fenster wurde durch einen Klick auf die Freigaben-Zeile im Tray geöffnet (noch ohne Zuhörer für das Ereignis)

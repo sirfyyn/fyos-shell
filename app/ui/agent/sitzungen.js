@@ -97,6 +97,8 @@
           laeuft: sicher.has(String(g.id)) || !!(aktiv && aktiv.laeuft(g.id)),
           archiviert: !!g.archiviert,
           angepinnt: g.angepinnt === true && !g.archiviert,
+          // eigener Arbeitsbaum (Runner src/arbeitsbaum.js): statt des Ordners steht der Zweig in der Zeile
+          zweig: typeof g.zweig === 'string' ? g.zweig.slice(0, 120) : '',
         };
       })
       // angepinnte Sitzungen stehen oben (untereinander nach Aktivität), dann die übrigen, neueste zuerst
