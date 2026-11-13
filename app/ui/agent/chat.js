@@ -256,8 +256,8 @@
   const werkbank = FP.werkbank.createWerkbank(
     {
       schiene: $('schiene'),
-      knoepfe: { gespraeche: $('schieneGespraeche'), aufgaben: $('schieneAufgaben'), laeufe: $('schieneLaeufe'), aenderungen: $('schieneAenderungen'), dateien: $('schieneDateien'), wissen: $('schieneWissen'), betrieb: $('schieneBetrieb') },
-      tafeln: { gespraeche: $('tafelGespraeche'), aufgaben: $('tafelAufgaben'), laeufe: $('tafelLaeufe'), aenderungen: $('tafelAenderungen'), dateien: $('tafelDateien'), wissen: $('tafelWissen'), betrieb: $('tafelBetrieb') },
+      knoepfe: { gespraeche: $('schieneGespraeche'), aufgaben: $('schieneAufgaben'), laeufe: $('schieneLaeufe'), aenderungen: $('schieneAenderungen'), dateien: $('schieneDateien'), wissen: $('schieneWissen'), betrieb: $('schieneBetrieb'), konnektoren: $('schieneKonnektoren') },
+      tafeln: { gespraeche: $('tafelGespraeche'), aufgaben: $('tafelAufgaben'), laeufe: $('tafelLaeufe'), aenderungen: $('tafelAenderungen'), dateien: $('tafelDateien'), wissen: $('tafelWissen'), betrieb: $('tafelBetrieb'), konnektoren: $('tafelKonnektoren') },
       aufgabenMarke: $('aufgabenMarke'),
       aufgabenLeer: $('aufgabenLeer'),
       aufgabenKopf: $('aufgabenKopf'),
@@ -291,6 +291,7 @@
         else if (name === 'dateien') dateienTafel.zeige();
         else if (name === 'betrieb') betriebTafel.zeige();
         else if (name === 'wissen') wissenTafel.zeige();
+        else if (name === 'konnektoren') konnektorenTafel.zeige();
       },
     }
   );
@@ -735,7 +736,7 @@
     waechst();
     eingabe.focus();
   }
-  const TAFEL_NAMEN = [['gespraeche', 'Sitzungen', 'schieneGespraeche'], ['aufgaben', 'Aufgaben', 'schieneAufgaben'], ['laeufe', 'Läufe', 'schieneLaeufe'], ['aenderungen', 'Änderungen', 'schieneAenderungen'], ['dateien', 'Dateien', 'schieneDateien'], ['wissen', 'Wissen', 'schieneWissen'], ['betrieb', 'Betrieb', 'schieneBetrieb']];
+  const TAFEL_NAMEN = [['gespraeche', 'Sitzungen', 'schieneGespraeche'], ['aufgaben', 'Aufgaben', 'schieneAufgaben'], ['laeufe', 'Läufe', 'schieneLaeufe'], ['aenderungen', 'Änderungen', 'schieneAenderungen'], ['dateien', 'Dateien', 'schieneDateien'], ['wissen', 'Wissen', 'schieneWissen'], ['betrieb', 'Betrieb', 'schieneBetrieb'], ['konnektoren', 'Konnektoren', 'schieneKonnektoren']];
   const palette = FP.palette.createPalette(
     { wurzel: $('palette') },
     {
@@ -865,6 +866,18 @@
     },
   );
   void wissenTafel.pruefe();
+
+  // --- Tafel „Konnektoren“ (konnektoren-tafel.js): Konten über den Hub, Prüfen, Fähigkeiten dieses Runners. Ohne Weg kein Knopf. ---
+  const konnektorenTafel = FP.konnektoren.createKonnektorenTafel(
+    { knopf: $('schieneKonnektoren'), rumpf: $('konnektorenRumpf'), fuss: $('konnektorenFuss') },
+    {
+      wege,
+      beiWeg: (kennt) => {
+        if (!kennt && werkbank.tafel === 'konnektoren') werkbank.zeige('gespraeche');
+      },
+    },
+  );
+  void konnektorenTafel.pruefe();
 
   // Abschluss eines eben beendeten Zugs (Prototyp „Abschluss mit nächsten Schritten“): was geändert, ob Tests liefen, ob etwas zu
   // committen ist, und Knöpfe dafür. Steht nur unter einem Zug, den diese Seite live gesehen hat.

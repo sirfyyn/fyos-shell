@@ -143,3 +143,16 @@
 .ws-auszug { margin: 0; font-size: 11.5px; color: var(--leise); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .ws-text { max-height: 320px; overflow: auto; padding: 6px 8px; border: 1px solid var(--linie); border-radius: 8px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ws-fehler { color: var(--schlecht); }
+
+/* Tafel „Konnektoren“ (konnektoren-tafel.js): Konten und Fähigkeiten; Kürzel kn-, Zeilen und Marken wie in „Betrieb“ (bt-). */
+.kn-liste { display: grid; gap: 6px; margin: 4px 0 0; padding: 0; list-style: none; }
+.kn-konto { display: grid; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--linie); min-width: 0; }
+.kn-konto:last-child { border-bottom: none; }
+.kn-rechte { font-size: 11px; overflow-wrap: anywhere; }
+.kn-knoepfe { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.kn-knoepfe .leise-knopf, .kn-weg { padding: 1px 8px; font-size: 11px; text-decoration: none; }
+.kn-weg { display: inline-block; margin-top: 6px; }
+.kn-ergebnis { font-size: 11.5px; overflow-wrap: anywhere; }
+.kn-faehigkeit { font-size: 12px; }
+.kn-faehigkeit .bt-name { font-family: inherit; }
+.kn-fehler { color: var(--schlecht); }

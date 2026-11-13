@@ -132,7 +132,7 @@
     const jetzt = opts.jetzt || (() => Date.now());
     // „aenderungen“ (staende-tafel.js) gehört zur Schiene, sobald die Seite Knopf und Tafel dafür mitgibt; ihren Inhalt führt jenes Modul.
     // „dateien“ (dateien-tafel.js) ebenso: der Ordner der Sitzung als Baum.
-    const TAFELN = ['gespraeche', 'aufgaben', 'laeufe', 'aenderungen', 'dateien', 'wissen', 'betrieb'].filter((n) => refs.knoepfe[n] && refs.tafeln[n]);
+    const TAFELN = ['gespraeche', 'aufgaben', 'laeufe', 'aenderungen', 'dateien', 'wissen', 'betrieb', 'konnektoren'].filter((n) => refs.knoepfe[n] && refs.tafeln[n]);
     let tafel = 'gespraeche';
     let sitzung = null;
     let aufgaben = aufgabenSicht(null);

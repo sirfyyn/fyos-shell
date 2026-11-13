@@ -29,6 +29,7 @@
         <button id="schieneDateien" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelDateien" tabindex="-1" title="Dateien im Ordner der Sitzung" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg><span class="sr">Dateien</span></button>
         <button id="schieneWissen" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelWissen" tabindex="-1" title="Wissen: Doku, Entscheidungen, Berichte und Skills durchsuchen" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h7.5l2.5 2.5v8.5H3z M5.5 6.5h5 M5.5 9h5 M5.5 11.5h3" /></svg><span class="sr">Wissen</span></button>
         <button id="schieneBetrieb" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelBetrieb" tabindex="-1" title="Betrieb: Modell, Hub und Knoten" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8.5h3l2-4.5 3 9 2-4.5h3" /></svg><span class="sr">Betrieb</span></button>
+        <button id="schieneKonnektoren" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelKonnektoren" tabindex="-1" title="Konnektoren: Konten und Fähigkeiten des Runners" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 2v3 M10.5 2v3 M4 5h8v3a4 4 0 0 1-8 0z M8 12v2.5" /></svg><span class="sr">Konnektoren</span></button>
       </nav>
       <div class="leiste-koerper">
       <div class="leiste-oben">
@@ -145,6 +146,12 @@
         <label class="ws-haken"><input id="wissenGedaechtnis" type="checkbox"> auch das Gedächtnis</label>
         <p id="wissenHinweis" class="leise leer-hinweis" role="status">Doku, Entscheidungen, Berichte, Skills und Werkzeuge. Wörter oder Kennungen eingeben, die im Text stehen.</p>
         <ul id="wissenListe" class="ws-liste" aria-label="Treffer"></ul>
+      </div>
+      <!-- Tafel „Konnektoren“ (konnektoren-tafel.js): Konten über den Hub, Prüfen, Fähigkeiten dieses Runners; nur lesend -->
+      <div id="tafelKonnektoren" class="tafel wb-tafel kn-tafel" role="tabpanel" aria-labelledby="schieneKonnektoren" hidden>
+        <h2 class="wb-titel">Konnektoren</h2>
+        <div id="konnektorenRumpf" class="bt-rumpf"></div>
+        <p id="konnektorenFuss" class="leise bt-fuss" hidden></p>
       </div>
       <!-- Tafel „Betrieb“ (betrieb-tafel.js): Modell, Hub, Knoten des Clusters mit CPU, Speicher und GPUs; nur lesend -->
       <div id="tafelBetrieb" class="tafel wb-tafel bt-tafel" role="tabpanel" aria-labelledby="schieneBetrieb" hidden>
@@ -312,6 +319,7 @@
   <script src="git-kasten.js"></script>
   <script src="betrieb-tafel.js"></script>
   <script src="wissen-tafel.js"></script>
+  <script src="konnektoren-tafel.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

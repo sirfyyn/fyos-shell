@@ -537,6 +537,15 @@
         const r = (await api(`/api/wissen/lesen?adresse=${kodiere(adresse)}`)) || {};
         return { adresse: text(r.adresse, 400), titel: text(r.titel, 300), art: text(r.art, 40), reife: text(r.reife, 20), aufloesbar: r.aufloesbar !== false, text: text(r.text, 20000) };
       },
+      /** Tafel „Konnektoren“ (Runner src/konnektoren.js): Konten über den Hub und die Fähigkeiten dieses Runners. Ohne Weg: art 'weg_fehlt'. */
+      async konnektoren() {
+        return konnektorenBereinigen(await api('/api/konnektoren'));
+      },
+      /** Ein Konto beim Anbieter prüfen (konten.pruefen am Hub). */
+      async kontoPruefen(anbieter) {
+        const r = (await api(`/api/konnektoren/pruefen?anbieter=${kodiere(anbieter)}`)) || {};
+        return { anbieter: text(r.anbieter, 40), geprueft: r.geprueft === true, traegt: typeof r.traegt === 'boolean' ? r.traegt : null, konto: text(r.konto, 120), satz: text(r.satz, 300) };
+      },
       /** Kennt der Runner die Tafel „Wissen“? Eine leere Suche weist er mit 400 ab; ein Runner ohne den Weg antwortet 404. */
       async wissenDa() {
         try {
@@ -549,6 +558,29 @@
         }
       },
     };
+  }
+
+  /** Nur https-Wege (Verbinden, Verwalten) kommen in die Seite. */
+  function httpsWeg(v) {
+    const s = text(v, 600);
+    return /^https:\/\/[^\s"'<>]+$/.test(s) ? s : '';
+  }
+
+  /** Antwort von GET /api/konnektoren: Konten, Fähigkeiten, Hub. */
+  function konnektorenBereinigen(r) {
+    r = r && typeof r === 'object' ? r : {};
+    const konten = (Array.isArray(r.konten) ? r.konten : []).filter((k) => k && typeof k.id === 'string' && k.id).slice(0, 60).map((k) => ({
+      id: text(k.id, 40),
+      name: text(k.name, 80) || text(k.id, 40),
+      art: text(k.art, 40),
+      verbunden: k.verbunden !== false,
+      konto: text(k.konto, 120),
+      rechte: (Array.isArray(k.rechte) ? k.rechte : []).filter((x) => typeof x === 'string').slice(0, 20).map((x) => x.slice(0, 80)),
+      pruefbar: k.pruefbar === true,
+      verbinden: httpsWeg(k.verbinden),
+    }));
+    const faehigkeiten = (Array.isArray(r.faehigkeiten) ? r.faehigkeiten : []).filter((f) => f && typeof f.name === 'string').slice(0, 40).map((f) => ({ name: text(f.name, 40), titel: text(f.titel, 80) || text(f.name, 40), an: f.an === true }));
+    return { konten, satz: text(r.satz, 300), verwalten: httpsWeg(r.verwalten), fehler: text(r.fehler, 200), faehigkeiten, hub: { konfiguriert: !!(r.hub && r.hub.konfiguriert === true) } };
   }
 
   /** Antwort von GET /api/wissen: Treffer mit Titel, Quelle, Adresse, Reife, Stand, Auszug. */
@@ -664,6 +696,6 @@
   FP.wege = {
     createWege, klassifiziere, fehlerTeile, wegFehlt, kodiere, markierungenPruefen, trefferBereinigen, archivListePruefen, fensterAusModellen, modellEintrag, MELDUNG,
     aufgabenBereinigen, laufBereinigen, jobBereinigen, browserBereinigen, staendeBereinigen, staendeDiffBereinigen, zurueckBereinigen, anhaengeBereinigen, nachrichtAnhaenge, dateiBildBereinigen,
-    werkzeugBereinigen, betriebBereinigen, betriebLageBereinigen, wissenBereinigen,
+    werkzeugBereinigen, betriebBereinigen, betriebLageBereinigen, wissenBereinigen, konnektorenBereinigen, httpsWeg,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
