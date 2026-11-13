@@ -117,12 +117,29 @@
 .bt-punkt.schlecht { background: var(--schlecht); }
 .bt-rolle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
 .bt-werte { font-family: var(--mono); font-size: 11.5px; }
-.bt-gpu { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bt-gpu { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
 .bt-gpu .bt-werte { flex: none; }
-.bt-balken { flex: 1; min-width: 30px; height: 4px; border-radius: 999px; background: var(--linie); overflow: hidden; }
+.bt-balken { flex: 1 1 60px; min-width: 60px; height: 4px; border-radius: 999px; background: var(--linie); overflow: hidden; }
 .bt-balken i { display: block; height: 100%; background: var(--gut); }
 .bt-balken.warn i { background: var(--warn); }
 .bt-fehler { color: var(--schlecht); }
 .bt-fuss { margin: 8px 0 0; font-size: 11px; }
 .bt-chip.laeuft { border-color: var(--akzent); color: var(--akzent); }
 .bt-tempo { overflow-wrap: anywhere; }
+
+/* Tafel „Wissen“ (wissen-tafel.js): Suche über den Hub; Kürzel ws-. Die Reife ist nur Text, keine Signalfarbe. */
+.ws-haken { display: flex; gap: 6px; align-items: center; margin: 6px 0 2px; font-size: 12px; color: var(--leise); }
+.ws-haken input { margin: 0; }
+.ws-liste { display: grid; gap: 8px; margin: 6px 0 0; padding: 0; list-style: none; }
+.ws-treffer { display: grid; gap: 3px; padding-bottom: 8px; border-bottom: 1px solid var(--linie); min-width: 0; }
+.ws-treffer:last-child { border-bottom: none; }
+.ws-kopf { display: flex; align-items: baseline; gap: 6px; padding: 0; border: none; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.ws-kopf:hover .ws-titel { text-decoration: underline; }
+.ws-titel { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.ws-reife { flex: none; padding: 0 6px; border: 1px solid var(--linie); border-radius: 999px; font-size: 10.5px; color: var(--leise); }
+.ws-reife.kanon, .ws-reife.einsicht { border-color: var(--gut); color: var(--gut); }
+.ws-unter { display: flex; align-items: center; gap: 6px; font-size: 11px; overflow-wrap: anywhere; }
+.ws-erwaehnen { padding: 0 8px; font-size: 11px; }
+.ws-auszug { margin: 0; font-size: 11.5px; color: var(--leise); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ws-text { max-height: 320px; overflow: auto; padding: 6px 8px; border: 1px solid var(--linie); border-radius: 8px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-fehler { color: var(--schlecht); }

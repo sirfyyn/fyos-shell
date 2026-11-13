@@ -73,7 +73,7 @@ test('Quelltext: kein HTML aus Text, kein eigenes Netz; Knopf und Tafel stehen i
   assert.match(html, /id="schieneBetrieb"[^>]*hidden/);
   assert.match(html, /id="tafelBetrieb"/);
   assert.match(html, /<script src="betrieb-tafel.js"><\/script>/);
-  assert.match(lies('werkbank.js'), /'dateien', 'betrieb'\]/);
+  assert.match(lies('werkbank.js'), /'dateien', 'wissen', 'betrieb'\]/);
 });
 
 function tafel(antwort) {

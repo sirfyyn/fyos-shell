@@ -16,6 +16,8 @@
  *                                                                 staende: [{ id, zeit, titel, aenderungen, dateien, gespraech }], gesamt }
  *   staendeDiff(id, p)  GET /api/gespraech/<id>/staende/diff  → { relativ, patch (Unified-Patch oder null), plus, minus, grund }
  *   betriebLage()       GET /api/betrieb                      → { modell: { name, antwortet }, hub: { konfiguriert, erreichbar, fehler }, cluster: { satz, knoten, fehler } | null }
+ *   wissen(q, o)        GET /api/wissen?q=&limit=[&gedaechtnis=1] → { treffer: [{ titel, quelle, adresse, reife, stand, auszug }], satz }
+ *   wissenLesen(a)      GET /api/wissen/lesen?adresse=        → { adresse, titel, art, reife, aufloesbar, text }
  *   anhaenge()          GET /api/anhaenge                    → { an, bilder (das Modell sieht Bilder), bilderQuelle, grenzen: { anzahl, bildBytes, dateiBytes, gesamtBytes } }
  *
  * Geschrieben wird hier nicht; `zurueckBereinigen` bereinigt nur die Antwort von POST …/zurueck (staende-tafel.js stellt die Anfrage).
@@ -523,7 +525,40 @@
       async betriebLage() {
         return betriebLageBereinigen(await api('/api/betrieb'));
       },
+      /** Tafel „Wissen“ (Runner src/wissen-weg.js): Suche über den Hub; `o.gedaechtnis` nimmt das Gedächtnis dazu. */
+      async wissen(q, o) {
+        o = o || {};
+        const limit = Math.max(1, Math.min(20, Math.trunc(o.limit || 10)));
+        const r = await api(`/api/wissen?q=${kodiere(q)}&limit=${limit}${o.gedaechtnis ? '&gedaechtnis=1' : ''}`);
+        return wissenBereinigen(r);
+      },
+      /** Eine Adresse aus der Suche als Text. */
+      async wissenLesen(adresse) {
+        const r = (await api(`/api/wissen/lesen?adresse=${kodiere(adresse)}`)) || {};
+        return { adresse: text(r.adresse, 400), titel: text(r.titel, 300), art: text(r.art, 40), reife: text(r.reife, 20), aufloesbar: r.aufloesbar !== false, text: text(r.text, 20000) };
+      },
+      /** Kennt der Runner die Tafel „Wissen“? Eine leere Suche weist er mit 400 ab; ein Runner ohne den Weg antwortet 404. */
+      async wissenDa() {
+        try {
+          await api('/api/wissen?q=');
+          return true;
+        } catch (f) {
+          if (f && f.art === 'weg_fehlt') return false;
+          if (f && f.art === 'ungueltig') return true;
+          throw f;
+        }
+      },
     };
+  }
+
+  /** Antwort von GET /api/wissen: Treffer mit Titel, Quelle, Adresse, Reife, Stand, Auszug. */
+  function wissenBereinigen(r) {
+    r = r && typeof r === 'object' ? r : {};
+    const treffer = (Array.isArray(r.treffer) ? r.treffer : [])
+      .filter((t) => t && typeof t === 'object')
+      .slice(0, 20)
+      .map((t) => ({ titel: text(t.titel, 300) || 'ohne Titel', quelle: text(t.quelle, 80), adresse: text(t.adresse, 400), reife: text(t.reife, 20), stand: text(t.stand, 20), auszug: text(t.auszug, 600) }));
+    return { treffer, satz: text(r.satz, 300) };
   }
 
   /** Antwort von GET /api/betrieb: nur bekannte Felder, Zahlen geprüft, Texte gekürzt. */
@@ -629,6 +664,6 @@
   FP.wege = {
     createWege, klassifiziere, fehlerTeile, wegFehlt, kodiere, markierungenPruefen, trefferBereinigen, archivListePruefen, fensterAusModellen, modellEintrag, MELDUNG,
     aufgabenBereinigen, laufBereinigen, jobBereinigen, browserBereinigen, staendeBereinigen, staendeDiffBereinigen, zurueckBereinigen, anhaengeBereinigen, nachrichtAnhaenge, dateiBildBereinigen,
-    werkzeugBereinigen, betriebBereinigen, betriebLageBereinigen,
+    werkzeugBereinigen, betriebBereinigen, betriebLageBereinigen, wissenBereinigen,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

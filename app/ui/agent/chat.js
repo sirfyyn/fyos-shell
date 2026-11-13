@@ -256,8 +256,8 @@
   const werkbank = FP.werkbank.createWerkbank(
     {
       schiene: $('schiene'),
-      knoepfe: { gespraeche: $('schieneGespraeche'), aufgaben: $('schieneAufgaben'), laeufe: $('schieneLaeufe'), aenderungen: $('schieneAenderungen'), dateien: $('schieneDateien'), betrieb: $('schieneBetrieb') },
-      tafeln: { gespraeche: $('tafelGespraeche'), aufgaben: $('tafelAufgaben'), laeufe: $('tafelLaeufe'), aenderungen: $('tafelAenderungen'), dateien: $('tafelDateien'), betrieb: $('tafelBetrieb') },
+      knoepfe: { gespraeche: $('schieneGespraeche'), aufgaben: $('schieneAufgaben'), laeufe: $('schieneLaeufe'), aenderungen: $('schieneAenderungen'), dateien: $('schieneDateien'), wissen: $('schieneWissen'), betrieb: $('schieneBetrieb') },
+      tafeln: { gespraeche: $('tafelGespraeche'), aufgaben: $('tafelAufgaben'), laeufe: $('tafelLaeufe'), aenderungen: $('tafelAenderungen'), dateien: $('tafelDateien'), wissen: $('tafelWissen'), betrieb: $('tafelBetrieb') },
       aufgabenMarke: $('aufgabenMarke'),
       aufgabenLeer: $('aufgabenLeer'),
       aufgabenKopf: $('aufgabenKopf'),
@@ -290,6 +290,7 @@
         }
         else if (name === 'dateien') dateienTafel.zeige();
         else if (name === 'betrieb') betriebTafel.zeige();
+        else if (name === 'wissen') wissenTafel.zeige();
       },
     }
   );
@@ -421,7 +422,10 @@
   );
   /** Eine Datei aus der Tafel an die Nachricht hängen: `@pfad` an der Schreibmarke, wie die @-Auswahl es einsetzt. */
   function erwaehne(relativ) {
-    const wert = FP.eingabe.dateiWert(relativ);
+    einfuegen(FP.eingabe.dateiWert(relativ));
+  }
+  /** Text an der Schreibmarke ins Nachrichtenfeld legen, mit Leerzeichen davor, wenn nötig (Datei aus der Tafel, Fundstelle aus „Wissen“). */
+  function einfuegen(wert) {
     const start = typeof eingabe.selectionStart === 'number' ? eingabe.selectionStart : eingabe.value.length;
     const ende = typeof eingabe.selectionEnd === 'number' ? eingabe.selectionEnd : start;
     const davor = eingabe.value.slice(0, start);
@@ -731,7 +735,7 @@
     waechst();
     eingabe.focus();
   }
-  const TAFEL_NAMEN = [['gespraeche', 'Sitzungen', 'schieneGespraeche'], ['aufgaben', 'Aufgaben', 'schieneAufgaben'], ['laeufe', 'Läufe', 'schieneLaeufe'], ['aenderungen', 'Änderungen', 'schieneAenderungen'], ['dateien', 'Dateien', 'schieneDateien'], ['betrieb', 'Betrieb', 'schieneBetrieb']];
+  const TAFEL_NAMEN = [['gespraeche', 'Sitzungen', 'schieneGespraeche'], ['aufgaben', 'Aufgaben', 'schieneAufgaben'], ['laeufe', 'Läufe', 'schieneLaeufe'], ['aenderungen', 'Änderungen', 'schieneAenderungen'], ['dateien', 'Dateien', 'schieneDateien'], ['wissen', 'Wissen', 'schieneWissen'], ['betrieb', 'Betrieb', 'schieneBetrieb']];
   const palette = FP.palette.createPalette(
     { wurzel: $('palette') },
     {
@@ -848,6 +852,19 @@
     },
   );
   void betriebTafel.pruefe();
+
+  // --- Tafel „Wissen“ (wissen-tafel.js): Suche über den Hub, Text eines Treffers, Fundstelle in die Nachricht. Ohne Weg kein Knopf. ---
+  const wissenTafel = FP.wissen.createWissenTafel(
+    { knopf: $('schieneWissen'), feld: $('wissenFeld'), gedaechtnis: $('wissenGedaechtnis'), liste: $('wissenListe'), hinweis: $('wissenHinweis') },
+    {
+      wege,
+      beiErwaehnen: (text) => einfuegen(text),
+      beiWeg: (kennt) => {
+        if (!kennt && werkbank.tafel === 'wissen') werkbank.zeige('gespraeche');
+      },
+    },
+  );
+  void wissenTafel.pruefe();
 
   // Abschluss eines eben beendeten Zugs (Prototyp „Abschluss mit nächsten Schritten“): was geändert, ob Tests liefen, ob etwas zu
   // committen ist, und Knöpfe dafür. Steht nur unter einem Zug, den diese Seite live gesehen hat.
