@@ -160,3 +160,15 @@ dom('FLE Link und dieser Rechner: Tempo unter dem Modell, „rechnet“ als lauf
   assert.match(aus.$('r').textContent, /laut System/);
   assert.equal(aus.$('r').querySelector('.bt-tempo'), null);
 });
+
+test('Zustand von FLE Link auf Deutsch; grün nur, wenn die Engine antwortet; Pink nur, solange sie rechnet', () => {
+  const { flelinkZustand } = logik('betrieb-tafel.js').betrieb;
+  const z = (zustand, beschaeftigt = false) => flelinkZustand({ zustand, beschaeftigt });
+  assert.deepEqual(z('stopped'), { text: 'aus', art: '' });
+  assert.deepEqual(z(null), { text: 'aus', art: '' });
+  assert.deepEqual(z('starting'), { text: 'lädt', art: '' });
+  assert.deepEqual(z('ready'), { text: 'bereit', art: 'gut' });
+  assert.deepEqual(z('attached'), { text: 'bereit', art: 'gut' });
+  assert.deepEqual(z('error'), { text: 'Fehler', art: 'schlecht' });
+  assert.deepEqual(z('ready', true), { text: 'rechnet', art: 'laeuft' });
+});

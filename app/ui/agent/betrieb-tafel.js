@@ -35,6 +35,31 @@
     return { text: teile.join(' · '), anteil };
   }
 
+  /**
+   * Zustand der Engine von FLE Link (crates/flelink-api/src/engine.rs: stopped, starting, ready, attached, error …) als Wort und Farbe.
+   * Grün nur, wenn sie antwortet; Pink („rechnet“) nur, solange sie gerade arbeitet.
+   */
+  function flelinkZustand(f) {
+    if (f.beschaeftigt) return { text: 'rechnet', art: 'laeuft' };
+    switch (f.zustand) {
+      case 'ready':
+      case 'attached':
+        return { text: 'bereit', art: 'gut' };
+      case 'starting':
+        return { text: 'lädt', art: '' };
+      case 'stopped':
+      case null:
+      case '':
+        return { text: 'aus', art: '' };
+      case 'error':
+      case 'failed':
+      case 'crashed':
+        return { text: 'Fehler', art: 'schlecht' };
+      default:
+        return { text: String(f.zustand), art: '' };
+    }
+  }
+
   /** Tempo des Modells aus FLE Link: „41,5 tok/s · Prefill 512 tok/s · Annahme 71 % · Slots 1/1 · 2 warten“; ohne Werte ''. */
   function tempoText(f) {
     if (!f || !f.erreichbar) return '';
@@ -99,8 +124,9 @@
         const f = el('div', 'bt-zeile');
         f.append(el('b', null, 'FLE Link'));
         if (fl) {
-          f.append(el('span', 'bt-name', fl.modell || fl.zustand || 'läuft'));
-          f.append(fl.beschaeftigt ? chip('rechnet', 'laeuft') : chip(fl.zustand === 'ready' || fl.zustand === 'attached' ? 'bereit' : fl.zustand || 'läuft', 'gut'));
+          const z = flelinkZustand(fl);
+          f.append(el('span', 'bt-name', fl.modell || (z.text === 'aus' ? 'kein Modell geladen' : 'Modell unbekannt')));
+          f.append(chip(z.text, z.art));
         } else f.append(el('span', 'bt-name', 'läuft nicht auf diesem Rechner'));
         oben.appendChild(f);
         const tempo = tempoText(fl);
@@ -212,5 +238,5 @@
     return { zeige, pruefe, neu, halt };
   }
 
-  FP.betrieb = { createBetriebTafel, knotenZustand, gpuZeile, speicherText, tempoText };
+  FP.betrieb = { createBetriebTafel, knotenZustand, gpuZeile, speicherText, tempoText, flelinkZustand };
 })();
