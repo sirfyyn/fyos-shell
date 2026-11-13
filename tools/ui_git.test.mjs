@@ -48,6 +48,26 @@ test('Quelltext: kein HTML aus Text, kein eigenes Netz', () => {
   assert.doesNotMatch(lies('git-kasten.js'), /innerHTML|insertAdjacentHTML|\bfetch\(|XMLHttpRequest/);
 });
 
+// Befunde aus der Live-App (13.11.2026): Kasten blieb nach Änderungen im Editor auf „nichts offen“, das Formular aus dem Terminal
+// stand in der verborgenen Tafel „Sitzungen“, das Häkchen „Eigener Arbeitsbaum“ war auf volle Breite gezogen.
+test('Quelltext: Tafel „Änderungen“ und Fensterfokus lesen den Git-Stand neu', () => {
+  const c = lies('chat.js');
+  assert.match(c, /if \(name === 'aenderungen'\) \{\s*void staendeTafel\.neu\(\);\s*void gitKasten\.neu\(\);/);
+  assert.match(c, /addEventListener\('focus', \(\) => \{\s*if \(werkbank\.tafel === 'aenderungen'\) void gitKasten\.neu\(\);/);
+});
+
+test('Quelltext: „Neue Sitzung“ holt die Tafel „Sitzungen“ nach vorn', () => {
+  const c = lies('chat.js');
+  const anfang = c.indexOf('function neuOeffnen()');
+  assert.ok(anfang > 0);
+  assert.match(c.slice(anfang, anfang + 400), /if \(werkbank\.tafel !== 'gespraeche'\) werkbank\.zeige\('gespraeche'\);/);
+  assert.ok(c.indexOf('const werkbank =') < anfang, 'die Werkbank steht vor dem Formular');
+});
+
+test('Stil: das Häkchen „Eigener Arbeitsbaum“ behält seine Breite', () => {
+  assert.match(lies('chat.css'), /\.neu-form \.neu-haken input\[type="checkbox"\] \{ width: auto;/);
+});
+
 function kasten(antworten) {
   const d = new jsdom.JSDOM('<!doctype html><body><section id="k" hidden><p id="s"></p><input id="n"><button id="c">Committen</button><button id="p">PR anlegen</button><p id="m" hidden></p></section></body>', { runScripts: 'outside-only' });
   const w = d.window;

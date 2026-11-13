@@ -283,7 +283,11 @@
       beiStreifen: () => leisteUmschalten(true),
       // die Tafel „Änderungen“ liest beim Öffnen den Stand neu; „Dateien“ zieht nach, wenn der Agent inzwischen etwas getan hat
       beiTafel: (name) => {
-        if (name === 'aenderungen') void staendeTafel.neu();
+        // der Git-Kasten liest mit: Änderungen außerhalb der Werkzeuge des Agenten (Editor, Terminal) zeigt er sonst nicht
+        if (name === 'aenderungen') {
+          void staendeTafel.neu();
+          void gitKasten.neu();
+        }
         else if (name === 'dateien') dateienTafel.zeige();
       },
     }
@@ -331,6 +335,10 @@
       },
     },
   );
+  // zurück ins Fenster (etwa nach dem Editor): steht die Tafel offen, zieht der Kasten nach
+  window.addEventListener('focus', () => {
+    if (werkbank.tafel === 'aenderungen') void gitKasten.neu();
+  });
   // --- Tafel „Änderungen“: was der Agent in der Sitzung geändert hat, Unterschied je Datei, Stände und Zurückspulen (staende-tafel.js). ---
   // Kennt der Runner die Stände nicht, bleibt der Knopf der Schiene weg.
   const staendeTafel = FP.staende.createStaendeTafel(
@@ -1176,6 +1184,8 @@
   const neuForm = $('neuForm');
   function neuOeffnen() {
     leisteUmschalten(true);
+    // das Formular steht in der Tafel „Sitzungen“: aus einer anderen Tafel (auch beim Start aus dem Terminal) erst dorthin
+    if (werkbank.tafel !== 'gespraeche') werkbank.zeige('gespraeche');
     const ordnerWahl = $('neuOrdner');
     ordnerWahl.textContent = '';
     for (const [name, b] of Object.entries(bereiche)) {
