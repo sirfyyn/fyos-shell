@@ -250,17 +250,21 @@
     };
     let bittetEben = false; // in diesem Zug kam eine Freigabe-Bitte: sein Ende ist dann kein „fertig“
     let letzteZeit = null; // Zeit der letzten Nachricht des laufenden Zugs (für die Zeitmarke am Ende, wenn ein Verlauf abgespielt wird)
+    // Wie die letzte Antwort des Modells endete (`stopReason`): „error“ nach allen Versuchen ist kein „fertig“, „aborted“ ein Stopp
+    let zugEnde = null;
     const zugZu = (laufEnde) => {
       if (laeuft) {
         denkenZu();
+        const ende = zugEnde && zugEnde.fehler ? { fehler: zugEnde.fehler } : zugEnde && zugEnde.abgebrochen ? { stopped: true } : {};
         // live endet der Zug jetzt; beim Abspielen gilt die Zeit der letzten Nachricht, ohne die bleibt die Marke weg
-        view.endTurn(abspielen > 0 ? { zeit: letzteZeit } : {});
+        view.endTurn(abspielen > 0 ? { ...ende, zeit: letzteZeit } : ende);
         laeuft = false;
         // der Lauf ist eben zu Ende und es wartet keine Freigabe (die hat ihren eigenen Moment); eine Nachricht mitten im Zug ist kein „fertig“
-        if (laufEnde && abspielen === 0 && opts.onMoment && !bittetEben) opts.onMoment('fertig');
+        if (laufEnde && abspielen === 0 && opts.onMoment && !bittetEben) opts.onMoment(ende.fehler ? 'fehler' : 'fertig');
       }
       bittetEben = false;
       letzteZeit = null;
+      zugEnde = null;
     };
     const denkenZu = () => {
       if (denkt) {
@@ -462,6 +466,10 @@
       } else if (m.role === 'assistant') {
         sicherZug();
         if (typeof m.timestamp === 'number' && m.timestamp > 0) letzteZeit = m.timestamp;
+        // die letzte Antwort zählt: ein gelungener Versuch nach einem Fehler macht den Zug wieder gut
+        if (m.stopReason === 'error') zugEnde = { fehler: kurz(String(m.errorMessage || 'Das Modell hat nicht geantwortet'), 200) };
+        else if (m.stopReason === 'aborted') zugEnde = { abgebrochen: true };
+        else if (m.stopReason) zugEnde = null;
         const ktx = kontextAusNutzung(m.usage);
         if (ktx != null && opts.onKontext) opts.onKontext(ktx);
         const bloecke = Array.isArray(m.content) ? m.content : typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : [];

@@ -326,6 +326,7 @@ test('Signalfarbe sparsam: nur der Hauptknopf und Laufendes tragen sie; Gewählt
     /^\.wb-aufgabe\[data-zustand="laeuft"\] \.wb-marke \{/,
     /^\.wb-lauf\[data-zustand="laeuft"\] \.wb-punkt \{/,
     /^\.wb-streifen\[data-arbeitet="1"\] \.wb-punkt \{/,
+    /^\.bt-chip\.laeuft \{/, // Tafel „Betrieb“: das Modell rechnet gerade
   ];
   const fremd = regeln.filter((x) => !erlaubt.some((re) => re.test(x.zeile)));
   assert.deepEqual(fremd.map((x) => `${x.n}: ${x.zeile.trim().slice(0, 90)}`), [], 'die Signalfarbe steht nur an den genannten Stellen');

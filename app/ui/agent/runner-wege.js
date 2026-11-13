@@ -15,7 +15,8 @@
  *   staende(id)         GET /api/gespraech/<id>/staende       → { ordner, dateien: [{ pfad, relativ, zustand, plus, minus, aenderungen, fremd, gesichert }],
  *                                                                 staende: [{ id, zeit, titel, aenderungen, dateien, gespraech }], gesamt }
  *   staendeDiff(id, p)  GET /api/gespraech/<id>/staende/diff  → { relativ, patch (Unified-Patch oder null), plus, minus, grund }
- *   anhaenge()          GET /api/anhaenge                     → { an, bilder (das Modell sieht Bilder), bilderQuelle, grenzen: { anzahl, bildBytes, dateiBytes, gesamtBytes } }
+ *   betriebLage()       GET /api/betrieb                      → { modell: { name, antwortet }, hub: { konfiguriert, erreichbar, fehler }, cluster: { satz, knoten, fehler } | null }
+ *   anhaenge()          GET /api/anhaenge                    → { an, bilder (das Modell sieht Bilder), bilderQuelle, grenzen: { anzahl, bildBytes, dateiBytes, gesamtBytes } }
  *
  * Geschrieben wird hier nicht; `zurueckBereinigen` bereinigt nur die Antwort von POST …/zurueck (staende-tafel.js stellt die Anfrage).
  *
@@ -518,6 +519,78 @@
       async betrieb() {
         return betriebBereinigen(await api('/api/health'));
       },
+      /** Tafel „Betrieb“ (Runner src/betrieb.js): Modell, Hub, Knoten des Clusters. Ein Runner ohne den Weg: Fehler mit art 'weg_fehlt'. */
+      async betriebLage() {
+        return betriebLageBereinigen(await api('/api/betrieb'));
+      },
+    };
+  }
+
+  /** Antwort von GET /api/betrieb: nur bekannte Felder, Zahlen geprüft, Texte gekürzt. */
+  function betriebLageBereinigen(r) {
+    r = r && typeof r === 'object' ? r : {};
+    const z = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const m = r.modell && typeof r.modell === 'object' ? r.modell : {};
+    const h = r.hub && typeof r.hub === 'object' ? r.hub : {};
+    const c = r.cluster && typeof r.cluster === 'object' ? r.cluster : null;
+    const knoten = c && Array.isArray(c.knoten)
+      ? c.knoten.filter((k) => k && typeof k.name === 'string' && k.name).slice(0, 32).map((k) => ({
+          name: text(k.name, 80),
+          bereit: k.bereit === true,
+          abgesperrt: k.abgesperrt === true,
+          probleme: Math.max(0, Math.trunc(z(k.probleme) || 0)),
+          aufgaben: (Array.isArray(k.aufgaben) ? k.aufgaben : []).filter((x) => typeof x === 'string').slice(0, 6).map((x) => text(x, 40)),
+          cpuProzent: z(k.cpuProzent),
+          ramGib: z(k.ramGib),
+          ramGesamtGib: z(k.ramGesamtGib),
+          gpus: (Array.isArray(k.gpus) ? k.gpus : []).filter((g) => g && typeof g === 'object').slice(0, 8).map((g) => ({
+            nr: text(String(g.nr == null ? '' : g.nr), 8),
+            modell: text(g.modell, 80),
+            auslastungProzent: z(g.auslastungProzent),
+            vramMib: z(g.vramMib),
+            vramGesamtMib: z(g.vramGesamtMib),
+            temperaturC: z(g.temperaturC),
+          })),
+        }))
+      : [];
+    const gpu = (g) => ({
+      nr: text(String(g.nr == null ? '' : g.nr), 8),
+      modell: text(g.modell, 80),
+      auslastungProzent: z(g.auslastungProzent),
+      vramMib: z(g.vramMib),
+      vramGesamtMib: z(g.vramGesamtMib),
+      temperaturC: z(g.temperaturC),
+    });
+    const gpus = (l) => (Array.isArray(l) ? l : []).filter((g) => g && typeof g === 'object').slice(0, 8).map(gpu);
+    // FLE Link auf diesem Rechner (Runner src/betrieb.js `flelinkSicht`): null = nicht gefragt, { erreichbar: false } = läuft nicht
+    const f = r.flelink && typeof r.flelink === 'object' ? r.flelink : null;
+    const flelink = !f
+      ? null
+      : f.erreichbar !== true
+        ? { erreichbar: false }
+        : {
+            erreichbar: true,
+            zustand: text(f.zustand, 40) || null,
+            modell: text(f.modell, 200) || null,
+            kontext: z(f.kontext),
+            slots: z(f.slots),
+            slotsBelegt: z(f.slotsBelegt),
+            beschaeftigt: typeof f.beschaeftigt === 'boolean' ? f.beschaeftigt : null,
+            wartend: z(f.wartend),
+            tokS: z(f.tokS),
+            prefillTokS: z(f.prefillTokS),
+            annahme: z(f.annahme),
+            ausLetzterAntwort: f.ausLetzterAntwort === true,
+          };
+    const re = r.rechner && typeof r.rechner === 'object' ? r.rechner : null;
+    const rechner = re && z(re.ramGesamtGib) ? { quelle: re.quelle === 'flelink' ? 'flelink' : 'system', ramGib: z(re.ramGib), ramGesamtGib: z(re.ramGesamtGib), gpus: gpus(re.gpus) } : null;
+    return {
+      modell: { name: text(m.name, 200) || null, antwortet: typeof m.antwortet === 'boolean' ? m.antwortet : null },
+      hub: { konfiguriert: h.konfiguriert === true, erreichbar: typeof h.erreichbar === 'boolean' ? h.erreichbar : null, fehler: text(h.fehler, 200) },
+      cluster: c ? { satz: text(c.satz, 300), knoten, fehler: text(c.fehler, 200), stand: text(c.stand, 40) || null } : null,
+      flelink,
+      rechner,
+      zeit: z(r.zeit),
     };
   }
 
@@ -556,6 +629,6 @@
   FP.wege = {
     createWege, klassifiziere, fehlerTeile, wegFehlt, kodiere, markierungenPruefen, trefferBereinigen, archivListePruefen, fensterAusModellen, modellEintrag, MELDUNG,
     aufgabenBereinigen, laufBereinigen, jobBereinigen, browserBereinigen, staendeBereinigen, staendeDiffBereinigen, zurueckBereinigen, anhaengeBereinigen, nachrichtAnhaenge, dateiBildBereinigen,
-    werkzeugBereinigen, betriebBereinigen,
+    werkzeugBereinigen, betriebBereinigen, betriebLageBereinigen,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -27,6 +27,7 @@
         <button id="schieneLaeufe" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelLaeufe" tabindex="-1" title="Läufe: Befehle im Hintergrund und Unteragenten" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3h11v10h-11z M5 6l2 2-2 2 M8.5 10h3" /></svg><span class="sr">Läufe</span><b id="laeufeMarke" class="schiene-marke" aria-label="laufend" hidden>0</b></button>
         <button id="schieneAenderungen" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelAenderungen" tabindex="-1" title="Änderungen des Agenten in dieser Sitzung" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h5.5L12 5v8.5H4z M9.5 2.5V5H12 M6 8.5h4 M8 6.5v4 M6 12h4" /></svg><span class="sr">Änderungen</span><b id="staendeMarke" class="schiene-marke" aria-label="geänderte Dateien" hidden>0</b></button>
         <button id="schieneDateien" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelDateien" tabindex="-1" title="Dateien im Ordner der Sitzung" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg><span class="sr">Dateien</span></button>
+        <button id="schieneBetrieb" type="button" class="schiene-knopf" role="tab" aria-selected="false" aria-controls="tafelBetrieb" tabindex="-1" title="Betrieb: Modell, Hub und Knoten" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8.5h3l2-4.5 3 9 2-4.5h3" /></svg><span class="sr">Betrieb</span></button>
       </nav>
       <div class="leiste-koerper">
       <div class="leiste-oben">
@@ -135,6 +136,12 @@
         <p id="dateienLeer" class="leise leer-hinweis" role="status" hidden></p>
         <div id="dateienBaum" class="dt-baum" role="tree" aria-label="Dateien im Ordner der Sitzung"></div>
         <p id="dateienFuss" class="leise dt-fuss" hidden></p>
+      </div>
+      <!-- Tafel „Betrieb“ (betrieb-tafel.js): Modell, Hub, Knoten des Clusters mit CPU, Speicher und GPUs; nur lesend -->
+      <div id="tafelBetrieb" class="tafel wb-tafel bt-tafel" role="tabpanel" aria-labelledby="schieneBetrieb" hidden>
+        <h2 class="wb-titel">Betrieb</h2>
+        <div id="betriebRumpf" class="bt-rumpf" aria-live="polite"></div>
+        <p id="betriebFuss" class="leise bt-fuss" hidden></p>
       </div>
       <div class="leiste-fuss leise" id="leisteFuss"></div>
       </div>
@@ -294,6 +301,7 @@
   <script src="start.js"></script>
   <script src="rueckmeldung.js"></script>
   <script src="git-kasten.js"></script>
+  <script src="betrieb-tafel.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

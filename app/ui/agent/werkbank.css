@@ -96,3 +96,33 @@
 @media (max-width: 560px) {
   .wb-streifen .wb-balken { display: none; }
 }
+
+/* Tafel „Betrieb“ (betrieb-tafel.js): Modell, Hub, Knoten; Kürzel bt-. Zahlen in Monospace, Farben nur für den Zustand. */
+.bt-rumpf { display: grid; gap: 8px; }
+.bt-kachel { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--linie); border-radius: 10px; }
+.bt-zeile { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; }
+.bt-zeile > b { flex: none; }
+.bt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--leise); }
+.bt-chip { flex: none; padding: 1px 7px; border: 1px solid var(--linie); border-radius: 999px; font-size: 11px; color: var(--leise); }
+.bt-chip.gut { border-color: var(--gut); color: var(--gut); }
+.bt-chip.schlecht { border-color: var(--schlecht); color: var(--schlecht); }
+.bt-abschnitt { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--leise); }
+.bt-satz { margin: 0; font-size: 12px; }
+.bt-knoten { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.bt-knoten-eintrag { display: grid; gap: 3px; padding-bottom: 6px; border-bottom: 1px solid var(--linie); }
+.bt-knoten-eintrag:last-child { border-bottom: none; }
+.bt-punkt { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--leise); }
+.bt-punkt.gut { background: var(--gut); }
+.bt-punkt.warn { background: var(--warn); }
+.bt-punkt.schlecht { background: var(--schlecht); }
+.bt-rolle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.bt-werte { font-family: var(--mono); font-size: 11.5px; }
+.bt-gpu { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bt-gpu .bt-werte { flex: none; }
+.bt-balken { flex: 1; min-width: 30px; height: 4px; border-radius: 999px; background: var(--linie); overflow: hidden; }
+.bt-balken i { display: block; height: 100%; background: var(--gut); }
+.bt-balken.warn i { background: var(--warn); }
+.bt-fehler { color: var(--schlecht); }
+.bt-fuss { margin: 8px 0 0; font-size: 11px; }
+.bt-chip.laeuft { border-color: var(--akzent); color: var(--akzent); }
+.bt-tempo { overflow-wrap: anywhere; }

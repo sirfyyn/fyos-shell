@@ -277,6 +277,47 @@ dom('Momente: eine Freigabe-Bitte ist „braucht“, das Ende dieses Laufs dann 
   assert.deepEqual(momente, ['braucht']);
 });
 
+// Befund der Live-App (13.11.2026): das Modell antwortete nicht (stopReason „error“ nach allen Versuchen), der Fuß sagte „Fertig in 37 s“
+const fehlantwort = (id, meldung) => ({ id, kind: 'pi.assistant', model: [{ role: 'assistant', content: [], stopReason: 'error', errorMessage: meldung }] });
+
+dom('Modellfehler: der Zug endet als „Fehlgeschlagen“ mit der Meldung, ohne Reaktionen, der Moment ist „fehler“', () => {
+  const momente = [];
+  const a = ansicht({}, {});
+  const R = a.FP.rueckmeldung.REAKTIONEN;
+  const { d, view, adapter } = ansicht({ onMoment: (m) => momente.push(m) }, { reaktionen: R, onReaktion: () => {} });
+  adapter.apply({ type: 'entry_appended', entry: mensch(1, 'Bitte') });
+  adapter.apply({ type: 'run_start' });
+  adapter.apply({ type: 'auto_retry_start', attempt: 1 });
+  adapter.apply({ type: 'message_end', entry: fehlantwort(2, 'terminated') });
+  adapter.apply({ type: 'message_end', entry: fehlantwort(3, 'Connection error.') });
+  adapter.apply({ type: 'run_end' });
+  view.flush();
+  const fuss = d.querySelector('.zugfuss');
+  assert.match(fuss.textContent, /^Fehlgeschlagen nach .+: Connection error\./);
+  assert.ok(fuss.classList.contains('zugfuss-fehler'));
+  assert.equal(fuss.getAttribute('role'), 'alert');
+  assert.equal(d.querySelector('.rm-reaktionen'), null, 'auf einen Fehler gibt es nichts zu bewerten');
+  assert.deepEqual(momente, ['fehler']);
+});
+
+dom('Modellfehler: gelingt ein späterer Versuch, ist der Zug „Fertig“; im abgespielten Verlauf bleibt ein Fehler ein Fehler', () => {
+  const { d, view, adapter } = ansicht({});
+  adapter.apply({ type: 'entry_appended', entry: mensch(1, 'Bitte') });
+  adapter.apply({ type: 'run_start' });
+  adapter.apply({ type: 'message_end', entry: fehlantwort(2, 'terminated') });
+  adapter.apply({ type: 'message_end', entry: antwort(3, 'Erledigt.') });
+  adapter.apply({ type: 'run_end' });
+  view.flush();
+  assert.match(d.querySelector('.zugfuss').textContent, /^Fertig in /);
+
+  const b = ansicht({});
+  b.adapter.replay([mensch(1, 'Bitte'), fehlantwort(2, 'Connection error.'), mensch(3, 'Noch mal'), antwort(4, 'Jetzt ja.')], false);
+  b.view.flush();
+  const fuesse = [...b.d.querySelectorAll('.zugfuss')].map((f) => f.textContent);
+  assert.match(fuesse[0], /^Fehlgeschlagen nach .+: Connection error\./);
+  assert.match(fuesse[1], /^Fertig in /);
+});
+
 dom('Reaktionen: stehen nur unter einem eben beendeten Zug, ein Klick meldet die Art und markiert den Knopf', () => {
   const geklickt = [];
   let R;

@@ -256,8 +256,8 @@
   const werkbank = FP.werkbank.createWerkbank(
     {
       schiene: $('schiene'),
-      knoepfe: { gespraeche: $('schieneGespraeche'), aufgaben: $('schieneAufgaben'), laeufe: $('schieneLaeufe'), aenderungen: $('schieneAenderungen'), dateien: $('schieneDateien') },
-      tafeln: { gespraeche: $('tafelGespraeche'), aufgaben: $('tafelAufgaben'), laeufe: $('tafelLaeufe'), aenderungen: $('tafelAenderungen'), dateien: $('tafelDateien') },
+      knoepfe: { gespraeche: $('schieneGespraeche'), aufgaben: $('schieneAufgaben'), laeufe: $('schieneLaeufe'), aenderungen: $('schieneAenderungen'), dateien: $('schieneDateien'), betrieb: $('schieneBetrieb') },
+      tafeln: { gespraeche: $('tafelGespraeche'), aufgaben: $('tafelAufgaben'), laeufe: $('tafelLaeufe'), aenderungen: $('tafelAenderungen'), dateien: $('tafelDateien'), betrieb: $('tafelBetrieb') },
       aufgabenMarke: $('aufgabenMarke'),
       aufgabenLeer: $('aufgabenLeer'),
       aufgabenKopf: $('aufgabenKopf'),
@@ -289,6 +289,7 @@
           void gitKasten.neu();
         }
         else if (name === 'dateien') dateienTafel.zeige();
+        else if (name === 'betrieb') betriebTafel.zeige();
       },
     }
   );
@@ -730,7 +731,7 @@
     waechst();
     eingabe.focus();
   }
-  const TAFEL_NAMEN = [['gespraeche', 'Sitzungen', 'schieneGespraeche'], ['aufgaben', 'Aufgaben', 'schieneAufgaben'], ['laeufe', 'Läufe', 'schieneLaeufe'], ['aenderungen', 'Änderungen', 'schieneAenderungen'], ['dateien', 'Dateien', 'schieneDateien']];
+  const TAFEL_NAMEN = [['gespraeche', 'Sitzungen', 'schieneGespraeche'], ['aufgaben', 'Aufgaben', 'schieneAufgaben'], ['laeufe', 'Läufe', 'schieneLaeufe'], ['aenderungen', 'Änderungen', 'schieneAenderungen'], ['dateien', 'Dateien', 'schieneDateien'], ['betrieb', 'Betrieb', 'schieneBetrieb']];
   const palette = FP.palette.createPalette(
     { wurzel: $('palette') },
     {
@@ -834,6 +835,19 @@
   }
   void ladeLage();
   setInterval(ladeLage, 30000);
+
+  // --- Tafel „Betrieb“ (betrieb-tafel.js): Modell, Hub, Knoten des Clusters; nur lesend. Kennt der Runner den Weg nicht, bleibt ihr Knopf weg. ---
+  const betriebTafel = FP.betrieb.createBetriebTafel(
+    { knopf: $('schieneBetrieb'), rumpf: $('betriebRumpf'), fuss: $('betriebFuss') },
+    {
+      wege,
+      sichtbar: () => werkbank.tafel === 'betrieb',
+      beiWeg: (kennt) => {
+        if (!kennt && werkbank.tafel === 'betrieb') werkbank.zeige('gespraeche');
+      },
+    },
+  );
+  void betriebTafel.pruefe();
 
   // Abschluss eines eben beendeten Zugs (Prototyp „Abschluss mit nächsten Schritten“): was geändert, ob Tests liefen, ob etwas zu
   // committen ist, und Knöpfe dafür. Steht nur unter einem Zug, den diese Seite live gesehen hat.

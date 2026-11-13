@@ -1422,8 +1422,15 @@
           gruppe = null;
           const ms = now() - turnStart;
           if (turn) {
-            const text = r.stopped ? `Unterbrochen nach ${dauerText(ms)}` : `Fertig in ${dauerText(ms)}${turnSchritte ? ` · ${turnSchritte} ${turnSchritte === 1 ? 'Schritt' : 'Schritte'}` : ''}`;
-            const fuss = el('div', 'zugfuss', text);
+            // r.fehler: die letzte Antwort des Modells endete mit einem Fehler (nach allen Versuchen) – kein „Fertig“
+            const fehler = typeof r.fehler === 'string' && r.fehler ? r.fehler : '';
+            const text = r.stopped
+              ? `Unterbrochen nach ${dauerText(ms)}`
+              : fehler
+                ? `Fehlgeschlagen nach ${dauerText(ms)}: ${fehler}`
+                : `Fertig in ${dauerText(ms)}${turnSchritte ? ` · ${turnSchritte} ${turnSchritte === 1 ? 'Schritt' : 'Schritte'}` : ''}`;
+            const fuss = el('div', fehler ? 'zugfuss zugfuss-fehler' : 'zugfuss', text);
+            if (fehler) fuss.setAttribute('role', 'alert');
             // wann der Zug endete: live jetzt, beim Abspielen eines Verlaufs die Zeit der letzten Nachricht (ohne Angabe keine Marke)
             const wann = zeitMarke(r.zeit === undefined ? now() : r.zeit);
             if (wann) {
@@ -1453,7 +1460,7 @@
               fuss.appendChild(kn);
             }
             // Reaktionen nur unter einem Zug, der eben zu Ende ging (nicht beim Abspielen, nicht nach einem Stopp)
-            if (!r.stopped && r.zeit === undefined && opts.onReaktion && Array.isArray(opts.reaktionen) && opts.reaktionen.length) {
+            if (!r.stopped && !fehler && r.zeit === undefined && opts.onReaktion && Array.isArray(opts.reaktionen) && opts.reaktionen.length) {
               const reihe = el('span', 'rm-reaktionen');
               reihe.setAttribute('role', 'group');
               reihe.setAttribute('aria-label', 'Rückmeldung zu dieser Antwort');
