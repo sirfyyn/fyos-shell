@@ -76,6 +76,8 @@
   const LAUF_ZUSTAND = {
     laeuft: ['laeuft', 'läuft'],
     abgeschlossen: ['fertig', 'fertig'],
+    // Nachtwerkstatt ohne Arbeit (Deckel voll, außerhalb des Fensters): vorher „fertig · 0 s“ (27.11.2026)
+    uebersprungen: ['fertig', 'übersprungen'],
     fehler: ['fehler', 'fehlgeschlagen'],
     abgebrochen: ['abgebrochen', 'abgebrochen'],
     abgelehnt: ['abgebrochen', 'abgelehnt'],

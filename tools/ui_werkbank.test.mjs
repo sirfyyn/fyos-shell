@@ -91,6 +91,9 @@ test('laeufeSicht: laufende zuerst, dann die neuesten; Zustand und Dauer je Art;
   // eigene: gehört zur sichtbaren Sitzung 7
   assert.deepEqual([z['job:jaaaa1'].eigene, z['lauf:1'].eigene, z['lauf:2'].eigene, z['job:jeeee5'].eigene, z['lauf:3'].eigene], [true, true, false, false, false]);
   assert.equal(laeufeSicht(Array.from({ length: 60 }, (_, i) => LAUF(i)), [], { jetzt: 2_000_000, max: 40 }).zeilen.length, 40);
+  // Nachtwerkstatt ohne Arbeit: „übersprungen“ statt „fertig · 0 s“, der Grund steht in der Antwort (Nr. 1303)
+  const nacht = laeufeSicht([LAUF(9, { quelle: 'nachtwerkstatt', titel: 'Nachtwerkstatt 2026-11-26', status: 'uebersprungen', antwort: 'Alle Schmieden übersprungen: deckel.' })], [], { jetzt: 2_000_000 }).zeilen[0];
+  assert.deepEqual([nacht.zustand, nacht.zustandText, nacht.antwort], ['fertig', 'übersprungen', 'Alle Schmieden übersprungen: deckel.']);
   assert.deepEqual(plain(laeufeSicht(null, undefined)), { zeilen: [], laufend: 0 });
 });
 
